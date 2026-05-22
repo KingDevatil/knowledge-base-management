@@ -12,14 +12,18 @@ services:
     image: nginx:1.27-alpine
     restart: always
     ports:
-      # 外网 HTTPS
+      # 外网 HTTPS（可通过 .env 的 EXTERNAL_IP 指定监听 IP）
       - "${EXTERNAL_IP:-0.0.0.0}:443:443"
       # 内网 HTTP
       - "${INTERNAL_IP:-0.0.0.0}:80:80"
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/nginx.conf.template:/etc/nginx/templates/nginx.conf.template:ro
       - ./nginx/ssl:/etc/nginx/ssl:ro
-      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+    environment:
+      - EXTERNAL_DOMAIN=${EXTERNAL_DOMAIN:-kb.company.com}
+      - INTERNAL_DOMAIN=${INTERNAL_DOMAIN:-kb.internal.company.com}
+    command: >
+      /bin/sh -c "envsubst < /etc/nginx/templates/nginx.conf.template > /etc/nginx/nginx.conf && nginx -g 'daemon off;'"
     depends_on:
       mcp-gateway:
         condition: service_started

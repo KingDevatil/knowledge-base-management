@@ -113,21 +113,25 @@ make pull-model
 #### 方式一：外网 + 内网双模式（推荐）
 
 ```bash
-# 1. 将 SSL 证书放入 nginx/ssl/{your-domain}/ 目录
-# 2. 编辑 nginx/nginx.conf，替换 server_name 为你的域名
-# 3. 配置 .env 文件
-cp .env.example .env
+# 1. 配置域名（编辑 .env 或设置环境变量）
+export EXTERNAL_DOMAIN=wiki.yourcompany.com
+export INTERNAL_DOMAIN=wiki.internal.company.com
 
-# 4. 启动
+# 2. 将 SSL 证书放入 nginx/ssl/{your-domain}/ 目录
+#    nginx/ssl/wiki.yourcompany.com/fullchain.pem
+#    nginx/ssl/wiki.yourcompany.com/privkey.pem
+
+# 3. 启动（nginx 自动用 envsubst 替换模板变量）
 docker compose up -d
 ```
 
-- **外网访问**：`https://kb.company.com`（HTTPS，需 SSL 证书）
-- **内网访问**：`http://192.168.1.100`（HTTP 直连，无需证书）
+- **外网访问**：`https://wiki.yourcompany.com`（HTTPS）
+- **内网访问**：`http://wiki.internal.company.com` 或 `http://服务器IP`
 
 #### 方式二：纯内网部署（免 SSL）
 
 ```bash
+export EXTERNAL_DOMAIN=
 export CORS_ORIGINS=http://192.168.1.100
 docker compose up -d
 ```
