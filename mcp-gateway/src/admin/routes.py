@@ -267,9 +267,11 @@ async def document_list(
     # 获取文档列表
     docs = await kb.list_documents(tags=tags, path=path, limit=limit, offset=offset)
 
-    # 获取目录树
+    # 获取目录树（合并用户创建的目录）
     all_docs = await kb.list_documents(limit=10000, offset=0)
     tree = DirectoryTree.build_from_metadata([{"path": d.path} for d in all_docs])
+    from directory_store import merge_into_tree
+    tree = merge_into_tree(tree)
 
     # 面包屑
     breadcrumbs = DirectoryTree.get_breadcrumbs(path)
