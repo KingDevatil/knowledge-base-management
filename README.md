@@ -30,34 +30,28 @@
              │                       │
              │   MCP SSE + X-API-Key  │
              ▼                       ▼
-    ┌─────────────────────────────────────────────────────────┐
-    │                   公司公网服务器                          │
-    │  ┌──────────────────────────────────────────────────┐   │
-    │  │           Nginx (反向代理 + HTTPS + 限流)          │   │
-    │  │         /sse  →  MCP Gateway                     │   │
-    │  │         /admin →  后台管理页面                   │   │
-    │  └──────────────────────┬───────────────────────────┘   │
-    │                         │                                │
-    │  ┌──────────────────────┴───────────────────────────┐   │
-    │  │           MCP Gateway (FastAPI + mcp SDK)         │   │
-    │  │  - API Key 认证                                    │   │
-    │  │  - 权限校验 (read / write)                         │   │
-    │  │  - 工具路由 (search / add / update / delete)       │   │
-    │  │  - 写入 Redis 分布式锁                             │   │
-    │  └──────────────────────┬───────────────────────────┘   │
-    │                         │                                │
-    │  ┌──────────────────────┴───────────────────────────┐   │
-    │  │              中央知识库引擎                        │   │
-    │  │  Chroma (向量数据库) — 单 collection，全公司共享   │   │
-    │  └──────────────────────┬───────────────────────────┘   │
-    │                         │                                │
-    │  ┌──────────────────────┴───────────────────────────┐   │
-    │  │              基础设施层                            │   │
-    │  │  Redis (锁 + 缓存 + 限流)                          │   │
-    │  │  Ollama + bge-m3 (Embedding)                       │   │
-    │  │  MinIO (对象存储)                                  │   │
-    │  └──────────────────────────────────────────────────┘   │
-    └─────────────────────────────────────────────────────────┘
+    ┌──────────────────────────────────────────────────────────────────┐
+    │                    公司服务器                                      │
+    │  ┌───────────────────────────────────────────────────────────┐  │
+    │  │  Nginx (自动替换域名)                                       │  │
+    │  │  外网 HTTPS → 443 | 内网 HTTP → 80                        │  │
+    │  └──────────────────────┬────────────────────────────────────┘  │
+    │                         │                                       │
+    │  ┌──────────────────────┴────────────────────────────────────┐  │
+    │  │  MCP Gateway (FastAPI + mcp SDK)                          │  │
+    │  │  CORS 白名单: 外网域名 + 内网 IP 自动匹配                    │  │
+    │  └──────────────────────┬────────────────────────────────────┘  │
+    │                         │                                       │
+    │  ┌──────────────────────┴────────────────────────────────────┐  │
+    │  │  中央知识库引擎                                             │  │
+    │  │  Chroma (向量数据库) — 单 collection，全公司共享             │  │
+    │  └──────────────────────┬────────────────────────────────────┘  │
+    │                         │                                       │
+    │  ┌──────────────────────┴────────────────────────────────────┐  │
+    │  │  基础设施层                                                 │  │
+    │  │  Redis (锁 + 缓存) | Ollama + bge-m3 | MinIO (对象存储)     │  │
+    │  └────────────────────────────────────────────────────────────┘  │
+    └──────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -67,7 +61,7 @@
 ### 环境要求
 
 - Docker + Docker Compose
-- 服务器内存：建议 8GB+（Ollama  embedding 模型需要）
+- 服务器内存：建议 8GB+（Ollama embedding 模型需要）
 - 磁盘：根据知识库规模，建议 50GB+
 
 ### 1. 克隆并进入项目
@@ -81,10 +75,7 @@ cd knowledge-base-management
 
 ```bash
 cp .env.example .env
-# 编辑 .env，修改以下关键配置：
-# - MINIO_SECRET_KEY: MinIO 管理员密码
-# - SESSION_SECRET: 至少 32 位随机字符串
-# - OLLAMA_MODEL: 默认 bge-m3（中文效果优秀）
+# 编辑 .env，详见下方《配置指南》章节
 ```
 
 ### 3. 启动服务
@@ -119,17 +110,168 @@ docker compose up -d
 
 ---
 
-## 配置 Nginx + HTTPS（生产环境）
+## 配置指南
 
-将 `nginx/nginx.conf` 复制到服务器，修改 `server_name` 和 SSL 证书路径：
+### 环境变量完整参考
+
+所有配置项通过 `.env` 文件或环境变量注入，`docker compose up -d` 时自动生效。
+
+#### 基础配置
+
+| 变量 | 默认值 | 必填 | 说明 |
+|------|--------|------|------|
+| `APP_NAME` | `Knowledge Base Management` | 否 | 服务名称，影响页面标题和指标标签 |
+| `DEBUG` | `false` | 否 | 调试模式，开启后输出详细日志 |
+
+#### 域名与网络（企业部署关键）
+
+| 变量 | 默认值 | 必填 | 说明 |
+|------|--------|------|------|
+| `EXTERNAL_DOMAIN` | `kb.company.com` | 是 | **外网域名**。用于 Nginx HTTPS 的 server_name 和 SSL 证书路径；所有 Agent 通过此域名连接 SSE 端点 |
+| `INTERNAL_DOMAIN` | `kb.internal.company.com` | 否 | **内网域名**。用于企业内部 HTTP 访问，可不配，直接用 IP |
+| `EXTERNAL_IP` | `0.0.0.0` | 否 | 外网 HTTPS 监听 IP。`0.0.0.0` 监听所有网卡，可指定具体 IP |
+| `INTERNAL_IP` | `0.0.0.0` | 否 | 内网 HTTP 监听 IP |
+
+**配置示例：**
 
 ```bash
-# 安装证书（以 Let's Encrypt 为例）
-sudo certbot --nginx -d kb.yourcompany.com
+# 企业有外网域名
+EXTERNAL_DOMAIN=wiki.yourcompany.com
+INTERNAL_DOMAIN=wiki.internal.company.com
 
-# 复制配置
-sudo cp nginx/nginx.conf /etc/nginx/conf.d/kb.conf
-sudo nginx -t && sudo systemctl reload nginx
+# 企业无外网域名，纯内网使用
+EXTERNAL_DOMAIN=
+INTERNAL_DOMAIN=192.168.1.100
+```
+
+#### CORS 跨域
+
+| 变量 | 默认值 | 必填 | 说明 |
+|------|--------|------|------|
+| `CORS_ORIGINS` | `*` | 否 | **跨域白名单**。逗号分隔，指定允许前端跨域访问的来源。开发环境可保留 `*`，生产环境务必指定具体域名 |
+
+```bash
+# 多来源示例
+CORS_ORIGINS=https://wiki.yourcompany.com,http://192.168.1.100
+```
+
+#### 后端服务
+
+| 变量 | 默认值 | 必填 | 说明 |
+|------|--------|------|------|
+| `REDIS_URL` | `redis://redis:6379/0` | 否 | Redis 连接地址。Docker 内用服务名 `redis`，外部部署需改为实际地址 |
+| `CHROMA_HOST` | `chroma` | 否 | Chroma 服务主机名 |
+| `CHROMA_PORT` | `8000` | 否 | Chroma 服务端口 |
+| `CHROMA_COLLECTION` | `knowledge_base_management` | 否 | Chroma collection 名称。如需重置知识库可更改此项 |
+| `OLLAMA_URL` | `http://ollama:11434` | 否 | Ollama 服务地址 |
+| `OLLAMA_MODEL` | `bge-m3` | 否 | Embedding 模型名称，推荐 `bge-m3`（中文效果优秀） |
+
+#### MinIO 对象存储
+
+| 变量 | 默认值 | 必填 | 说明 |
+|------|--------|------|------|
+| `MINIO_ENDPOINT` | `minio:9000` | 否 | MinIO 服务地址 |
+| `MINIO_ROOT_USER` | `minioadmin` | 否 | MinIO 管理员用户名 |
+| `MINIO_SECRET_KEY` | `minioadmin` | **是** | **MinIO 管理员密码。生产环境必须修改！** |
+| `MINIO_BUCKET` | `kb-sources` | 否 | 存储桶名称。源文件存放在此桶中 |
+| `MINIO_SECURE` | `false` | 否 | MinIO TLS 开关 |
+
+#### 认证
+
+| 变量 | 默认值 | 必填 | 说明 |
+|------|--------|------|------|
+| `SESSION_SECRET` | - | **是** | **Session 加密密钥。生产环境必须设置！** 建议 `openssl rand -hex 32` 生成 |
+| `SESSION_MAX_AGE` | `86400` | 否 | Session 过期时间（秒），默认 24 小时 |
+
+#### 切片参数
+
+| 变量 | 默认值 | 必填 | 说明 |
+|------|--------|------|------|
+| `CHUNK_SIZE` | `512` | 否 | 切片大小（字符数）。文档较长时建议增大 |
+| `CHUNK_OVERLAP` | `50` | 否 | 切片重叠字符数，保持上下文连贯 |
+
+---
+
+### 部署场景
+
+#### 场景一：外网 + 内网双模式（推荐，需 SSL 证书）
+
+企业有公网域名和 SSL 证书，外网员工通过 HTTPS 访问，内网员工通过 HTTP 直连。
+
+```bash
+# 1. 配置域名
+echo "EXTERNAL_DOMAIN=wiki.yourcompany.com" >> .env
+echo "INTERNAL_DOMAIN=wiki.internal.company.com" >> .env
+echo "SESSION_SECRET=$(openssl rand -hex 32)" >> .env
+
+# 2. 准备 SSL 证书
+mkdir -p nginx/ssl/wiki.yourcompany.com
+# 将证书文件放入：
+#   nginx/ssl/wiki.yourcompany.com/fullchain.pem
+#   nginx/ssl/wiki.yourcompany.com/privkey.pem
+
+# 3. 启动
+docker compose up -d
+```
+
+访问方式：
+- **外网** → `https://wiki.yourcompany.com`（HTTPS，自动跳转）
+- **内网** → `http://wiki.internal.company.com` 或 `http://服务器IP`
+
+#### 场景二：纯内网部署（免 SSL）
+
+企业内部局域网使用，无需域名和证书。
+
+```bash
+# 1. 配置
+echo "EXTERNAL_DOMAIN=" >> .env          # 不启用外网 HTTPS
+echo "INTERNAL_DOMAIN=192.168.1.100" >> .env  # 替换为实际内网 IP
+echo "SESSION_SECRET=$(openssl rand -hex 32)" >> .env
+echo "CORS_ORIGINS=http://192.168.1.100" >> .env
+
+# 2. 启动
+docker compose up -d
+```
+
+内网用户通过 `http://192.168.1.100` 访问。
+
+#### 场景三：Windows 开发环境（无 Docker）
+
+性能有限的 Windows 设备，使用全原生组件，详见 `start-dev.ps1`。
+
+```powershell
+# 需要手动安装：Memurai（替代 Redis）、Ollama
+.\start-dev.ps1
+```
+
+---
+
+### Nginx SSL 证书配置
+
+#### 使用 Let's Encrypt（推荐）
+
+```bash
+# 安装 certbot
+sudo apt install certbot python3-certbot-nginx
+
+# 申请证书
+sudo certbot --nginx -d wiki.yourcompany.com
+
+# 证书位置：/etc/letsencrypt/live/wiki.yourcompany.com/
+# 复制到项目目录
+sudo mkdir -p nginx/ssl/wiki.yourcompany.com
+sudo cp /etc/letsencrypt/live/wiki.yourcompany.com/{fullchain.pem,privkey.pem} nginx/ssl/wiki.yourcompany.com/
+sudo chmod 755 nginx/ssl/wiki.yourcompany.com/privkey.pem
+```
+
+#### 使用自签名证书（内网测试）
+
+```bash
+mkdir -p nginx/ssl/kb.internal.company.com
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout nginx/ssl/kb.internal.company.com/privkey.pem \
+  -out nginx/ssl/kb.internal.company.com/fullchain.pem \
+  -subj "/CN=kb.internal.company.com"
 ```
 
 ---
@@ -156,7 +298,7 @@ AI Agent 通过 MCP 协议可调用以下工具：
 {
   "mcpServers": {
     "knowledge-base-management": {
-      "url": "https://kb.yourcompany.com/sse",
+      "url": "https://wiki.yourcompany.com/sse",
       "headers": {
         "X-API-Key": "sk-your-api-key-here"
       }
@@ -207,43 +349,45 @@ Agent/Web → Markdown 内容 → MinIO 保存源文件 → 切片 → Embedding
 
 ```
 .
-├── docker-compose.yml          # Docker 编排
-├── .env.example                # 环境变量模板
+├── docker-compose.yml              # Docker 编排（服务 + 网络）
+├── .env.example                    # 环境变量模板（含完整注释）
+├── .env                            # 实际配置（由运维人员创建，不提交 git）
 ├── nginx/
-│   └── nginx.conf              # Nginx 反向代理配置
+│   ├── nginx.conf.template         # Nginx 配置模板（envsubst 替换变量）
+│   └── ssl/                        # SSL 证书目录（按域名分目录）
 ├── config/
-│   ├── api_keys.json           # API Key 持久化存储
-│   └── admin_accounts.json     # 管理员账号
+│   ├── api_keys.json               # API Key 持久化存储
+│   └── admin_accounts.json         # 管理员账号（bcrypt 哈希）
 ├── mcp-gateway/
 │   ├── Dockerfile
 │   ├── requirements.txt
+│   ├── preview_server.py           # 预览服务器（开发调试用）
+│   ├── start-dev.ps1               # Windows 原生启动脚本
 │   └── src/
-│       ├── main.py             # FastAPI 入口
-│       ├── server.py           # MCP 服务器
-│       ├── tools.py            # MCP 工具实现
-│       ├── knowledge_base.py   # Chroma 封装
-│       ├── source_store.py     # MinIO 封装
-│       ├── embedding.py        # Ollama Embedding
-│       ├── chunker.py          # Markdown 切片
-│       ├── auth.py             # API Key 认证
-│       ├── admin_auth.py       # 管理员认证
-│       ├── lock.py             # Redis 分布式锁
-│       ├── directory_tree.py   # 目录树工具
-│       ├── config.py           # 配置管理
-│       ├── models.py           # Pydantic 模型
-│       └── admin/              # 后台管理
+│       ├── main.py                 # FastAPI 入口
+│       ├── server.py               # MCP 服务器
+│       ├── tools.py                # MCP 工具实现
+│       ├── knowledge_base.py       # Chroma 封装
+│       ├── source_store.py         # MinIO 封装
+│       ├── embedding.py            # Ollama Embedding
+│       ├── chunker.py              # Markdown 切片
+│       ├── auth.py                 # API Key 认证
+│       ├── admin_auth.py           # 管理员认证
+│       ├── lock.py                 # Redis 分布式锁
+│       ├── directory_tree.py       # 目录树工具
+│       ├── config.py               # 配置管理（BaseSettings）
+│       ├── backup_sources.py       # 源文件备份工具
+│       └── admin/                  # 后台管理
 │           ├── routes.py
 │           └── templates/
-│               ├── base.html
-│               ├── login.html
-│               ├── dashboard.html
-│               ├── documents.html
-│               ├── document_view.html
-│               ├── document_edit.html
-│               ├── upload.html
-│               ├── api_keys.html
-│               ├── api_key_create.html
-│               └── settings.html
+│               ├── base.html / dashboard.html / login.html
+│               ├── documents.html / upload.html
+│               ├── document_view.html / document_edit.html
+│               ├── directories.html / api_keys.html
+│               ├── api_key_create.html / settings.html / account.html
+├── plan.md / overview.md           # 设计文档
+├── start-dev.bat / stop-dev.bat    # Windows 快捷启动/停止
+└── 员工接入指南.md                  # 面向员工的 MCP 配置文档
 ```
 
 ---
@@ -305,15 +449,12 @@ docker compose logs -f ollama
 ### 备份
 
 ```bash
-# 备份 Chroma 数据
+# 备份 MinIO 源文件（使用备份脚本）
+docker compose exec mcp-gateway python src/backup_sources.py -o /backups
+
+# 备份 Chroma 向量数据
 docker compose exec chroma tar czf /tmp/chroma-backup.tar.gz /chroma/chroma
 docker compose cp chroma:/tmp/chroma-backup.tar.gz ./backups/
-
-# 备份 MinIO 数据
-docker compose exec minio mc mirror /data ./backups/minio
-
-# 备份 Redis
-docker compose exec redis redis-cli BGSAVE
 ```
 
 ---
@@ -341,12 +482,16 @@ docker compose down -v
 docker compose up -d
 ```
 
-### Q: 如何升级版本？
+### Q: 忘记管理员密码？
 
 ```bash
-docker compose pull
-docker compose up -d
+docker compose exec mcp-gateway python src/reset_admin_password.py admin 新密码
 ```
+
+### Q: 如何更改外网域名？
+
+A: 修改 `.env` 中的 `EXTERNAL_DOMAIN`，然后 `docker compose up -d` 重启即可。
+Nginx 配置模板会自动应用新域名。
 
 ---
 
@@ -360,7 +505,7 @@ docker compose up -d
 | 对象存储 | MinIO | 2025-01 |
 | 缓存/锁 | Redis | 7-alpine |
 | 后台 UI | Jinja2 + HTMX + TailwindCSS(CDN) | - |
-| 反向代理 | Nginx | - |
+| 反向代理 | Nginx (envsubst 模板) | 1.27 |
 | 部署 | Docker Compose | 3.9+ |
 
 ---
