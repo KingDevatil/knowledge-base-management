@@ -161,25 +161,31 @@ async def directories_page(request: Request, admin: dict = Depends(get_current_a
 
 @router.get("/api/directories")
 async def api_directories(request: Request, admin: dict = Depends(get_current_admin)):
-    """返回目录树 JSON（供前端使用）"""
+    """返回目录树 JSON（含用户创建的目录）"""
     tools = request.app.state.tools
     result = await tools.list_directories()
-    return JSONResponse(result.get("tree", result))
+    tree = result.get("tree", result)
+    # 合并用户手动创建的目录
+    from directory_store import merge_into_tree
+    tree = merge_into_tree(tree)
+    return JSONResponse(tree)
 
 
 @router.post("/api/directories/create")
 async def api_create_directory(request: Request, admin: dict = Depends(get_current_admin)):
-    """创建新目录（由前端目录管理页面调用）"""
+    """创建新目录"""
     body = await request.json()
     path = body.get("path", "").strip()
     if not path:
         raise HTTPException(status_code=400, detail="目录路径不能为空")
-    # 目录是隐式创建的（上传文档到该路径时自动创建）
-    # 此处仅验证路径格式，不实际写入（MinIO 无空目录概念）
     validated = DirectoryTree.validate_path(path)
     if not validated:
         raise HTTPException(status_code=400, detail="目录路径无效")
-    return JSONResponse({"path": validated, "message": "目录创建成功"})
+    # 持久化保存目录
+    from directory_store import create_directory
+    if create_directory(validated):
+        return JSONResponse({"path": validated, "message": "目录创建成功"})
+    raise HTTPException(status_code=500, detail="目录保存失败")
 
 
 @router.get("/api/documents")
