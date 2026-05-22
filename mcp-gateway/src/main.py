@@ -40,13 +40,23 @@ async def lifespan(app: FastAPI):
         port=settings.CHROMA_PORT,
     )
     app.state.kb = KnowledgeBase(app.state.chroma, settings.CHROMA_COLLECTION)
-    app.state.source_store = SourceStore(
-        endpoint=settings.MINIO_ENDPOINT,
-        access_key=settings.MINIO_ACCESS_KEY,
-        secret_key=settings.MINIO_SECRET_KEY,
-        bucket=settings.MINIO_BUCKET,
-        secure=settings.MINIO_SECURE,
-    )
+    # 源文件存储：优先 MinIO，不可用时回退到本地文件系统
+    try:
+        app.state.source_store = SourceStore(
+            endpoint=settings.MINIO_ENDPOINT,
+            access_key=settings.MINIO_ACCESS_KEY,
+            secret_key=settings.MINIO_SECRET_KEY,
+            bucket=settings.MINIO_BUCKET,
+            secure=settings.MINIO_SECURE,
+        )
+        logger.info("Source store: MinIO")
+    except Exception as e:
+        from local_store import LocalFileStore
+        app.state.source_store = LocalFileStore(
+            base_dir="kbdata/sources",
+            bucket=settings.MINIO_BUCKET,
+        )
+        logger.warning(f"MinIO unavailable ({e}), using LocalFileStore")
     app.state.embedder = OllamaEmbedder(settings.OLLAMA_URL, settings.OLLAMA_MODEL)
     app.state.api_key_auth = APIKeyAuth(app.state.redis, settings.API_KEY_FILE)
     app.state.admin_auth = AdminAuth(
