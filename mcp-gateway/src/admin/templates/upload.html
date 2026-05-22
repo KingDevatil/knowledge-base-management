@@ -88,9 +88,10 @@
 </div>
 
 <!-- 目录选择弹窗 -->
-<div id="dir-picker-modal" class="fixed inset-0 z-50 hidden">
+<div id="dir-picker-modal" class="fixed inset-0 z-50" style="display:none">
     <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" onclick="closeDirPicker()"></div>
-    <div class="relative flex items-center justify-center min-h-screen p-4">
+    <div class="fixed inset-0 flex items-center justify-center p-4 pointer-events-none">
+        <div class="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 w-full max-w-md pointer-events-auto" onclick="event.stopPropagation()">
         <div class="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 w-full max-w-md">
             <div class="flex items-center justify-between mb-4">
                 <h3 class="text-lg font-semibold text-slate-900 dark:text-white">选择目标目录</h3>
@@ -190,14 +191,12 @@
     // ---------- 目录选择 ----------
     function openDirPicker() {
         dirPickerSelected = pickedDir;
-        document.getElementById('dir-picker-modal').classList.remove('hidden');
-        document.getElementById('dir-picker-modal').classList.add('flex');
+        document.getElementById('dir-picker-modal').style.display = 'block';
         loadDirPickerTree();
     }
 
     function closeDirPicker() {
-        document.getElementById('dir-picker-modal').classList.add('hidden');
-        document.getElementById('dir-picker-modal').classList.remove('flex');
+        document.getElementById('dir-picker-modal').style.display = 'none';
     }
 
     async function loadDirPickerTree() {
