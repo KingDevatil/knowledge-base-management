@@ -280,15 +280,56 @@ openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
 
 AI Agent 通过 MCP 协议可调用以下工具：
 
-| 工具名 | 描述 | 权限 |
-|--------|------|------|
-| `search_knowledge` | 向量检索知识库 | read |
-| `add_document` | 添加新文档 | write |
-| `update_document` | 更新已有文档 | write |
-| `delete_document` | 删除文档 | write |
-| `list_documents` | 列出文档（分页） | read |
-| `import_markdown` | 导入 Markdown 内容 | write |
-| `list_directories` | 列出目录树结构 | read |
+| 工具名 | 描述 | 必填参数 | 可选参数 | 权限 |
+|--------|------|---------|---------|------|
+| `search_knowledge` | 向量检索 | `query` | `top_k`, `filter_tags`, `filter_path` | read |
+| `add_document` | 添加文档 | `title`, `content` | **`path`**, `tags` | write |
+| `update_document` | 更新文档 | `doc_id`, `title`, `content` | **`path`**, `tags` | write |
+| `delete_document` | 删除文档 | `doc_id` | - | write |
+| `list_documents` | 列出文档 | - | `path`, `tags`, `limit`, `offset` | read |
+| `import_markdown` | 导入 Markdown | `title`, `markdown_content` | **`path`**, `tags` | write |
+| `list_directories` | 目录树 | - | - | read |
+
+### 指定写入目录
+
+所有写入工具（`add_document`、`import_markdown`、`update_document`）都支持 `path` 参数，用于指定文档存放的目录路径。多级目录用 `/` 分隔：
+
+```json
+{
+  "title": "API 接口文档",
+  "content": "# 接口规范\n\n...",
+  "path": "技术文档/API参考",    // ← 写入到 技术文档/API参考 目录
+  "tags": ["技术"]
+}
+```
+
+完整调用示例：
+
+```json
+// 添加文档到指定目录
+{
+  "title": "服务器运维手册",
+  "content": "# 服务器运维...",
+  "path": "运维/服务器",
+  "tags": ["运维", "服务器"]
+}
+
+// 更新文档时修改目录
+{
+  "doc_id": "abc-123",
+  "title": "服务器运维手册",
+  "content": "# 更新后的内容...",
+  "path": "运维/生产环境",
+  "tags": ["运维", "生产"]
+}
+
+// 搜索时按目录筛选
+{
+  "query": "部署流程",
+  "filter_path": "运维",
+  "top_k": 5
+}
+```
 
 ### Cursor 配置示例
 
