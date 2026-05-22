@@ -55,7 +55,7 @@ services:
     image: chromadb/chroma:0.6.4
     restart: always
     volumes:
-      - chroma_data:/chroma/chroma
+      - ./kbdata/chroma:/chroma/chroma
     ports:
       - "127.0.0.1:8001:8000"
     environment:
@@ -73,7 +73,7 @@ services:
     restart: always
     command: server /data --console-address ":9001"
     volumes:
-      - minio_data:/data
+      - ./kbdata/minio:/data
     ports:
       - "127.0.0.1:9000:9000"
       - "127.0.0.1:9001:9001"
@@ -116,7 +116,7 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
-      - ./config:/app/config:ro
+      - ./kbdata/config:/app/config:rw
     environment:
       - REDIS_URL=redis://redis:6379/0
       - CHROMA_HOST=chroma
@@ -144,6 +144,4 @@ services:
 
 volumes:
   redis_data:
-  chroma_data:
-  minio_data:
   ollama_data:

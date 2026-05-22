@@ -21,11 +21,13 @@ Thumbs.db
 # WorkBuddy
 .workbuddy/
 
-# Data
+# Data (运行时数据与源码隔离)
+kbdata/
 data/
 chroma/
 minio.exe
 backups/
+dump.rdb
 
 # Temp
 nul

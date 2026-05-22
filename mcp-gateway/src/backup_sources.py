@@ -89,7 +89,7 @@ def main():
     parser.add_argument(
         "--output", "-o",
         default=os.path.join(
-            os.path.dirname(__file__), "..", "backups",
+            os.path.dirname(__file__), "..", "..", "backups",
             f"kb-sources-{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         ),
         help="备份输出目录 (默认: backups/kb-sources-<时间戳>)",

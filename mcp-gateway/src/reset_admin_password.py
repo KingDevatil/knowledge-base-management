@@ -17,7 +17,7 @@ import bcrypt
 
 # 默认配置文件路径（可通过环境变量覆盖）
 DEFAULT_ACCOUNTS_FILE = os.path.join(
-    os.path.dirname(__file__), "..", "..", "config", "admin_accounts.json"
+    os.path.dirname(__file__), "..", "..", "kbdata", "config", "admin_accounts.json"
 )
 ADMIN_ACCOUNTS_FILE = os.environ.get("ADMIN_ACCOUNTS_FILE", DEFAULT_ACCOUNTS_FILE)
 
