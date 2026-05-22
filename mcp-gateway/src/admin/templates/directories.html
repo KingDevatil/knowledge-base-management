@@ -1,0 +1,237 @@
+{% extends "base.html" %}
+
+{% block title %}目录管理 - 知识库管理后台{% endblock %}
+
+{% block content %}
+<header class="glass-header sticky top-0 z-20 border-b border-slate-200/80 dark:border-slate-800/80 px-8 py-4">
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-xl font-bold text-slate-900 dark:text-white">目录管理</h1>
+            <p class="text-sm text-slate-500 dark:text-slate-400 mt-0.5">管理和创建知识库文档目录结构</p>
+        </div>
+        <button onclick="openCreateModal()" class="btn-primary text-sm">
+            <i data-lucide="folder-plus" class="w-4 h-4"></i>
+            新建目录
+        </button>
+    </div>
+</header>
+
+<div class="px-8 py-6">
+    <!-- 目录树 -->
+    <div class="card p-6">
+        <h2 class="text-base font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
+            <i data-lucide="folder-tree" class="w-4 h-4 text-brand-500"></i>
+            全部目录
+        </h2>
+        <div id="directory-tree" class="space-y-1">
+            <div class="flex items-center gap-2 px-3 py-2 text-sm text-slate-500 dark:text-slate-400">
+                <i data-lucide="loader" class="w-4 h-4 animate-spin"></i>
+                加载中...
+            </div>
+        </div>
+    </div>
+
+    <!-- 目录下文档列表 -->
+    <div class="card p-6 mt-5" id="dir-docs-panel">
+        <h2 class="text-base font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
+            <i data-lucide="file-text" class="w-4 h-4 text-brand-500"></i>
+            目录文档
+            <span id="dir-docs-path" class="text-sm font-normal text-slate-400"></span>
+        </h2>
+        <div id="dir-docs-list" class="text-sm text-slate-400 text-center py-8">
+            <i data-lucide="mouse-pointer-click" class="w-8 h-8 mx-auto mb-2 text-slate-300"></i>
+            <p>点击左侧目录查看文档</p>
+        </div>
+    </div>
+</div>
+
+<!-- 新建目录弹窗 -->
+<div id="create-modal" class="fixed inset-0 z-50 hidden">
+    <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" onclick="closeCreateModal()"></div>
+    <div class="relative flex items-center justify-center min-h-screen p-4">
+        <div class="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 w-full max-w-md">
+            <div class="flex items-center justify-between mb-5">
+                <h3 class="text-lg font-semibold text-slate-900 dark:text-white">新建目录</h3>
+                <button onclick="closeCreateModal()" class="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <form id="create-dir-form" class="space-y-4">
+                <div>
+                    <label class="form-label">父目录</label>
+                    <select id="parent-dir" class="form-select">
+                        <option value="">根目录</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="form-label">目录名称 <span class="text-red-500">*</span></label>
+                    <input type="text" id="dir-name" required
+                        class="form-input"
+                        placeholder="如: 技术文档/API参考">
+                    <p class="text-xs text-slate-500 dark:text-slate-400 mt-1.5">支持多级目录，用 / 分隔</p>
+                </div>
+                <div class="flex gap-3 pt-2">
+                    <button type="submit" class="btn-primary flex-1">
+                        <i data-lucide="check" class="w-4 h-4"></i>
+                        创建
+                    </button>
+                    <button type="button" onclick="closeCreateModal()" class="btn-secondary flex-1">取消</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+    let currentTreeData = [];
+    let currentDir = '';
+
+    // 加载目录树
+    async function loadTree() {
+        try {
+            // 从文档管理 API 获取目录树
+            const resp = await fetch('/admin/api/directories');
+            const tree = await resp.json();
+            renderTree(tree, document.getElementById('directory-tree'));
+        } catch (e) {
+            document.getElementById('directory-tree').innerHTML =
+                '<div class="text-sm text-red-500 px-3 py-2">加载失败</div>';
+        }
+    }
+
+    function renderTree(node, container, depth) {
+        depth = depth || 0;
+        container.innerHTML = '';
+        if (node.children && node.children.length > 0) {
+            node.children.forEach(child => {
+                const item = document.createElement('div');
+                const hasChildren = child.children && child.children.length > 0;
+                const padding = depth * 20 + 12;
+                const path = child.path || child.name;
+
+                item.className = 'flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition-colors group';
+                item.style.paddingLeft = padding + 'px';
+
+                item.innerHTML = `
+                    <i data-lucide="${hasChildren ? 'folder' : 'folder-open'}" class="w-4 h-4 text-amber-500 flex-shrink-0"></i>
+                    <span class="text-sm text-slate-700 dark:text-slate-300 flex-1 truncate">${child.name}</span>
+                    <span class="text-xs text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity">${child.children ? child.children.length + ' 子目录' : '0 文档'}</span>
+                `;
+
+                item.addEventListener('click', () => selectDir(path, child));
+
+                container.appendChild(item);
+
+                // 递归渲染子目录
+                if (hasChildren) {
+                    const subContainer = document.createElement('div');
+                    renderTree(child, subContainer, depth + 1);
+                    container.appendChild(subContainer);
+                }
+            });
+        } else {
+            container.innerHTML = '<div class="text-sm text-slate-400 px-3 py-4 text-center">暂无目录，请先上传文档或创建目录</div>';
+        }
+    }
+
+    // 选中目录
+    function selectDir(path, node) {
+        currentDir = path;
+        document.getElementById('dir-docs-path').textContent = '/' + path;
+        document.getElementById('dir-docs-list').innerHTML =
+            '<div class="flex items-center justify-center py-8"><i data-lucide="loader" class="w-5 h-5 animate-spin text-brand-500"></i></div>';
+
+        // 获取该目录下的文档
+        fetch('/admin/api/documents?path=' + encodeURIComponent(path))
+            .then(r => r.json())
+            .then(docs => {
+                if (docs.length === 0) {
+                    document.getElementById('dir-docs-list').innerHTML = `
+                        <div class="text-center py-8">
+                            <i data-lucide="folder" class="w-8 h-8 mx-auto mb-2 text-slate-300"></i>
+                            <p class="text-sm text-slate-400">该目录下暂无文档</p>
+                            <a href="/admin/documents/upload?path=${encodeURIComponent(path)}" class="text-sm text-brand-600 hover:text-brand-700 mt-2 inline-block">上传文档</a>
+                        </div>`;
+                } else {
+                    let html = '<div class="divide-y divide-slate-100 dark:divide-slate-800">';
+                    docs.forEach(doc => {
+                        const title = doc.title || doc.doc_id;
+                        html += `<a href="/admin/documents/${doc.doc_id}" class="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors rounded-lg">
+                            <i data-lucide="file-text" class="w-4 h-4 text-slate-400"></i>
+                            <span class="text-sm text-slate-700 dark:text-slate-300">${title}</span>
+                            <span class="text-xs text-slate-400 ml-auto">${doc.updated_at || ''}</span>
+                        </a>`;
+                    });
+                    html += '</div>';
+                    document.getElementById('dir-docs-list').innerHTML = html;
+                }
+            })
+            .catch(() => {
+                document.getElementById('dir-docs-list').innerHTML =
+                    '<div class="text-center py-8 text-sm text-red-500">加载失败</div>';
+            });
+    }
+
+    // 新建目录弹窗
+    function openCreateModal() {
+        const select = document.getElementById('parent-dir');
+        // 清空并重建选项
+        select.innerHTML = '<option value="">根目录</option>';
+        if (currentTreeData.children) {
+            function addOptions(nodes, prefix) {
+                nodes.forEach(n => {
+                    const path = n.path || n.name;
+                    const opt = document.createElement('option');
+                    opt.value = path;
+                    opt.textContent = prefix + n.name;
+                    select.appendChild(opt);
+                    if (n.children) addOptions(n.children, prefix + '  ');
+                });
+            }
+            addOptions(currentTreeData.children, '');
+        }
+        document.getElementById('create-modal').classList.remove('hidden');
+        document.getElementById('create-modal').classList.add('flex');
+    }
+
+    function closeCreateModal() {
+        document.getElementById('create-modal').classList.add('hidden');
+        document.getElementById('create-modal').classList.remove('flex');
+    }
+
+    // 创建目录提交
+    document.getElementById('create-dir-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const parent = document.getElementById('parent-dir').value;
+        const name = document.getElementById('dir-name').value.trim();
+        if (!name) return;
+
+        const fullPath = parent ? parent + '/' + name : name;
+        try {
+            const resp = await fetch('/admin/api/directories/create', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: fullPath })
+            });
+            if (resp.ok) {
+                closeCreateModal();
+                document.getElementById('dir-name').value = '';
+                loadTree();
+            } else {
+                const err = await resp.json();
+                alert('创建失败: ' + (err.detail || '未知错误'));
+            }
+        } catch {
+            alert('网络错误');
+        }
+    });
+
+    // 初始化
+    loadTree();
+
+    // 监听 Lucide 图标重新渲染
+    document.addEventListener('DOMContentLoaded', () => {
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+    });
+</script>
+{% endblock %}

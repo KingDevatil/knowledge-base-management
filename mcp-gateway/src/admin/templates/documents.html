@@ -1,0 +1,199 @@
+{% extends "base.html" %}
+
+{% block title %}文档管理 - 企业中央知识库{% endblock %}
+
+{% block content %}
+<!-- 顶部栏 -->
+<header class="glass-header sticky top-0 z-20 border-b border-slate-200/80 dark:border-slate-800/80 px-8 py-4">
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-xl font-bold text-slate-900 dark:text-white">文档管理</h1>
+            <p class="text-sm text-slate-500 dark:text-slate-400 mt-0.5">管理、组织与检索知识库文档</p>
+        </div>
+        <div class="flex items-center gap-3">
+            <a href="/admin/documents/upload{% if current_path %}?path={{ current_path }}{% endif %}"
+               class="flex items-center gap-2 px-4 py-2.5 bg-brand-600 hover:bg-brand-700 text-white text-sm font-semibold rounded-xl shadow-lg shadow-brand-500/25 hover:shadow-brand-500/40 transition-all duration-200 hover:-translate-y-0.5">
+                <i data-lucide="upload-cloud" class="w-4 h-4"></i>
+                <span>上传文档</span>
+            </a>
+            <a href="/admin/documents/new/edit{% if current_path %}?path={{ current_path }}{% endif %}"
+               class="flex items-center gap-2 px-4 py-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-sm font-semibold rounded-xl hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-all">
+                <i data-lucide="file-plus" class="w-4 h-4"></i>
+                <span>新建</span>
+            </a>
+        </div>
+    </div>
+</header>
+
+<div class="px-8 py-6">
+    <!-- 面包屑 + 统计 -->
+    <div class="flex items-center justify-between mb-6">
+        <nav class="flex items-center gap-2 text-sm">
+            <a href="/admin/documents" class="text-slate-500 hover:text-brand-600 dark:hover:text-brand-400 transition-colors">全部文档</a>
+            {% for crumb in breadcrumbs %}
+            <i data-lucide="chevron-right" class="w-4 h-4 text-slate-300"></i>
+            <a href="/admin/documents?path={{ crumb.path }}" class="text-slate-500 hover:text-brand-600 dark:hover:text-brand-400 transition-colors">{{ crumb.name }}</a>
+            {% endfor %}
+        </nav>
+        <div class="flex items-center gap-4 text-sm text-slate-500">
+            <span>共 <strong class="text-slate-900 dark:text-white">{{ doc_count or documents | length }}</strong> 个文档</span>
+        </div>
+    </div>
+
+    <div class="flex gap-5">
+        <!-- 左侧目录树 -->
+        <div class="w-60 flex-shrink-0 space-y-4">
+            <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+                <div class="px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                    <h3 class="text-sm font-semibold text-slate-900 dark:text-white">目录</h3>
+                </div>
+                <div class="p-2 space-y-0.5">
+                    {% macro render_tree(node, level=0) %}
+                        {% if node.name != 'root' or node.children %}
+                        {% if node.name != 'root' %}
+                        <a href="/admin/documents?path={{ node.path }}"
+                           class="folder-item flex items-center gap-2 px-3 py-2 text-sm rounded-xl {% if current_path == node.path %}bg-brand-50 dark:bg-brand-500/10 text-brand-700 dark:text-brand-400 font-medium{% else %}text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50{% endif %}">
+                            {% if level > 0 %}<span class="w-4 text-center text-slate-300 text-xs">└</span>{% else %}<span class="w-4"></span>{% endif %}
+                            <i data-lucide="{% if current_path == node.path %}folder-open{% else %}folder{% endif %}"
+                               class="w-4 h-4 {% if current_path == node.path %}text-brand-500{% else %}text-slate-400{% endif %}"></i>
+                            <span>{{ node.name }}</span>
+                        </a>
+                        {% endif %}
+                        {% for child in node.children %}
+                            {{ render_tree(child, level + 1 if node.name != 'root' else 0) }}
+                        {% endfor %}
+                        {% endif %}
+                    {% endmacro %}
+                    {{ render_tree(tree) }}
+                </div>
+            </div>
+        </div>
+
+        <!-- 右侧文档列表 -->
+        <div class="flex-1 min-w-0">
+            <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+                <!-- 工具栏 -->
+                <div class="px-5 py-3.5 border-b border-slate-100 dark:border-slate-800 flex items-center gap-3">
+                    <div class="relative flex-1 max-w-md">
+                        <i data-lucide="search" class="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2"></i>
+                        <input type="text" name="q" value="{{ q }}"
+                            class="search-input w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:border-brand-500 transition-all"
+                            placeholder="搜索文档标题、标签或内容...">
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <select class="px-3 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-700 dark:text-slate-300 focus:outline-none focus:border-brand-500">
+                            <option>最近更新</option>
+                            <option>最早创建</option>
+                            <option>名称排序</option>
+                            <option>切片最多</option>
+                        </select>
+                    </div>
+                </div>
+
+                <table class="w-full">
+                    <thead>
+                        <tr class="border-b border-slate-100 dark:border-slate-800">
+                            <th class="px-5 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">文档</th>
+                            <th class="px-3 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">标签</th>
+                            <th class="px-3 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">切片</th>
+                            <th class="px-3 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">更新时间</th>
+                            <th class="px-5 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-50 dark:divide-slate-800/50">
+                        {% for doc in documents %}
+                        <tr class="doc-row group">
+                            <td class="px-5 py-4">
+                                <div class="flex items-center gap-3">
+                                    <div class="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-500/10 flex items-center justify-center flex-shrink-0">
+                                        <i data-lucide="file-text" class="w-5 h-5 text-blue-600 dark:text-blue-400"></i>
+                                    </div>
+                                    <div class="min-w-0">
+                                        <a href="/admin/documents/{{ doc.doc_id }}" class="text-sm font-semibold text-slate-900 dark:text-white hover:text-brand-600 dark:hover:text-brand-400 transition-colors block truncate">{{ doc.title }}</a>
+                                        <p class="text-xs text-slate-500 mt-0.5">{{ doc.path or '-' }}</p>
+                                    </div>
+                                </div>
+                            </td>
+                            <td class="px-3 py-4">
+                                <div class="flex flex-wrap gap-1.5">
+                                    {% for tag in doc.tags %}
+                                    <span class="tag-badge px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-xs font-medium rounded-lg">{{ tag }}</span>
+                                    {% endfor %}
+                                </div>
+                            </td>
+                            <td class="px-3 py-4">
+                                <span class="text-sm font-medium text-slate-700 dark:text-slate-300">{{ doc.chunk_count }}</span>
+                                <span class="text-xs text-slate-400 ml-1">切片</span>
+                            </td>
+                            <td class="px-3 py-4">
+                                <div class="text-sm text-slate-600 dark:text-slate-400">{{ doc.updated_at | relative_time }}</div>
+                            </td>
+                            <td class="px-5 py-4 text-right">
+                                <div class="flex items-center justify-end gap-1">
+                                    <a href="/admin/documents/{{ doc.doc_id }}" class="action-btn p-2 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-50 dark:hover:bg-brand-500/10 transition-all" title="查看">
+                                        <i data-lucide="eye" class="w-4 h-4"></i>
+                                    </a>
+                                    <a href="/admin/documents/{{ doc.doc_id }}/edit" class="action-btn p-2 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-50 dark:hover:bg-brand-500/10 transition-all" title="编辑">
+                                        <i data-lucide="pencil" class="w-4 h-4"></i>
+                                    </a>
+                                    <form method="post" action="/admin/documents/{{ doc.doc_id }}/delete"
+                                          hx-post="/admin/documents/{{ doc.doc_id }}/delete"
+                                          hx-confirm="确定删除文档「{{ doc.title }}」吗？此操作不可恢复。"
+                                          hx-target="closest tr"
+                                          hx-swap="outerHTML"
+                                          class="inline">
+                                        <button type="submit" class="action-btn p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 transition-all" title="删除">
+                                            <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                        </button>
+                                    </form>
+                                </div>
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="5" class="px-4 py-16 text-center">
+                                <div class="w-16 h-16 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center mx-auto mb-4">
+                                    <i data-lucide="inbox" class="w-8 h-8 text-slate-300 dark:text-slate-600"></i>
+                                </div>
+                                <p class="text-slate-500 dark:text-slate-400 text-sm mb-2">暂无文档</p>
+                                <a href="/admin/documents/new/edit" class="text-brand-600 dark:text-brand-400 hover:underline text-sm">创建第一个文档</a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+
+                <!-- 分页 -->
+                {% if documents %}
+                <div class="px-5 py-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <span class="text-sm text-slate-500">显示 <span class="font-medium text-slate-900 dark:text-white">1-{{ documents | length }}</span> 条</span>
+                    </div>
+                    <div class="flex items-center gap-1.5">
+                        {% if page > 1 %}
+                        <a href="/admin/documents?path={{ current_path }}&page={{ page - 1 }}" class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
+                            <i data-lucide="chevron-left" class="w-4 h-4"></i>
+                        </a>
+                        {% else %}
+                        <button class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-400 text-sm cursor-not-allowed" disabled>
+                            <i data-lucide="chevron-left" class="w-4 h-4"></i>
+                        </button>
+                        {% endif %}
+                        <span class="px-3.5 py-2 rounded-xl bg-brand-600 text-white text-sm font-medium">{{ page }}</span>
+                        {% if documents | length >= 20 %}
+                        <a href="/admin/documents?path={{ current_path }}&page={{ page + 1 }}" class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
+                            <i data-lucide="chevron-right" class="w-4 h-4"></i>
+                        </a>
+                        {% else %}
+                        <button class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-400 text-sm cursor-not-allowed" disabled>
+                            <i data-lucide="chevron-right" class="w-4 h-4"></i>
+                        </button>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+
+{% block title %}{% if is_new %}新建文档{% else %}编辑文档{% endif %} - 文档管理{% endblock %}
+
+{% block extra_head %}
+<style>
+    .editor-container {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1px;
+        background: #e2e8f0;
+        border-radius: 1rem;
+        overflow: hidden;
+        height: 520px;
+        border: 1px solid #e2e8f0;
+    }
+    .dark .editor-container {
+        background: #1e293b;
+        border-color: #334155;
+    }
+    .editor-pane {
+        background: white;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+    }
+    .dark .editor-pane {
+        background: #0f172a;
+    }
+    .editor-pane textarea {
+        width: 100%;
+        height: 100%;
+        resize: none;
+        border: none;
+        outline: none;
+        padding: 1rem;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Cascadia Code', monospace;
+        font-size: 14px;
+        line-height: 1.7;
+        background: transparent;
+        color: #0f172a;
+    }
+    .dark .editor-pane textarea {
+        color: #e2e8f0;
+    }
+    .editor-pane textarea::placeholder {
+        color: #94a3b8;
+    }
+    .preview-pane {
+        background: white;
+        padding: 1rem;
+        overflow: auto;
+    }
+    .dark .preview-pane {
+        background: #0f172a;
+        color: #e2e8f0;
+    }
+    .dark .preview-pane h1,
+    .dark .preview-pane h2,
+    .dark .preview-pane h3,
+    .dark .preview-pane h4,
+    .dark .preview-pane h5,
+    .dark .preview-pane h6 {
+        color: #f1f5f9;
+    }
+    .dark .preview-pane p {
+        color: #cbd5e1;
+    }
+    .dark .preview-pane code {
+        background: #1e293b;
+        color: #f472b6;
+    }
+    .dark .preview-pane pre {
+        background: #1e293b;
+    }
+    .dark .preview-pane pre code {
+        background: transparent;
+        color: #e2e8f0;
+    }
+    .dark .preview-pane blockquote {
+        border-left-color: #334155;
+        color: #94a3b8;
+    }
+    .dark .preview-pane a {
+        color: #818cf8;
+    }
+    .dark .preview-pane ul li::marker,
+    .dark .preview-pane ol li::marker {
+        color: #64748b;
+    }
+    .dark .preview-pane table th,
+    .dark .preview-pane table td {
+        border-color: #334155;
+    }
+    .dark .preview-pane table th {
+        background: #1e293b;
+    }
+    .dark .preview-pane hr {
+        border-color: #334155;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="p-8 max-w-5xl mx-auto">
+    <!-- 页面标题 -->
+    <div class="mb-6">
+        <h1 class="text-2xl font-bold text-slate-900 dark:text-white">{% if is_new %}新建文档{% else %}编辑文档{% endif %}</h1>
+        <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">
+            {% if is_new %}创建一篇新的知识库文档{% else %}修改文档内容与元数据{% endif %}
+        </p>
+    </div>
+
+    {% if error %}
+    <div class="alert alert-error mb-5">
+        {{ error }}
+    </div>
+    {% endif %}
+
+    <form method="post" action="/admin/documents/{{ doc_id or 'new' }}/edit" class="space-y-5">
+        <div class="card p-6 space-y-6">
+            <!-- 标题 -->
+            <div>
+                <label class="form-label">标题 <span class="text-red-500">*</span></label>
+                <input type="text" name="title" value="{{ title }}" required
+                    class="form-input"
+                    placeholder="请输入文档标题">
+            </div>
+
+            <!-- 所在目录 -->
+            <div>
+                <label class="form-label">所在目录 <span class="text-red-500">*</span></label>
+                <input type="text" name="path" value="{{ path }}"
+                    class="form-input"
+                    placeholder="如：技术/API（多级用/分隔）">
+                <p class="text-xs text-slate-500 dark:text-slate-400 mt-1.5">多级目录用 / 分隔，如：技术/API/认证</p>
+            </div>
+
+            <!-- 标签 -->
+            <div>
+                <label class="form-label">标签（逗号分隔）</label>
+                <input type="text" name="tags" value="{{ tags }}"
+                    class="form-input"
+                    placeholder="技术, API, 认证">
+            </div>
+
+            <!-- Markdown 编辑器 -->
+            <div>
+                <label class="form-label">内容（Markdown）</label>
+                <div class="editor-container mt-2">
+                    <div class="editor-pane">
+                        <textarea name="content" id="content-editor" placeholder="# 标题
+
+开始输入 Markdown 内容...">{{ content }}</textarea>
+                    </div>
+                    <div class="preview-pane prose prose-slate max-w-none dark:prose-invert" id="preview-pane">
+                        <p class="text-slate-400 dark:text-slate-500">右侧实时预览...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 提示 -->
+            <div class="alert alert-warning">
+                <div class="flex items-start gap-2">
+                    <i data-lucide="alert-circle" class="w-4 h-4 mt-0.5 flex-shrink-0"></i>
+                    <p>保存后将重新切片并更新知识库索引，可能需要几秒。如果写入锁被占用，请稍后重试。</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex gap-3">
+            <button type="submit" class="btn-primary">
+                <i data-lucide="save" class="w-4 h-4"></i>
+                保存
+            </button>
+            <a href="/admin/documents{% if path %}?path={{ path }}{% endif %}" class="btn-secondary">取消</a>
+        </div>
+    </form>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/marked@15.0.0/marked.min.js"></script>
+<script>
+    const editor = document.getElementById('content-editor');
+    const preview = document.getElementById('preview-pane');
+
+    function updatePreview() {
+        const text = editor.value;
+        if (!text.trim()) {
+            preview.innerHTML = '<p class="text-slate-400 dark:text-slate-500">右侧实时预览...</p>';
+            return;
+        }
+        preview.innerHTML = marked.parse(text);
+    }
+
+    editor.addEventListener('input', updatePreview);
+    updatePreview();
+</script>
+{% endblock %}

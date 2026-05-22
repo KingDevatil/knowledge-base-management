@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+
+{% block title %}API Key 管理 - 知识库管理后台{% endblock %}
+
+{% block content %}
+<div class="p-8 max-w-6xl mx-auto">
+    <!-- 页面标题 -->
+    <div class="mb-8 flex items-center justify-between">
+        <div>
+            <h1 class="text-2xl font-bold text-slate-900 dark:text-white">API Key 管理</h1>
+            <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">管理员工访问令牌与权限</p>
+        </div>
+        <a href="/admin/api-keys/create" class="btn-primary">
+            <i data-lucide="plus" class="w-4 h-4"></i>
+            新建 API Key
+        </a>
+    </div>
+
+    <!-- 状态标签 -->
+    <div class="flex gap-1 mb-6 bg-slate-100 dark:bg-slate-800/50 p-1 rounded-xl w-fit">
+        <a href="/admin/api-keys?status=active"
+           class="px-4 py-1.5 text-sm font-medium rounded-lg transition-all {% if current_status == 'active' %}bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm{% else %}text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200{% endif %}">
+            活跃
+        </a>
+        <a href="/admin/api-keys?status=expired"
+           class="px-4 py-1.5 text-sm font-medium rounded-lg transition-all {% if current_status == 'expired' %}bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm{% else %}text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200{% endif %}">
+            已过期
+        </a>
+        <a href="/admin/api-keys?status=revoked"
+           class="px-4 py-1.5 text-sm font-medium rounded-lg transition-all {% if current_status == 'revoked' %}bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm{% else %}text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200{% endif %}">
+            已吊销
+        </a>
+        <a href="/admin/api-keys?status=all"
+           class="px-4 py-1.5 text-sm font-medium rounded-lg transition-all {% if current_status == 'all' %}bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm{% else %}text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200{% endif %}">
+            全部
+        </a>
+    </div>
+
+    <!-- 数据表格 -->
+    <div class="card">
+        <table class="w-full">
+            <thead>
+                <tr>
+                    <th class="table-header">Key 前缀</th>
+                    <th class="table-header">申请人</th>
+                    <th class="table-header">权限</th>
+                    <th class="table-header">有效期</th>
+                    <th class="table-header">调用次数</th>
+                    <th class="table-header">状态</th>
+                    <th class="table-header text-right">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for key in keys %}
+                {% set is_expired_soon = key.expires_at and (key.expires_at | datetime) != '' and
+                     ((key.expires_at | string).replace('Z', '+00:00') | length > 0) %}
+                <tr class="doc-row {% if is_expired_soon and key.status == 'active' %}bg-amber-50/50 dark:bg-amber-500/5{% endif %}">
+                    <td class="table-cell font-mono text-xs text-slate-500 dark:text-slate-400">{{ key.key_prefix }}...</td>
+                    <td class="table-cell">
+                        <div>
+                            <p class="font-medium text-slate-900 dark:text-slate-100">{{ key.applicant }}</p>
+                            {% if key.applicant_note %}
+                            <p class="text-xs text-slate-500 dark:text-slate-400">{{ key.applicant_note }}</p>
+                            {% endif %}
+                        </div>
+                    </td>
+                    <td class="table-cell">
+                        {% if 'write' in key.scope %}
+                        <span class="badge badge-purple">读写</span>
+                        {% else %}
+                        <span class="badge badge-gray">只读</span>
+                        {% endif %}
+                    </td>
+                    <td class="table-cell text-sm">
+                        {% if key.duration == 'permanent' %}
+                        <span class="text-slate-500 dark:text-slate-400">长期有效</span>
+                        {% else %}
+                        <span class="text-slate-700 dark:text-slate-300">{{ key.duration }}</span>
+                        {% endif %}
+                        {% if key.expires_at %}
+                        <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{{ key.expires_at | datetime }}</p>
+                        {% endif %}
+                    </td>
+                    <td class="table-cell text-sm text-slate-700 dark:text-slate-300">{{ key.use_count }}</td>
+                    <td class="table-cell">
+                        {% if key.status == 'active' %}
+                        <span class="badge badge-green">
+                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                            活跃
+                        </span>
+                        {% elif key.status == 'expired' %}
+                        <span class="badge badge-gray">
+                            <span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                            已过期
+                        </span>
+                        {% else %}
+                        <span class="badge badge-red">
+                            <span class="w-1.5 h-1.5 rounded-full bg-red-500"></span>
+                            已吊销
+                        </span>
+                        {% endif %}
+                    </td>
+                    <td class="table-cell text-right">
+                        {% if key.status == 'active' %}
+                        <form method="post" action="/admin/api-keys/{{ key.key_hash }}/revoke"
+                              hx-post="/admin/api-keys/{{ key.key_hash }}/revoke"
+                              hx-confirm="确定吊销该 Key 吗？申请人 {{ key.applicant }} 将立即失去访问权限。"
+                              hx-target="closest tr"
+                              hx-swap="outerHTML"
+                              class="inline action-btn">
+                            <button type="submit" class="text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 text-sm font-medium transition-colors">吊销</button>
+                        </form>
+                        {% else %}
+                        <span class="text-slate-400 dark:text-slate-500 text-sm">-</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="7" class="px-4 py-16 text-center">
+                        <div class="w-16 h-16 mx-auto mb-4 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
+                            <i data-lucide="key" class="w-8 h-8 text-slate-400 dark:text-slate-500"></i>
+                        </div>
+                        <p class="text-slate-500 dark:text-slate-400 font-medium">暂无 API Key</p>
+                        <p class="text-sm text-slate-400 dark:text-slate-500 mt-1">点击右上角创建第一个 API Key</p>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

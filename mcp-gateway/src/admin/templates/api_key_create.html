@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+
+{% block title %}新建 API Key - 知识库管理后台{% endblock %}
+
+{% block content %}
+<div class="p-8 max-w-xl mx-auto">
+    <!-- 页面标题 -->
+    <div class="mb-6">
+        <h1 class="text-2xl font-bold text-slate-900 dark:text-white">新建 API Key</h1>
+        <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">为员工创建访问令牌</p>
+    </div>
+
+    {% if success %}
+    <!-- 成功状态 -->
+    <div class="card p-6 space-y-5">
+        <div class="flex items-center gap-3 text-emerald-700 dark:text-emerald-400">
+            <div class="w-10 h-10 rounded-xl bg-emerald-100 dark:bg-emerald-500/10 flex items-center justify-center">
+                <i data-lucide="check-circle" class="w-5 h-5"></i>
+            </div>
+            <span class="font-semibold text-base">API Key 创建成功！</span>
+        </div>
+
+        <div class="alert alert-warning">
+            <div class="flex items-start gap-2">
+                <i data-lucide="alert-triangle" class="w-4 h-4 mt-0.5 flex-shrink-0"></i>
+                <p>请立即复制以下 Key，页面关闭后将无法再次查看！</p>
+            </div>
+        </div>
+
+        <div class="bg-slate-900 rounded-xl p-4 border border-slate-700">
+            <div class="flex items-center justify-between gap-3">
+                <code class="text-emerald-400 font-mono text-sm break-all">{{ full_key }}</code>
+                <button type="button" onclick="copyKey()" id="copy-btn"
+                    class="flex-shrink-0 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white text-xs font-medium rounded-lg transition-colors">
+                    <span id="copy-text">复制</span>
+                </button>
+            </div>
+        </div>
+
+        <div class="text-sm text-slate-600 dark:text-slate-400 space-y-2 bg-slate-50 dark:bg-slate-800/50 rounded-xl p-4">
+            <div class="flex justify-between">
+                <span class="text-slate-500 dark:text-slate-400">申请人</span>
+                <span class="font-medium text-slate-900 dark:text-slate-200">{{ applicant }}</span>
+            </div>
+            <div class="flex justify-between">
+                <span class="text-slate-500 dark:text-slate-400">权限</span>
+                <span class="font-medium text-slate-900 dark:text-slate-200">{% if 'write' in scope %}读写{% else %}只读{% endif %}</span>
+            </div>
+            <div class="flex justify-between">
+                <span class="text-slate-500 dark:text-slate-400">有效期</span>
+                <span class="font-medium text-slate-900 dark:text-slate-200">{{ duration }}</span>
+            </div>
+        </div>
+
+        <div class="pt-2">
+            <a href="/admin/api-keys" class="btn-primary">完成，返回列表</a>
+        </div>
+    </div>
+
+    <script>
+        function copyKey() {
+            const key = '{{ full_key }}';
+            navigator.clipboard.writeText(key).then(() => {
+                const btn = document.getElementById('copy-text');
+                btn.textContent = '已复制';
+                setTimeout(() => btn.textContent = '复制', 2000);
+            });
+        }
+    </script>
+    {% else %}
+    <!-- 创建表单 -->
+    <form method="post" action="/admin/api-keys/create" class="card p-6 space-y-6">
+        <!-- 申请人 -->
+        <div>
+            <label class="form-label">申请人 <span class="text-red-500">*</span></label>
+            <input type="text" name="applicant" required
+                class="form-input"
+                placeholder="员工姓名">
+        </div>
+
+        <!-- 备注 -->
+        <div>
+            <label class="form-label">申请备注 / 用途</label>
+            <input type="text" name="applicant_note"
+                class="form-input"
+                placeholder="如：前端组，需要查询技术文档">
+        </div>
+
+        <!-- 权限 -->
+        <div>
+            <label class="form-label">权限 <span class="text-red-500">*</span></label>
+            <div class="space-y-3 mt-2">
+                <label class="flex items-center gap-3 p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/30 cursor-not-allowed">
+                    <input type="checkbox" name="scope_read" value="1" checked disabled
+                        class="w-4 h-4 text-brand-600 rounded focus:ring-brand-500 opacity-60">
+                    <div>
+                        <span class="text-sm font-medium text-slate-700 dark:text-slate-300">只读</span>
+                        <p class="text-xs text-slate-500 dark:text-slate-400">允许检索知识库</p>
+                    </div>
+                </label>
+                <label class="flex items-center gap-3 p-3 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-brand-300 dark:hover:border-brand-700 hover:bg-brand-50/30 dark:hover:bg-brand-500/5 cursor-pointer transition-all">
+                    <input type="checkbox" name="scope_write" value="1"
+                        class="w-4 h-4 text-brand-600 border-slate-300 dark:border-slate-600 rounded focus:ring-brand-500">
+                    <div>
+                        <span class="text-sm font-medium text-slate-700 dark:text-slate-300">读写</span>
+                        <p class="text-xs text-slate-500 dark:text-slate-400">额外允许添加、更新、删除文档</p>
+                    </div>
+                </label>
+            </div>
+        </div>
+
+        <!-- 有效期 -->
+        <div>
+            <label class="form-label">有效期 <span class="text-red-500">*</span></label>
+            <select name="duration" required class="form-select">
+                <option value="1d">1 天</option>
+                <option value="3d">3 天</option>
+                <option value="7d" selected>7 天</option>
+                <option value="30d">30 天</option>
+                <option value="permanent">长期有效</option>
+            </select>
+        </div>
+
+        <div class="flex gap-3 pt-2">
+            <button type="submit" class="btn-primary">生成 API Key</button>
+            <a href="/admin/api-keys" class="btn-secondary">取消</a>
+        </div>
+    </form>
+    {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}企业中央知识库{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.min.js" defer></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'Noto Sans SC', 'system-ui', 'sans-serif'],
+                    },
+                    colors: {
+                        brand: {
+                            50: '#eef2ff', 100: '#e0e7ff', 200: '#c7d2fe', 300: '#a5b4fc',
+                            400: '#818cf8', 500: '#6366f1', 600: '#4f46e5', 700: '#4338ca',
+                            800: '#3730a3', 900: '#312e81',
+                        },
+                    },
+                    animation: {
+                        'fade-in': 'fadeIn 0.4s ease-out',
+                        'slide-up': 'slideUp 0.4s ease-out',
+                        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                    },
+                    keyframes: {
+                        fadeIn: { '0%': { opacity: '0' }, '100%': { opacity: '1' } },
+                        slideUp: { '0%': { opacity: '0', transform: 'translateY(12px)' }, '100%': { opacity: '1', transform: 'translateY(0)' } },
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { font-family: 'Inter', 'Noto Sans SC', system-ui, sans-serif; }
+        .sidebar-item { transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
+        .sidebar-item:hover { transform: translateX(2px); }
+        .glass-header {
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(20px) saturate(180%);
+            -webkit-backdrop-filter: blur(20px) saturate(180%);
+        }
+        .dark .glass-header {
+            background: rgba(15, 23, 42, 0.85);
+        }
+        .stat-card {
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .stat-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+        }
+        .status-dot {
+            box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+            animation: statusPulse 2s infinite;
+        }
+        @keyframes statusPulse {
+            0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+            70% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+        }
+        .doc-row { transition: all 0.15s ease; }
+        .doc-row:hover { background: rgba(99, 102, 241, 0.03); }
+        .folder-item { transition: all 0.15s ease; }
+        .folder-item:hover { background: rgba(99, 102, 241, 0.06); }
+        .action-btn { opacity: 0; transition: all 0.2s ease; }
+        .doc-row:hover .action-btn, .doc-row:focus-within .action-btn { opacity: 1; }
+        .activity-item { transition: all 0.2s ease; }
+        .activity-item:hover { background: rgba(99, 102, 241, 0.04); }
+
+        /* Utility Classes for backward compatibility */
+        .btn-primary {
+            display: inline-flex; align-items: center; gap: 0.375rem;
+            padding: 0.5rem 1rem;
+            background: #4f46e5; color: white;
+            font-size: 0.875rem; font-weight: 500;
+            border-radius: 0.75rem;
+            transition: all 0.2s ease;
+            border: none; cursor: pointer;
+        }
+        .btn-primary:hover { background: #4338ca; }
+        .dark .btn-primary { background: #6366f1; }
+        .dark .btn-primary:hover { background: #818cf8; }
+
+        .btn-secondary {
+            display: inline-flex; align-items: center; gap: 0.375rem;
+            padding: 0.5rem 1rem;
+            background: white; color: #334155;
+            font-size: 0.875rem; font-weight: 500;
+            border-radius: 0.75rem;
+            border: 1px solid #e2e8f0;
+            transition: all 0.2s ease;
+            cursor: pointer; text-decoration: none;
+        }
+        .btn-secondary:hover { background: #f8fafc; border-color: #cbd5e1; }
+        .dark .btn-secondary { background: #1e293b; color: #cbd5e1; border-color: #334155; }
+        .dark .btn-secondary:hover { background: #334155; }
+
+        .btn-danger {
+            display: inline-flex; align-items: center; gap: 0.375rem;
+            padding: 0.5rem 1rem;
+            background: #dc2626; color: white;
+            font-size: 0.875rem; font-weight: 500;
+            border-radius: 0.75rem;
+            transition: all 0.2s ease;
+            border: none; cursor: pointer;
+        }
+        .btn-danger:hover { background: #b91c1c; }
+
+        .card {
+            background: white;
+            border-radius: 1rem;
+            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px -1px rgba(0, 0, 0, 0.05);
+            border: 1px solid #e2e8f0;
+            overflow: hidden;
+        }
+        .dark .card {
+            background: #0f172a;
+            border-color: #1e293b;
+        }
+
+        .table-header {
+            padding: 0.75rem 1rem;
+            text-align: left;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: #64748b;
+            background: #f8fafc;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        .dark .table-header {
+            color: #94a3b8;
+            background: #0f172a;
+            border-bottom-color: #1e293b;
+        }
+
+        .table-cell {
+            padding: 0.875rem 1rem;
+            font-size: 0.875rem;
+            color: #0f172a;
+            border-bottom: 1px solid #f1f5f9;
+        }
+        .dark .table-cell {
+            color: #e2e8f0;
+            border-bottom-color: #1e293b;
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 0.5rem 0.75rem;
+            border: 1px solid #e2e8f0;
+            border-radius: 0.75rem;
+            font-size: 0.875rem;
+            background: white;
+            color: #0f172a;
+            transition: all 0.2s ease;
+            outline: none;
+        }
+        .form-input:focus {
+            border-color: #818cf8;
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+        }
+        .dark .form-input {
+            background: #1e293b;
+            border-color: #334155;
+            color: #e2e8f0;
+        }
+        .dark .form-input:focus {
+            border-color: #6366f1;
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+        }
+
+        .form-select {
+            width: 100%;
+            padding: 0.5rem 0.75rem;
+            border: 1px solid #e2e8f0;
+            border-radius: 0.75rem;
+            font-size: 0.875rem;
+            background: white;
+            color: #0f172a;
+            transition: all 0.2s ease;
+            outline: none;
+            appearance: auto;
+        }
+        .form-select:focus {
+            border-color: #818cf8;
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+        }
+        .dark .form-select {
+            background: #1e293b;
+            border-color: #334155;
+            color: #e2e8f0;
+        }
+
+        /* Native select dropdown dark mode */
+        .dark select {
+            color-scheme: dark;
+        }
+
+        .form-label {
+            display: block;
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: #334155;
+            margin-bottom: 0.375rem;
+        }
+        .dark .form-label { color: #cbd5e1; }
+
+        .badge {
+            display: inline-flex; align-items: center; gap: 0.25rem;
+            padding: 0.125rem 0.5rem;
+            font-size: 0.75rem;
+            font-weight: 500;
+            border-radius: 9999px;
+        }
+
+        .badge-green { background: #ecfdf5; color: #047857; }
+        .dark .badge-green { background: rgba(16, 185, 129, 0.1); color: #34d399; }
+        .badge-red { background: #fef2f2; color: #b91c1c; }
+        .dark .badge-red { background: rgba(239, 68, 68, 0.1); color: #f87171; }
+        .badge-gray { background: #f3f4f6; color: #4b5563; }
+        .dark .badge-gray { background: rgba(148, 163, 184, 0.1); color: #94a3b8; }
+        .badge-yellow { background: #fefce8; color: #a16207; }
+        .dark .badge-yellow { background: rgba(234, 179, 8, 0.1); color: #facc15; }
+        .badge-purple { background: #f5f3ff; color: #6d28d9; }
+        .dark .badge-purple { background: rgba(139, 92, 246, 0.1); color: #a78bfa; }
+        .badge-blue { background: #eff6ff; color: #1d4ed8; }
+        .dark .badge-blue { background: rgba(59, 130, 246, 0.1); color: #60a5fa; }
+
+        .alert {
+            padding: 0.75rem 1rem;
+            border-radius: 0.75rem;
+            font-size: 0.875rem;
+            border: 1px solid transparent;
+        }
+        .alert-error { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
+        .dark .alert-error { background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.2); color: #f87171; }
+        .alert-warning { background: #fffbeb; border-color: #fde68a; color: #92400e; }
+        .dark .alert-warning { background: rgba(234, 179, 8, 0.1); border-color: rgba(234, 179, 8, 0.2); color: #fbbf24; }
+        .alert-success { background: #ecfdf5; border-color: #a7f3d0; color: #065f46; }
+        .dark .alert-success { background: rgba(16, 185, 129, 0.1); border-color: rgba(16, 185, 129, 0.2); color: #34d399; }
+
+        {% block extra_css %}{% endblock %}
+    </style>
+    {% block extra_head %}{% endblock %}
+</head>
+<body class="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
+    {% block body %}
+    <div class="flex min-h-screen">
+        <!-- 侧边栏 -->
+        <aside class="w-64 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col fixed h-full z-30">
+            <!-- Logo -->
+            <div class="px-6 py-5 border-b border-slate-100 dark:border-slate-800">
+                <div class="flex items-center gap-3">
+                    <div class="relative">
+                        <div class="absolute inset-0 bg-brand-500 rounded-xl blur-lg opacity-20"></div>
+                        <div class="relative w-9 h-9 rounded-xl bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center">
+                            <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path>
+                            </svg>
+                        </div>
+                    </div>
+                    <div>
+                        <h1 class="text-base font-bold text-slate-900 dark:text-white leading-tight">知识库</h1>
+                        <p class="text-[11px] text-slate-500 dark:text-slate-400 font-medium">Enterprise KB</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 导航 -->
+            <nav class="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
+                <div class="px-3 mb-2 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">概览</div>
+                <a href="/admin/dashboard" class="sidebar-item flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-xl {% if request.url.path == '/admin/dashboard' or request.url.path.startswith('/admin/dashboard') %}bg-brand-50 dark:bg-brand-500/10 text-brand-700 dark:text-brand-400{% else %}text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-slate-200{% endif %}">
+                    <i data-lucide="layout-dashboard" class="w-[18px] h-[18px]"></i>
+                    <span>仪表盘</span>
+                </a>
+
+                <div class="px-3 mt-6 mb-2 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">管理</div>
+                <a href="/admin/directories" class="sidebar-item flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-xl {% if request.url.path == '/admin/directories' %}bg-brand-50 dark:bg-brand-500/10 text-brand-700 dark:text-brand-400{% else %}text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-slate-200{% endif %}">
+                    <i data-lucide="folder-tree" class="w-[18px] h-[18px]"></i>
+                    <span>目录管理</span>
+                </a>
+                <a href="/admin/documents" class="sidebar-item flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-xl {% if request.url.path.startswith('/admin/documents') %}bg-brand-50 dark:bg-brand-500/10 text-brand-700 dark:text-brand-400{% else %}text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-slate-200{% endif %}">
+                    <i data-lucide="file-text" class="w-[18px] h-[18px]"></i>
+                    <span>文档管理</span>
+                </a>
+                <a href="/admin/api-keys" class="sidebar-item flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-xl {% if request.url.path.startswith('/admin/api-keys') %}bg-brand-50 dark:bg-brand-500/10 text-brand-700 dark:text-brand-400{% else %}text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-slate-200{% endif %}">
+                    <i data-lucide="key" class="w-[18px] h-[18px]"></i>
+                    <span>API Key</span>
+                </a>
+
+                <div class="px-3 mt-6 mb-2 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">系统</div>
+                <a href="/admin/settings" class="sidebar-item flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-xl {% if request.url.path == '/admin/settings' %}bg-brand-50 dark:bg-brand-500/10 text-brand-700 dark:text-brand-400{% else %}text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-slate-200{% endif %}">
+                    <i data-lucide="settings" class="w-[18px] h-[18px]"></i>
+                    <span>系统设置</span>
+                </a>
+            </nav>
+
+            <!-- 用户信息 -->
+            <div class="px-3 py-3 border-t border-slate-100 dark:border-slate-800">
+                <div class="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                    <a href="/admin/account" class="flex items-center gap-3 flex-1 min-w-0 cursor-pointer">
+                        <div class="w-9 h-9 rounded-full bg-gradient-to-br from-brand-400 to-brand-600 flex items-center justify-center text-white text-sm font-bold flex-shrink-0">
+                            {{ admin.username[0] | upper }}
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <p class="text-sm font-semibold text-slate-900 dark:text-white truncate">{{ admin.username }}</p>
+                            <p class="text-xs text-slate-500 dark:text-slate-400">{{ admin.role }}</p>
+                        </div>
+                    </a>
+                    <button onclick="toggleTheme()" class="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">
+                        <i data-lucide="moon" class="w-4 h-4 hidden dark:block"></i>
+                        <i data-lucide="sun" class="w-4 h-4 block dark:hidden"></i>
+                    </button>
+                    <a href="/admin/logout" class="p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors">
+                        <i data-lucide="log-out" class="w-4 h-4"></i>
+                    </a>
+                </div>
+            </div>
+        </aside>
+
+        <!-- 主内容区 -->
+        <main class="flex-1 ml-64">
+            <!-- Toast 容器 -->
+            <div id="toast-container" class="fixed top-4 right-4 z-50 space-y-2"></div>
+
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+        });
+
+        function toggleTheme() {
+            const html = document.documentElement;
+            if (html.classList.contains('dark')) {
+                html.classList.remove('dark');
+                localStorage.theme = 'light';
+            } else {
+                html.classList.add('dark');
+                localStorage.theme = 'dark';
+            }
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+        }
+
+        if (localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+            document.documentElement.classList.add('dark');
+        }
+
+        // Toast 通知
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toast-container');
+            const colors = {
+                success: 'bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/20 text-emerald-800 dark:text-emerald-400',
+                error: 'bg-red-50 dark:bg-red-500/10 border-red-200 dark:border-red-500/20 text-red-800 dark:text-red-400',
+                warning: 'bg-amber-50 dark:bg-amber-500/10 border-amber-200 dark:border-amber-500/20 text-amber-800 dark:text-amber-400',
+            };
+            const toast = document.createElement('div');
+            toast.className = `${colors[type]} px-4 py-3 rounded-xl shadow-lg border flex items-center gap-2 text-sm backdrop-blur-sm`;
+            toast.innerHTML = `<span>${message}</span>`;
+            container.appendChild(toast);
+            setTimeout(() => toast.remove(), 4000);
+        }
+
+        // HTMX 事件监听
+        document.body.addEventListener('htmx:afterSwap', function(evt) {
+            lucide.createIcons();
+        });
+    </script>
+    {% block extra_js %}{% endblock %}
+    {% endblock %}
+</body>
+</html>
