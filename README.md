@@ -307,6 +307,47 @@ AI Agent 通过 MCP 协议可调用以下工具：
 }
 ```
 
+### 内网 MCP 配置
+
+企业内网部署时（无外网域名或 HTTPS），Agent 直接通过 HTTP 连接内网地址：
+
+```json
+{
+  "mcpServers": {
+    "knowledge-base-management": {
+      "url": "http://192.168.1.100/sse",     // ← 替换为实际内网 IP
+      "headers": {
+        "X-API-Key": "sk-your-api-key-here"
+      }
+    }
+  }
+}
+```
+
+内网地址可以是：
+- **IP 地址**：`http://192.168.1.100/sse`
+- **内网域名**：`http://wiki.internal.company.com/sse`
+- **mcp-proxy 中转**（用于 Claude Desktop 等需 stdio 模式的客户端）：
+
+```json
+{
+  "mcpServers": {
+    "knowledge-base-management": {
+      "command": "npx",
+      "args": ["-y", "mcp-proxy", "http://192.168.1.100/sse?api_key=sk-your-api-key-here"]
+    }
+  }
+}
+```
+
+> **访问方式速查：**
+>
+> | 部署模式 | Agent MCP URL | 管理员后台 |
+> |----------|---------------|------------|
+> | 外网 HTTPS | `https://wiki.yourcompany.com/sse` | `https://wiki.yourcompany.com/admin` |
+> | 内网 HTTP | `http://192.168.1.100/sse` | `http://192.168.1.100/admin` |
+> | Windows 开发 | `http://localhost:8000/sse` | `http://localhost:8000/admin` |
+
 ---
 
 ## API Key 管理
