@@ -93,3 +93,52 @@ make pull-model
 - [ ] 支持更多文件格式导入（.txt, .docx 等）
 - [ ] 全文检索补强（RedisSearch / Meilisearch）
 - [ ] 多语言 Embedding 模型切换
+
+## 部署指南
+
+### 网络架构
+
+```
+[外网用户] ──HTTPS──▶ [Nginx 443] ──proxy──▶ [mcp-gateway:8000]
+                                                  │
+[内网用户] ──HTTP───▶ [Nginx 80]  ──proxy──▶ [mcp-gateway:8000]
+                                                  │
+                                          ┌───────┼────────┐
+                                          ▼       ▼        ▼
+                                       Redis   Chroma   MinIO
+```
+
+### 部署方式
+
+#### 方式一：外网 + 内网双模式（推荐）
+
+```bash
+# 1. 将 SSL 证书放入 nginx/ssl/{your-domain}/ 目录
+# 2. 编辑 nginx/nginx.conf，替换 server_name 为你的域名
+# 3. 配置 .env 文件
+cp .env.example .env
+
+# 4. 启动
+docker compose up -d
+```
+
+- **外网访问**：`https://kb.company.com`（HTTPS，需 SSL 证书）
+- **内网访问**：`http://192.168.1.100`（HTTP 直连，无需证书）
+
+#### 方式二：纯内网部署（免 SSL）
+
+```bash
+export CORS_ORIGINS=http://192.168.1.100
+docker compose up -d
+```
+
+内网用户通过 `http://服务器IP` 直接访问管理员页面。
+
+### 关键配置项
+
+| 环境变量 | 用途 | 默认值 |
+|----------|------|--------|
+| `EXTERNAL_DOMAIN` | 外网域名 | `kb.company.com` |
+| `INTERNAL_DOMAIN` | 内网域名/IP | `kb.internal.company.com` |
+| `CORS_ORIGINS` | 跨域白名单 | `*`（部署时建议指定） |
+| `SESSION_SECRET` | Session 密钥 | **必须设置** |

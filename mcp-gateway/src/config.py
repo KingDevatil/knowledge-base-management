@@ -44,7 +44,9 @@ class Settings(BaseSettings):
     RATE_LIMIT_DEFAULT: int = 30  # 每分钟请求数
 
     # CORS
-    CORS_ORIGINS: str = "*"  # 逗号分隔，如 "https://app.company.com,https://admin.company.com"
+    EXTERNAL_DOMAIN: str = "kb.company.com"
+    INTERNAL_DOMAIN: str = "kb.internal.company.com"
+    CORS_ORIGINS: str = "*"  # 逗号分隔，如 "https://kb.company.com,http://192.168.1.100"
 
     class Config:
         env_file = ".env"
