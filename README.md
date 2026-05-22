@@ -88,7 +88,7 @@ docker compose up -d
 
 ### 4. 初始化管理员账号
 
-默认管理员账号已内置在 `config/admin_accounts.json`：
+默认管理员账号已内置在 `kbdata/config/admin_accounts.json`：
 
 - **用户名**: `admin`
 - **密码**: `admin123`
@@ -499,9 +499,14 @@ Agent/Web → Markdown 内容 → MinIO 保存源文件 → 切片 → Embedding
 ├── nginx/
 │   ├── nginx.conf.template         # Nginx 配置模板（envsubst 替换变量）
 │   └── ssl/                        # SSL 证书目录（按域名分目录）
-├── config/
-│   ├── api_keys.json               # API Key 持久化存储
-│   └── admin_accounts.json         # 管理员账号（bcrypt 哈希）
+├── kbdata/                         # 运行时数据（不提交 git）
+│   ├── config/                     # API Key、管理员账号、目录结构
+│   │   ├── api_keys.json
+│   │   ├── admin_accounts.json
+│   │   └── directories.json
+│   ├── minio/                      # MinIO 对象存储（原始文档）
+│   └── chroma/                     # Chroma 向量数据库
+├── config/                         # 配置模板（空目录，对应 Docker 挂载）
 ├── mcp-gateway/
 │   ├── Dockerfile
 │   ├── requirements.txt

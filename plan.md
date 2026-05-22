@@ -612,8 +612,11 @@ knowledge-base-management/
 │       ├── test_lock.py
 │       ├── test_admin.py
 │       └── test_directory_tree.py
-├── chroma/                         # Chroma 数据卷挂载点
-└── minio/                          # MinIO 数据卷挂载点
+├── kbdata/                         # 运行时数据（源码隔离，不提交 git）
+│   ├── config/                      # API Key、管理员账号、目录结构
+│   ├── minio/                       # MinIO 对象存储（原始文档）
+│   └── chroma/                      # Chroma 向量数据库
+└── config/                          # 配置模板（空目录）
 ```
 
 ---
