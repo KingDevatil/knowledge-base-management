@@ -366,9 +366,71 @@ AI Agent 通过 MCP 协议可调用以下工具：
 ```
 
 内网地址可以是：
-- **IP 地址**：`http://192.168.1.100/sse`
-- **内网域名**：`http://wiki.internal.company.com/sse`
-- **mcp-proxy 中转**（用于 Claude Desktop 等需 stdio 模式的客户端）：
+
+#### Windows 主机名（NetBIOS，零配置）
+
+Windows 局域网自带 NetBIOS 主机名解析，其他 Windows 设备直接用**计算机名**访问，DHCP 换 IP 也无需改配置：
+
+```json
+{
+  "mcpServers": {
+    "knowledge-base-management": {
+      "url": "http://KB-SERVER:8000/sse",     // ← 直接使用服务器计算机名
+      "headers": { "X-API-Key": "sk-xxx" }
+    }
+  }
+}
+```
+
+**生效条件**：Windows 默认启用，无需任何安装。服务器和工作站需在同一网段。验证方式：
+
+```powershell
+# 在客户端 ping 服务器主机名，能通即可
+ping KB-SERVER
+```
+
+#### mDNS 域名（.local，跨平台）
+
+mDNS 用 `.local` 后缀域名，Windows 10+、macOS、Linux 均支持，自动发现无需配置 DNS 服务器：
+
+```json
+{
+  "mcpServers": {
+    "knowledge-base-management": {
+      "url": "http://KB-SERVER.local:8000/sse",   // ← .local 域名
+      "headers": { "X-API-Key": "sk-xxx" }
+    }
+  }
+}
+```
+
+**Windows 检查**：
+
+```powershell
+# 确认 mDNS 服务在运行
+Get-Service fdrespub
+
+# 如未运行
+Start-Service fdrespub
+Set-Service fdrespub -StartupType Automatic
+```
+
+#### IP 地址 / 内网域名
+
+```json
+{
+  "mcpServers": {
+    "knowledge-base-management": {
+      "url": "http://192.168.1.100/sse",     // ← 固定 IP 或 DHCP 保留地址
+      "headers": {
+        "X-API-Key": "sk-your-api-key-here"
+      }
+    }
+  }
+}
+```
+
+#### mcp-proxy 中转（Claude Desktop 等需 stdio 模式的客户端）
 
 ```json
 {
