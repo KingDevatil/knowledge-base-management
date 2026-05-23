@@ -1,5 +1,5 @@
 import httpx
-from typing import List
+from typing import List, Union
 
 
 class OllamaEmbedder:
@@ -8,10 +8,15 @@ class OllamaEmbedder:
     def __init__(self, base_url: str, model: str = "bge-m3"):
         self.base_url = base_url.rstrip("/")
         self.model = model
-        self.client = httpx.AsyncClient(timeout=60.0)
+        self.client = httpx.AsyncClient(
+            timeout=60.0,
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=5),
+        )
 
-    async def embed(self, texts: List[str]) -> List[List[float]]:
-        """批量生成文本的 Embedding 向量"""
+    async def embed(self, texts: Union[str, List[str]]) -> List[List[float]]:
+        """生成文本 Embedding 向量。接受单条字符串或字符串列表。"""
+        if isinstance(texts, str):
+            texts = [texts]
         if not texts:
             return []
 
@@ -31,8 +36,8 @@ class OllamaEmbedder:
         return embeddings
 
     async def embed_single(self, text: str) -> List[float]:
-        """单条文本 Embedding"""
-        result = await self.embed([text])
+        """单条文本 Embedding（别名）"""
+        result = await self.embed(text)
         return result[0] if result else []
 
     async def health_check(self) -> bool:

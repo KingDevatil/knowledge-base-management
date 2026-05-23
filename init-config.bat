@@ -34,11 +34,24 @@ if not exist ".env" (
 )
 
 :: 替换 SESSION_SECRET
-powershell -NoProfile -Command "(Get-Content .env) -replace 'SESSION_SECRET=.*', 'SESSION_SECRET=%KEY%' | Set-Content .env"
+powershell -NoProfile -Command "(Get-Content .env -Encoding UTF8) -replace 'SESSION_SECRET=.*', 'SESSION_SECRET=%KEY%' | Set-Content .env -Encoding UTF8"
 echo ✅ SESSION_SECRET 已更新
 echo.
 
 :SKIP
+
+:: 初始化 kbdata/config/（管理员账户 + API Key + 目录结构）
+if not exist "kbdata\config" (
+    if exist "kbdata\config.example" (
+        xcopy kbdata\config.example kbdata\config /E /I /Q >nul
+        echo ✅ 已从 kbdata\config.example 初始化 kbdata\config/
+    ) else (
+        echo [INFO] kbdata\config.example 不存在，跳过配置初始化
+    )
+) else (
+    echo ✅ kbdata\config/ 已存在
+)
+
 echo.
 echo ========================================
 echo   配置完成！

@@ -159,6 +159,9 @@ if (-not $redisOk) {
     Log "Redis 6379 ok"
 }
 
+# 中央数据目录
+$env:KBDATA_DIR = "$PSScriptRoot\kbdata"
+
 # ---------- Step 5: Chroma ----------
 Write-Info "Step 5/7 - Checking Chroma..."
 Log "Check Chroma port 8001"
@@ -174,7 +177,7 @@ if (-not $chromaOk) {
     Write-Info "  -> Starting Chroma process (wait 10s)..."
     Log "Start Chroma process"
     try {
-        $p = Start-Process -FilePath "chroma" -ArgumentList "run --host localhost --port 8001 --path $PSScriptRoot\kbdata\chroma" -WindowStyle Hidden -PassThru
+        $p = Start-Process -FilePath "chroma" -ArgumentList "run --host localhost --port 8001 --path $env:KBDATA_DIR\chroma" -WindowStyle Hidden -PassThru
         Start-Sleep -Seconds 8
         try { $r = Invoke-WebRequest "http://localhost:8001/api/v2/heartbeat" -Method GET -TimeoutSec 3 -UseBasicParsing; if ($r.StatusCode -eq 200) { $chromaOk = $true; Write-Ok "Chroma started" } } catch { Log "Chroma still not reachable: $_" }
     } catch { Log "Chroma process start fail: $_" }
@@ -199,12 +202,12 @@ if (-not $minioOk) {
         if (-not (Test-Path $minioLocal)) {
             Write-Info "Downloading MinIO..."
             Log "Download MinIO"
-            try { Invoke-WebRequest "https://dl.min.io/server/minio/release/windows-amd64/minio.exe" -OutFile "$minioLocal" -UseBasicParsing; Write-Ok "Downloaded" } catch { Log "MinIO download fail: $_" }
+            try { Invoke-WebRequest "https://dl.minio.org.cn/server/minio/release/windows-amd64/minio.exe" -OutFile "$minioLocal" -UseBasicParsing; Write-Ok "Downloaded" } catch { Log "MinIO download fail: $_" }
         }
         if (Test-Path $minioLocal) { $minioExe = Get-Command "$minioLocal" -ErrorAction SilentlyContinue }
     }
     if ($minioExe) {
-        $dataDir = "$PSScriptRoot\kbdata\minio"
+        $dataDir = "$env:KBDATA_DIR\minio"
         try { New-Item -ItemType Directory -Path "$dataDir" -Force | Out-Null } catch {}
         Write-Info "Starting MinIO..."
         Log "Start MinIO: $($minioExe.Source)"
@@ -234,9 +237,11 @@ $env:MINIO_BUCKET = "kb-sources"
 $env:MINIO_SECURE = "false"
 $env:DEBUG = "true"
 $env:CORS_ORIGINS = "*"
+# 中央数据目录（所有运行时数据统一存放）
+$env:KBDATA_DIR = "$PSScriptRoot\kbdata"
 # 配置文件路径（Docker 默认路径不适用于 Windows）
-$env:ADMIN_ACCOUNTS_FILE = "$PSScriptRoot\kbdata\config\admin_accounts.json"
-$env:API_KEY_FILE = "$PSScriptRoot\kbdata\config\api_keys.json"
+$env:ADMIN_ACCOUNTS_FILE = "$env:KBDATA_DIR\config\admin_accounts.json"
+$env:API_KEY_FILE = "$env:KBDATA_DIR\config\api_keys.json"
 Log "PYTHONPATH=$env:PYTHONPATH"
 Log "REDIS_URL=$env:REDIS_URL"
 Write-Info ""

@@ -22,7 +22,8 @@ Thumbs.db
 .workbuddy/
 
 # Data (运行时数据与源码隔离)
-kbdata/
+kbdata/*
+!kbdata/config.example/
 data/
 chroma/
 minio.exe

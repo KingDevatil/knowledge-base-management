@@ -55,7 +55,7 @@ services:
     image: chromadb/chroma:0.6.4
     restart: always
     volumes:
-      - ./kbdata/chroma:/chroma/chroma
+      - ${KBDATA_DIR:-./kbdata}/chroma:/chroma/chroma
     ports:
       - "127.0.0.1:8001:8000"
     environment:
@@ -73,7 +73,7 @@ services:
     restart: always
     command: server /data --console-address ":9001"
     volumes:
-      - ./kbdata/minio:/data
+      - ${KBDATA_DIR:-./kbdata}/minio:/data
     ports:
       - "127.0.0.1:9000:9000"
       - "127.0.0.1:9001:9001"
@@ -116,8 +116,9 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
-      - ./kbdata/config:/app/config:rw
+      - ${KBDATA_DIR:-./kbdata}/config:/app/config:rw
     environment:
+      - KBDATA_DIR=${KBDATA_DIR:-}
       - REDIS_URL=redis://redis:6379/0
       - CHROMA_HOST=chroma
       - CHROMA_PORT=8000
@@ -132,6 +133,8 @@ services:
       - CORS_ORIGINS=${CORS_ORIGINS:-https://${EXTERNAL_DOMAIN:-kb.company.com},http://${INTERNAL_DOMAIN:-kb.internal.company.com}}
       - EXTERNAL_DOMAIN=${EXTERNAL_DOMAIN:-kb.company.com}
       - INTERNAL_DOMAIN=${INTERNAL_DOMAIN:-kb.internal.company.com}
+      - ADMIN_ACCOUNTS_FILE=${ADMIN_ACCOUNTS_FILE:-/app/config/admin_accounts.json}
+      - API_KEY_FILE=${API_KEY_FILE:-/app/config/api_keys.json}
     depends_on:
       redis:
         condition: service_healthy

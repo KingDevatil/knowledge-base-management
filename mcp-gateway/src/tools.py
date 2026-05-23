@@ -320,3 +320,69 @@ class KnowledgeTools:
             "doc_id": doc_id,
             "message": "文档删除成功",
         }
+
+    async def reindex_document(self, doc_id: str) -> dict:
+        """重新切片 & 向量化单个文档"""
+        chunks = await self.kb.get_document_chunks(doc_id)
+        if not chunks:
+            raise HTTPException(status_code=404, detail="文档不存在")
+
+        meta = chunks[0]["metadata"]
+        title = meta.get("title", "")
+        path = meta.get("path", "")
+        source_path = meta.get("source_path", "")
+        tags = meta.get("tags", "").split(",") if isinstance(meta.get("tags"), str) else (meta.get("tags") or [])
+
+        # 从 MinIO 读源文件
+        try:
+            if source_path:
+                content = self.source_store.get_source_by_full_path(source_path)
+            else:
+                content = self.source_store.get_source(doc_id, path)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"读取源文件失败: {e}")
+        if not content or not content.strip():
+            raise HTTPException(status_code=400, detail="源文件内容为空")
+
+        # 重新切片
+        new_chunks = chunk_markdown(content, self.settings.CHUNK_SIZE, self.settings.CHUNK_OVERLAP)
+        if not new_chunks:
+            raise HTTPException(status_code=400, detail="重新切片结果为空")
+
+        # 生成 Embedding
+        embeddings = await self.embedder.embed(new_chunks)
+        if not embeddings or len(embeddings) != len(new_chunks):
+            raise HTTPException(status_code=503, detail="Embedding 生成失败")
+
+        # 写锁保护下，删除旧切片 + 写入新切片
+        try:
+            async with self.write_lock:
+                await self.kb.delete_document(doc_id)
+                now = datetime.now(timezone.utc).isoformat()
+                metadata = {
+                    "path": path,
+                    "tags": tags,
+                    "source_path": source_path,
+                    "source_format": "markdown",
+                    "created_at": meta.get("created_at", now),
+                    "updated_at": now,
+                    "created_by": meta.get("created_by", "system"),
+                    "updated_by": "reindex",
+                }
+                await self.kb.add_document_chunks(
+                    doc_id=doc_id,
+                    title=title,
+                    chunks=new_chunks,
+                    embeddings=embeddings,
+                    metadata=metadata,
+                )
+        except WriteLockError:
+            raise HTTPException(status_code=423, detail="写入锁被占用，请稍后重试")
+
+        logger.info(f"Document reindexed: doc_id={doc_id}, title={title}, chunks_old={len(chunks)}, chunks_new={len(new_chunks)}")
+        return {
+            "success": True,
+            "doc_id": doc_id,
+            "chunks_old": len(chunks),
+            "chunks_new": len(new_chunks),
+        }

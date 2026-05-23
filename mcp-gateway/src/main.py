@@ -40,6 +40,7 @@ async def lifespan(app: FastAPI):
         port=settings.CHROMA_PORT,
     )
     app.state.kb = KnowledgeBase(app.state.chroma, settings.CHROMA_COLLECTION)
+    app.state.kb.set_redis(app.state.redis)  # 注入 Redis 用于文档索引缓存
     # 源文件存储：优先 MinIO，不可用时回退到本地文件系统
     try:
         app.state.source_store = SourceStore(
@@ -52,11 +53,13 @@ async def lifespan(app: FastAPI):
         logger.info("Source store: MinIO")
     except Exception as e:
         from local_store import LocalFileStore
+        import os as _os
+        fallback_base = _os.path.join(settings.KBDATA_DIR, "sources") if settings.KBDATA_DIR else "kbdata/sources"
         app.state.source_store = LocalFileStore(
-            base_dir="kbdata/sources",
+            base_dir=fallback_base,
             bucket=settings.MINIO_BUCKET,
         )
-        logger.warning(f"MinIO unavailable ({e}), using LocalFileStore")
+        logger.warning(f"MinIO unavailable ({e}), using LocalFileStore at {fallback_base}")
     app.state.embedder = OllamaEmbedder(settings.OLLAMA_URL, settings.OLLAMA_MODEL)
     app.state.api_key_auth = APIKeyAuth(app.state.redis, settings.API_KEY_FILE)
     app.state.admin_auth = AdminAuth(
@@ -109,7 +112,11 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Startup check failed for Ollama: {e}")
 
     try:
-        app.state.source_store.client.bucket_exists(settings.MINIO_BUCKET)
+        store = app.state.source_store
+        if hasattr(store, "client"):
+            store.client.bucket_exists(settings.MINIO_BUCKET)
+        else:
+            store.bucket_exists(settings.MINIO_BUCKET)
         startup_checks["minio"] = "ok"
     except Exception as e:
         startup_checks["minio"] = f"error: {str(e)}"
@@ -233,6 +240,16 @@ async def mcp_sse_endpoint(request: Request):
         )
 
 
+@app.post("/sse/messages/")
+async def mcp_sse_messages(request: Request):
+    """MCP SSE 消息端点（客户端通过 POST 发送请求到此端点）"""
+    api_key_auth = get_api_key_auth(request)
+    await api_key_auth.authenticate(request)
+    await request.app.state.sse_transport.handle_post_message(
+        request.scope, request.receive, request._send
+    )
+
+
 # ---------- API 端点（供 Agent 直接调用）----------
 
 @app.get("/api/search")
@@ -348,9 +365,13 @@ async def health_check(request: Request):
         health["services"]["ollama"] = f"error: {str(e)}"
         health["status"] = "degraded"
 
-    # MinIO
+    # MinIO / LocalFileStore
     try:
-        request.app.state.source_store.client.bucket_exists(settings.MINIO_BUCKET)
+        store = request.app.state.source_store
+        if hasattr(store, 'client'):
+            store.client.bucket_exists(settings.MINIO_BUCKET)
+        else:
+            store.bucket_exists(settings.MINIO_BUCKET)  # LocalFileStore
         health["services"]["minio"] = "ok"
     except Exception as e:
         health["services"]["minio"] = f"error: {str(e)}"

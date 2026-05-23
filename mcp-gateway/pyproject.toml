@@ -1,3 +1,7 @@
+# 此文件为补充声明（Poetry 格式）。
+# Docker 构建使用 requirements.txt（锁定版本），两者应保持同步。
+# 新增依赖请同时更新 requirements.txt。
+
 [tool.poetry.dependencies]
 python = "^3.11"
 fastapi = "^0.115.0"
@@ -18,3 +22,7 @@ mcp = "^1.6.0"
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
