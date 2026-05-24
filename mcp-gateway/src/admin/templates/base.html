@@ -275,20 +275,29 @@
 
             <!-- 导航 -->
             <nav class="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
+                {% if admin.role in ('super_admin', 'admin') %}
                 <div class="px-3 mb-2 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">概览</div>
                 <a href="/admin/dashboard" class="sidebar-item flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-xl {% if request.url.path == '/admin/dashboard' or request.url.path.startswith('/admin/dashboard') %}bg-brand-50 dark:bg-brand-500/10 text-brand-700 dark:text-brand-400{% else %}text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-slate-200{% endif %}">
                     <i data-lucide="layout-dashboard" class="w-[18px] h-[18px]"></i>
                     <span>仪表盘</span>
                 </a>
+                {% endif %}
 
-                <div class="px-3 mt-6 mb-2 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">管理</div>
+                <div class="px-3 mt-6 mb-2 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">{% if admin.role in ('super_admin', 'admin') %}管理{% else %}文档{% endif %}</div>
+                {% if admin.role in ('super_admin', 'admin') %}
                 <a href="/admin/directories" class="sidebar-item flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-xl {% if request.url.path == '/admin/directories' %}bg-brand-50 dark:bg-brand-500/10 text-brand-700 dark:text-brand-400{% else %}text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-slate-200{% endif %}">
                     <i data-lucide="folder-tree" class="w-[18px] h-[18px]"></i>
                     <span>目录管理</span>
                 </a>
+                {% endif %}
                 <a href="/admin/documents" class="sidebar-item flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-xl {% if request.url.path.startswith('/admin/documents') %}bg-brand-50 dark:bg-brand-500/10 text-brand-700 dark:text-brand-400{% else %}text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-slate-200{% endif %}">
                     <i data-lucide="file-text" class="w-[18px] h-[18px]"></i>
                     <span>文档管理</span>
+                </a>
+                {% if admin.role in ('super_admin', 'admin') %}
+                <a href="/admin/users" class="sidebar-item flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-xl {% if request.url.path.startswith('/admin/users') %}bg-brand-50 dark:bg-brand-500/10 text-brand-700 dark:text-brand-400{% else %}text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-slate-200{% endif %}">
+                    <i data-lucide="users" class="w-[18px] h-[18px]"></i>
+                    <span>用户管理</span>
                 </a>
                 <a href="/admin/api-keys" class="sidebar-item flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-xl {% if request.url.path.startswith('/admin/api-keys') %}bg-brand-50 dark:bg-brand-500/10 text-brand-700 dark:text-brand-400{% else %}text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-slate-200{% endif %}">
                     <i data-lucide="key" class="w-[18px] h-[18px]"></i>
@@ -300,6 +309,7 @@
                     <i data-lucide="settings" class="w-[18px] h-[18px]"></i>
                     <span>系统设置</span>
                 </a>
+                {% endif %}
             </nav>
 
             <!-- 用户信息 -->

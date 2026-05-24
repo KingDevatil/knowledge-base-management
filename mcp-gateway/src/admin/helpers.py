@@ -1,11 +1,12 @@
-"""Shared helpers for admin routes: auth, template filters, formatting."""
+"""Shared helpers for admin routes: auth guards, template filters, formatting."""
 import os
 from datetime import datetime, timezone
 
-from fastapi import Request
+from fastapi import Request, HTTPException
 from fastapi.templating import Jinja2Templates
 
 from config import get_settings
+from admin_auth import is_admin_role
 
 # Templates
 templates_dir = os.path.join(os.path.dirname(__file__), "templates")
@@ -13,14 +14,41 @@ templates = Jinja2Templates(directory=templates_dir)
 settings = get_settings()
 
 
-async def get_current_admin(request: Request):
-    """获取当前登录的管理员"""
+# ---- Auth guards ----
+
+async def get_current_user(request: Request) -> dict:
+    """获取当前登录用户（任意角色）"""
     admin_auth = request.app.state.admin_auth
     return await admin_auth.verify_session(request)
 
 
+async def require_admin(request: Request) -> dict:
+    """获取当前登录用户（仅限管理员）"""
+    admin_auth = request.app.state.admin_auth
+    user = await admin_auth.verify_session(request)
+    if not is_admin_role(user["role"]):
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+    return user
+
+
+async def get_current_admin(request: Request) -> dict:
+    """向后兼容别名"""
+    return await get_current_user(request)
+
+
+def check_path_access(user: dict, doc_path: str) -> bool:
+    """检查用户是否有权访问指定路径下的文档"""
+    if is_admin_role(user["role"]):
+        return True
+    authorized = user.get("authorized_paths", [])
+    if not authorized:
+        return False
+    return any(doc_path == p or doc_path.startswith(p + "/") for p in authorized)
+
+
+# ---- Template filters ----
+
 def format_datetime(dt_str: str) -> str:
-    """格式化日期时间"""
     if not dt_str:
         return ""
     try:
@@ -31,7 +59,6 @@ def format_datetime(dt_str: str) -> str:
 
 
 def format_relative_time(dt_str: str) -> str:
-    """相对时间"""
     if not dt_str:
         return ""
     try:
@@ -52,6 +79,5 @@ def format_relative_time(dt_str: str) -> str:
         return dt_str
 
 
-# Register template filters
 templates.env.filters["datetime"] = format_datetime
 templates.env.filters["relative_time"] = format_relative_time

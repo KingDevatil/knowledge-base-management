@@ -5,12 +5,21 @@ from minio import Minio
 from minio.commonconfig import CopySource
 from minio.error import S3Error
 
+# Default timeout for MinIO operations (seconds)
+MINIO_CONNECT_TIMEOUT = 5
+MINIO_READ_TIMEOUT = 30
+
 
 class SourceStore:
     """MinIO 源文件存储管理（支持多级目录树）"""
 
     def __init__(self, endpoint: str, access_key: str, secret_key: str, bucket: str, secure: bool = False):
-        self.client = Minio(endpoint, access_key, secret_key, secure=secure)
+        # Use httpx timeout for MinIO client
+        import httpx
+        http_client = httpx.Client(
+            timeout=httpx.Timeout(connect=MINIO_CONNECT_TIMEOUT, read=MINIO_READ_TIMEOUT, pool=10),
+        )
+        self.client = Minio(endpoint, access_key, secret_key, secure=secure, http_client=http_client)
         self.bucket = bucket
         # 确保 bucket 存在
         if not self.client.bucket_exists(bucket):

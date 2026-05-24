@@ -20,6 +20,7 @@ from knowledge_base import KnowledgeBase
 from source_store import SourceStore
 from embedding import OllamaEmbedder
 from tools import KnowledgeTools
+from models import AddDocumentRequest, UpdateDocumentRequest, ReindexByPathRequest
 from server import create_mcp_server
 from logger import setup_logger
 from mcp.server.sse import SseServerTransport
@@ -174,6 +175,38 @@ async def log_requests(request: Request, call_next):
     )
     return response
 
+
+# CSRF 防护中间件 (defense-in-depth, complements SameSite=Lax cookies)
+CSRF_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+CSRF_CHECK_PREFIXES = ("/admin/",)  # Only check admin routes (API endpoints use API Key auth)
+
+
+@app.middleware("http")
+async def csrf_protection(request: Request, call_next):
+    """Lightweight CSRF check: require HX-Request or valid Origin for state-changing admin requests."""
+    if request.method.upper() not in CSRF_SAFE_METHODS:
+        if any(request.url.path.startswith(p) for p in CSRF_CHECK_PREFIXES):
+            # HTMX requests are safe (browser-enforced custom header)
+            if request.headers.get("HX-Request"):
+                return await call_next(request)
+
+            # Check Origin header if present (modern browsers send it)
+            origin = request.headers.get("Origin")
+            if origin:
+                from urllib.parse import urlparse
+                origin_host = urlparse(origin).netloc
+                host_header = request.headers.get("Host", "")
+                if origin_host != host_header and not origin_host.endswith(f".{host_header}"):
+                    logger.warning(f"CSRF: Origin mismatch - origin={origin}, host={host_header}")
+                    return JSONResponse(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        content={"detail": "CSRF check failed: Origin mismatch"},
+                    )
+            # If no Origin and no HX-Request, allow through but log (some clients don't send Origin)
+            # The SameSite=Lax cookie is the primary CSRF defense
+
+    return await call_next(request)
+
 # 静态文件
 static_dir = os.path.join(os.path.dirname(__file__), "admin", "static")
 if os.path.exists(static_dir):
@@ -267,32 +300,30 @@ async def api_search(
 
 
 @app.post("/api/documents")
-async def api_add_document(request: Request):
+async def api_add_document(request: Request, body: AddDocumentRequest):
     api_key_auth = get_api_key_auth(request)
     await api_key_auth.authenticate(request, required_scope="write")
     tools = get_tools(request)
-    body = await request.json()
     result = await tools.add_document(
-        title=body.get("title", ""),
-        content=body.get("content", ""),
-        path=body.get("path", ""),
-        tags=body.get("tags") or [],
+        title=body.title,
+        content=body.content,
+        path=body.path,
+        tags=body.tags,
     )
     return JSONResponse(result)
 
 
 @app.put("/api/documents/{doc_id}")
-async def api_update_document(request: Request, doc_id: str):
+async def api_update_document(request: Request, doc_id: str, body: UpdateDocumentRequest):
     api_key_auth = get_api_key_auth(request)
     await api_key_auth.authenticate(request, required_scope="write")
     tools = get_tools(request)
-    body = await request.json()
     result = await tools.update_document(
         doc_id=doc_id,
-        title=body.get("title", ""),
-        content=body.get("content", ""),
-        path=body.get("path", ""),
-        tags=body.get("tags") or [],
+        title=body.title,
+        content=body.content,
+        path=body.path,
+        tags=body.tags,
     )
     return JSONResponse(result)
 
@@ -419,6 +450,12 @@ async def metrics(request: Request):
 try:
     from admin.routes import router as admin_router
     app.include_router(admin_router, prefix="/admin")
+    # 用户管理路由 (admin only)
+    from admin.user_routes import user_router
+    app.include_router(user_router, prefix="/admin")
+    # 分享路由（公开，无 /admin 前缀，基于 token 鉴权）
+    from admin.share_routes import share_router
+    app.include_router(share_router)
 except ImportError:
     pass  # 后台路由将在后续实现
 

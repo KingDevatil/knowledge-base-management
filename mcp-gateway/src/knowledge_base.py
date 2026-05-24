@@ -219,6 +219,28 @@ class KnowledgeBase:
         # 真正分页
         return [DocumentInfo(**d) for d in doc_list[offset:offset + limit]]
 
+    async def list_documents_by_paths(
+        self,
+        paths: List[str],
+        limit: int = 20,
+        offset: int = 0
+    ) -> List[DocumentInfo]:
+        """列出多个目录（含子目录前缀匹配）下的文档"""
+        doc_list = await self._doc_index_all()
+        if not doc_list:
+            await self._doc_index_rebuild()
+            doc_list = await self._doc_index_all()
+
+        if paths:
+            doc_list = [
+                d for d in doc_list
+                if any(d.get("path", "") == p or d.get("path", "").startswith(p + "/")
+                       for p in paths)
+            ]
+
+        doc_list.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+        return [DocumentInfo(**d) for d in doc_list[offset:offset + limit]]
+
     async def get_document_chunks(self, doc_id: str) -> List[dict]:
         """获取某文档的所有切片"""
         results = self.collection.get(

@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     # 认证配置
     API_KEY_FILE: str = "/app/config/api_keys.json"
     ADMIN_ACCOUNTS_FILE: str = "/app/config/admin_accounts.json"
-    SESSION_SECRET: str = "change-me-in-production"
+    SESSION_SECRET: str = ""
     SESSION_MAX_AGE: int = 86400
 
     # Redis
@@ -76,6 +76,17 @@ class Settings(BaseSettings):
         if self.API_KEY_FILE == self._DEFAULT_API_KEY_FILE:
             object.__setattr__(self, "API_KEY_FILE",
                                os.path.join(data_dir, "config", "api_keys.json"))
+        return self
+
+    @model_validator(mode="after")
+    def _validate_security_settings(self):
+        """安全设置校验 — 在非 DEBUG 模式下拒绝弱配置"""
+        if not self.DEBUG:
+            if not self.SESSION_SECRET or len(self.SESSION_SECRET) < 32:
+                raise ValueError(
+                    "SESSION_SECRET must be at least 32 characters in production. "
+                    "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+                )
         return self
 
 

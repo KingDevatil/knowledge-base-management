@@ -228,10 +228,17 @@
             </div>
         </div>
         <div class="flex gap-2 flex-shrink-0">
+            {% if admin.role in ('super_admin', 'admin') %}
             <a href="/admin/documents/{{ doc_id }}/edit" class="btn-secondary text-xs px-3 py-1.5">
                 <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
                 编辑
             </a>
+            {% endif %}
+            <button onclick="toggleSharePanel()" class="btn-secondary text-xs px-3 py-1.5">
+                <i id="share-icon" data-lucide="share-2" class="w-3.5 h-3.5"></i>
+                分享
+            </button>
+            {% if admin.role in ('super_admin', 'admin') %}
             <form method="post" action="/admin/documents/{{ doc_id }}/delete"
                   hx-post="/admin/documents/{{ doc_id }}/delete"
                   hx-confirm="&#x786e;&#x5b9a;&#x5220;&#x9664;&#x6587;&#x6863;&#x300c;{{ title }}&#x300d;&#x5417;&#xff1f;&#x6b64;&#x64cd;&#x4f5c;&#x4e0d;&#x53ef;&#x6062;&#x590d;&#x3002;"
@@ -241,9 +248,129 @@
                     删除
                 </button>
             </form>
+            {% endif %}
         </div>
     </div>
 </div>
+
+<!-- Share Panel -->
+<div id="share-panel" class="hidden border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-6 py-4">
+    <div class="flex items-center justify-between mb-3">
+        <h3 class="text-sm font-semibold text-slate-900 dark:text-white flex items-center gap-2">
+            <i data-lucide="share-2" class="w-4 h-4 text-indigo-500"></i>
+            分享此文档
+        </h3>
+        <button onclick="toggleSharePanel()" class="text-slate-400 hover:text-slate-600">&times;</button>
+    </div>
+
+    <!-- Create new share -->
+    <div class="flex items-center gap-3 mb-4">
+        <select id="share-duration" class="px-3 py-2 text-sm bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-lg">
+            <option value="1">1 天</option>
+            <option value="7" selected>7 天</option>
+            <option value="30">30 天</option>
+            <option value="365">1 年</option>
+        </select>
+        <button onclick="createShare()" id="share-create-btn"
+                class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2">
+            <i data-lucide="link" class="w-3.5 h-3.5"></i>
+            生成分享链接
+        </button>
+        <span id="share-result" class="text-sm hidden"></span>
+    </div>
+
+    <!-- Existing shares -->
+    <div id="existing-shares" class="space-y-2 text-sm">
+        <p class="text-xs text-slate-400 mb-2">加载中...</p>
+    </div>
+</div>
+
+<script>
+function toggleSharePanel() {
+    const panel = document.getElementById('share-panel');
+    panel.classList.toggle('hidden');
+    if (!panel.classList.contains('hidden')) {
+        loadShares();
+    }
+}
+
+async function createShare() {
+    const btn = document.getElementById('share-create-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i> 生成中...';
+    document.getElementById('share-result').classList.add('hidden');
+
+    const duration = document.getElementById('share-duration').value;
+    try {
+        const resp = await fetch('/admin/api/documents/{{ doc_id }}/share/create', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({duration_days: parseInt(duration)}),
+        });
+        const data = await resp.json();
+        if (data.url) {
+            document.getElementById('share-result').innerHTML =
+                `<span class="text-emerald-600 font-medium">链接已生成</span>
+                 <input type="text" value="${data.url}" readonly
+                        class="ml-2 px-3 py-1.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-lg text-xs w-96 cursor-text"
+                        onclick="this.select()">
+                 <button onclick="navigator.clipboard.writeText('${data.url}')" class="ml-1 px-2 py-1.5 text-xs text-indigo-600 hover:bg-indigo-50 rounded-lg">复制</button>`;
+            document.getElementById('share-result').classList.remove('hidden');
+            loadShares();
+        }
+    } catch(e) {
+        alert('创建分享失败: ' + e.message);
+    }
+    btn.disabled = false;
+    btn.innerHTML = '<i data-lucide="link" class="w-3.5 h-3.5"></i> 生成分享链接';
+    lucide.createIcons();
+}
+
+async function revokeShare(token, row) {
+    try {
+        const resp = await fetch('/admin/api/documents/{{ doc_id }}/share/revoke', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({token: token}),
+        });
+        if (resp.ok) {
+            row.remove();
+            if (document.querySelectorAll('#existing-shares .share-row').length === 0) {
+                document.getElementById('existing-shares').innerHTML = '<p class="text-xs text-slate-400">暂无分享链接</p>';
+            }
+        }
+    } catch(e) {
+        alert('撤销失败: ' + e.message);
+    }
+}
+
+async function loadShares() {
+    const container = document.getElementById('existing-shares');
+    try {
+        const resp = await fetch('/admin/api/documents/{{ doc_id }}/shares');
+        const shares = await resp.json();
+        if (shares.length === 0) {
+            container.innerHTML = '<p class="text-xs text-slate-400">暂无分享链接</p>';
+            return;
+        }
+        container.innerHTML = shares.map(s => `
+            <div class="share-row flex items-center justify-between py-2 px-3 bg-white dark:bg-slate-800 rounded-lg border border-slate-100 dark:border-slate-700">
+                <div class="flex items-center gap-2 min-w-0">
+                    <i data-lucide="link" class="w-3.5 h-3.5 text-slate-400 flex-shrink-0"></i>
+                    <code class="text-xs text-slate-600 dark:text-slate-400 truncate">${s.full_token}</code>
+                    <span class="text-xs text-slate-400 flex-shrink-0">至 ${(s.expires_at || '').slice(0,10)}</span>
+                    ${s.created_by ? '<span class="text-xs text-slate-400 flex-shrink-0">by ' + s.created_by + '</span>' : ''}
+                </div>
+                <button onclick="revokeShare('${s.full_token}', this.parentElement)"
+                        class="text-xs text-red-500 hover:text-red-700 ml-2 flex-shrink-0">撤销</button>
+            </div>
+        `).join('');
+    } catch(e) {
+        container.innerHTML = '<p class="text-xs text-red-500">加载失败</p>';
+    }
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+</script>
 
 <!-- Reading Panel -->
 <div class="flex">

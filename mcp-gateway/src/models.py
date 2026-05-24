@@ -47,3 +47,28 @@ class AdminAccount(BaseModel):
     password_hash: str
     role: Literal["super_admin", "admin"] = "admin"
     created_at: str
+
+
+# ---- API Request Models (input validation) ----
+
+MAX_CONTENT_LENGTH = 10 * 1024 * 1024  # 10 MB
+
+
+class AddDocumentRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=500, description="文档标题")
+    content: str = Field(..., min_length=1, max_length=MAX_CONTENT_LENGTH, description="文档 Markdown 内容")
+    path: str = Field(default="", max_length=500, description="目录路径")
+    tags: list[str] = Field(default_factory=list, description="标签列表")
+    created_by: str = Field(default="api", max_length=100)
+
+
+class UpdateDocumentRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=500)
+    content: str = Field(..., min_length=1, max_length=MAX_CONTENT_LENGTH)
+    path: str = Field(default="", max_length=500)
+    tags: list[str] = Field(default_factory=list)
+    updated_by: str = Field(default="api", max_length=100)
+
+
+class ReindexByPathRequest(BaseModel):
+    path: str = Field(default="", max_length=500, description="要重索引的目录路径")

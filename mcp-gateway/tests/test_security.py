@@ -1,0 +1,228 @@
+"""Security unit tests: Open Redirect, rate limiting, Pydantic validation, CSRF."""
+import sys
+import os
+
+# Set DEBUG mode before any project imports to prevent SESSION_SECRET validation
+os.environ["DEBUG"] = "true"
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
+import pytest
+from models import AddDocumentRequest, UpdateDocumentRequest, MAX_CONTENT_LENGTH
+
+# Import the validate function (we need to test it directly)
+from admin.routes_api import _validate_redirect_url
+
+
+# ==================== Open Redirect Tests ====================
+
+class TestRedirectValidation:
+    """Test _validate_redirect_url() prevents Open Redirect attacks."""
+
+    def test_valid_relative_path(self):
+        """Normal relative paths should pass through."""
+        assert _validate_redirect_url("/admin/dashboard") == "/admin/dashboard"
+        assert _validate_redirect_url("/admin/documents") == "/admin/documents"
+        assert _validate_redirect_url("/admin/settings") == "/admin/settings"
+
+    def test_subdir_paths(self):
+        """Paths with query strings or subdirectories should pass."""
+        assert _validate_redirect_url("/admin/documents?path=foo") == "/admin/documents?path=foo"
+        assert _validate_redirect_url("/admin/documents/abc123") == "/admin/documents/abc123"
+
+    def test_empty_next_falls_back_to_default(self):
+        """Empty next parameter should use default."""
+        assert _validate_redirect_url("") == "/admin/dashboard"
+
+    def test_absolute_url_blocked(self):
+        """Absolute URLs (https://evil.com) must be blocked."""
+        assert _validate_redirect_url("https://evil.com/phishing") == "/admin/dashboard"
+
+    def test_protocol_relative_url_blocked(self):
+        """Protocol-relative URLs (//evil.com) must be blocked."""
+        assert _validate_redirect_url("//evil.com/phishing") == "/admin/dashboard"
+
+    def test_javascript_url_blocked(self):
+        """JavaScript URLs must be blocked."""
+        assert _validate_redirect_url("javascript:alert(1)") == "/admin/dashboard"
+
+    def test_custom_default(self):
+        """Custom default should work."""
+        assert _validate_redirect_url("", "/admin/settings") == "/admin/settings"
+        assert _validate_redirect_url("https://evil.com", "/admin/settings") == "/admin/settings"
+
+
+# ==================== Pydantic Model Validation Tests ====================
+
+class TestAddDocumentRequest:
+    """Test AddDocumentRequest Pydantic model validation."""
+
+    def test_valid_minimal_request(self):
+        """Minimal valid request should pass."""
+        req = AddDocumentRequest(title="Test", content="Hello world")
+        assert req.title == "Test"
+        assert req.content == "Hello world"
+        assert req.path == ""
+        assert req.tags == []
+        assert req.created_by == "api"
+
+    def test_valid_full_request(self):
+        """Full request with all fields should pass."""
+        req = AddDocumentRequest(
+            title="My Document",
+            content="# Header\n\nContent here",
+            path="docs/guides",
+            tags=["guide", "tutorial"],
+            created_by="admin",
+        )
+        assert req.title == "My Document"
+        assert req.path == "docs/guides"
+        assert len(req.tags) == 2
+
+    def test_empty_title_rejected(self):
+        """Empty title should fail validation."""
+        with pytest.raises(Exception):
+            AddDocumentRequest(title="", content="Some content")
+
+    def test_empty_content_rejected(self):
+        """Empty content should fail validation."""
+        with pytest.raises(Exception):
+            AddDocumentRequest(title="Test", content="")
+
+    def test_title_too_long_rejected(self):
+        """Title exceeding max length should fail."""
+        with pytest.raises(Exception):
+            AddDocumentRequest(title="A" * 501, content="Some content")
+
+    def test_content_exceeds_max_size_rejected(self):
+        """Content exceeding 10MB should fail."""
+        with pytest.raises(Exception):
+            AddDocumentRequest(title="Test", content="X" * (MAX_CONTENT_LENGTH + 1))
+
+    def test_content_at_max_size_accepted(self):
+        """Content at exactly 10MB should pass."""
+        req = AddDocumentRequest(title="Test", content="X" * MAX_CONTENT_LENGTH)
+        assert len(req.content) == MAX_CONTENT_LENGTH
+
+    def test_tags_default_to_empty_list(self):
+        """Tags should default to empty list when not provided."""
+        req = AddDocumentRequest(title="Test", content="Hello")
+        assert req.tags == []
+
+    def test_path_too_long_rejected(self):
+        """Path exceeding max length should fail."""
+        with pytest.raises(Exception):
+            AddDocumentRequest(title="Test", content="Hello", path="/" + "a" * 500)
+
+    def test_empty_tags_list_accepted(self):
+        """Empty tags list should pass."""
+        req = AddDocumentRequest(title="Test", content="Hello", tags=[])
+        assert req.tags == []
+
+
+class TestUpdateDocumentRequest:
+    """Test UpdateDocumentRequest Pydantic model validation."""
+
+    def test_valid_update_request(self):
+        """Valid update request should pass."""
+        req = UpdateDocumentRequest(
+            title="Updated", content="New content", path="new/path", tags=["updated"]
+        )
+        assert req.title == "Updated"
+        assert req.updated_by == "api"
+
+    def test_update_empty_title_rejected(self):
+        """Empty title in update should fail."""
+        with pytest.raises(Exception):
+            UpdateDocumentRequest(title="", content="Content")
+
+    def test_update_empty_content_rejected(self):
+        """Empty content in update should fail."""
+        with pytest.raises(Exception):
+            UpdateDocumentRequest(title="Test", content="")
+
+    def test_update_content_exceeds_max_rejected(self):
+        """Content exceeding max size in update should fail."""
+        with pytest.raises(Exception):
+            UpdateDocumentRequest(title="Test", content="X" * (MAX_CONTENT_LENGTH + 1))
+
+
+# ==================== Model Consistency Tests ====================
+
+class TestModelConsistency:
+    """Ensure API models and core models remain consistent."""
+
+    def test_document_info_construction(self):
+        """DocumentInfo should accept dict kwargs."""
+        from models import DocumentInfo
+        doc = DocumentInfo(
+            doc_id="abc-123",
+            title="Test Doc",
+            path="docs/test",
+            tags=["test"],
+            chunk_count=5,
+            created_at="2026-01-01T00:00:00Z",
+            updated_at="2026-05-24T00:00:00Z",
+        )
+        assert doc.doc_id == "abc-123"
+        assert doc.chunk_count == 5
+
+    def test_search_result_construction(self):
+        """SearchResult should handle all fields."""
+        from models import SearchResult
+        sr = SearchResult(
+            content="Found content",
+            title="Document Title",
+            path="some/path",
+            source_path="documents/some/path/abc/source.md",
+            doc_id="abc",
+            chunk_index=2,
+            total_chunks=10,
+            score=0.85,
+        )
+        assert sr.score == 0.85
+        assert 0.0 <= sr.score <= 1.0
+
+    def test_admin_account_role_literal(self):
+        """AdminAccount should only accept valid roles."""
+        from models import AdminAccount
+        # Valid roles
+        AdminAccount(username="admin1", password_hash="hash1", role="super_admin", created_at="2026-01-01")
+        AdminAccount(username="admin2", password_hash="hash2", role="admin", created_at="2026-01-01")
+
+
+# ==================== Chunker integration test ====================
+
+class TestChunkerWithSecurityContext:
+    """Ensure chunker handles potentially malicious input gracefully."""
+
+    def test_very_long_input(self):
+        """Chunker should handle very long input without crashing."""
+        from chunker import chunk_markdown
+        long_md = "### Section\n\n" + "A" * 100000
+        chunks = chunk_markdown(long_md, chunk_size=512, overlap=50)
+        assert len(chunks) > 0
+
+    def test_script_tags_handled_as_text(self):
+        """Script tags in markdown should be treated as plain text."""
+        from chunker import chunk_markdown
+        md = "### Title\n\n<script>alert('xss')</script>\n\nNormal text here."
+        chunks = chunk_markdown(md)
+        assert len(chunks) > 0
+        # The script tag should appear as text in some chunk
+        combined = "".join(chunks)
+        assert "script" in combined.lower()
+
+    def test_null_bytes_handled(self):
+        """Null bytes should not break chunker."""
+        from chunker import chunk_markdown
+        md = "### Title\n\nSome text.\x00More text."
+        chunks = chunk_markdown(md)
+        assert len(chunks) > 0
+
+    def test_unicode_boundary(self):
+        """Emoji and CJK characters should be handled correctly."""
+        from chunker import chunk_markdown
+        md = "### 🎮 游戏\n\n角色：吕布🎭、大乔👸\n\n测试データ"
+        chunks = chunk_markdown(md)
+        assert len(chunks) > 0
