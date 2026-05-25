@@ -1,6 +1,7 @@
 import json
 import os
 import time
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
@@ -24,6 +25,7 @@ from models import AddDocumentRequest, UpdateDocumentRequest, ReindexByPathReque
 from server import create_mcp_server
 from logger import setup_logger
 from mcp.server.sse import SseServerTransport
+from mcp.server.streamable_http import StreamableHTTPServerTransport
 
 settings = get_settings()
 logger = setup_logger()
@@ -84,7 +86,7 @@ async def lifespan(app: FastAPI):
     app.state.mcp_server = create_mcp_server(app.state.tools)
     app.state.sse_transport = SseServerTransport("/sse/messages/")
 
-    # 加载 API Key 到 Redis
+    # 将文件中的 Key 同步到 Redis（不删除 Redis 中已有 Key）
     await app.state.api_key_auth._load_keys_to_redis()
 
     # 启动健康检查

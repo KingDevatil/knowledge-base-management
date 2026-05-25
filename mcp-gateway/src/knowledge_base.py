@@ -46,12 +46,32 @@ class KnowledgeBase:
             return
         await self._redis.hdel(DOC_INDEX_KEY, doc_id)
 
+    async def mark_doc_updating(self, doc_id: str) -> None:
+        """标记文档为 '更新中' 状态，搜索/列表时暂时跳过"""
+        info = await self._doc_index_get(doc_id)
+        if info:
+            info["__write_status"] = "updating"
+            await self._doc_index_set(doc_id, info)
+
+    async def set_doc_content_hash(self, doc_id: str, sha256_hash: str) -> None:
+        """缓存文档内容的 SHA256 哈希到 Redis，用于变更检测"""
+        info = await self._doc_index_get(doc_id) or {}
+        info["content_hash"] = sha256_hash
+        await self._doc_index_set(doc_id, info)
+
+    async def get_doc_content_hash(self, doc_id: str) -> str | None:
+        """从 Redis 读取文档内容哈希，不存在返回 None"""
+        info = await self._doc_index_get(doc_id)
+        return info.get("content_hash") if info else None
+
     async def _doc_index_all(self) -> List[dict]:
-        """从 Redis 获取所有文档索引"""
+        """从 Redis 获取所有文档索引（跳过正在写入中的文档）"""
         if not self._redis:
             return []
         raw = await self._redis.hgetall(DOC_INDEX_KEY)
-        return [json.loads(v) for v in raw.values()]
+        docs = [json.loads(v) for v in raw.values()]
+        # 过滤掉正在更新中的文档（锁内状态标记）
+        return [d for d in docs if d.get("__write_status") != "updating"]
 
     async def _doc_index_rebuild(self) -> int:
         """从 Chroma 重建文档索引到 Redis（首调用时或数据不一致时使用）"""

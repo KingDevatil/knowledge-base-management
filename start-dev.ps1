@@ -36,11 +36,16 @@ if ($Stop) {
         if ($t.Process -eq "memurai") {
             $svc = Get-Service -Name "Memurai" -ErrorAction SilentlyContinue
             if ($svc -and $svc.Status -eq "Running") {
-                Stop-Service -Name "Memurai" -Force
-                $count++
-                Write-Ok "  $($t.Name) (Windows service) x 1"
-                Log "Stopped $($t.Name) (Windows service)"
-                continue
+                try {
+                    Stop-Service -Name "Memurai" -Force -ErrorAction Stop
+                    $count++
+                    Write-Ok "  $($t.Name) (Windows service) x 1"
+                    Log "Stopped $($t.Name) (Windows service)"
+                    continue
+                } catch {
+                    Write-Warn "  $($t.Name) service stop failed (no admin?), trying taskkill..."
+                    Log "Memurai service stop failed: $_"
+                }
             }
         }
         $procs = Get-Process -Name $t.Process -ErrorAction SilentlyContinue

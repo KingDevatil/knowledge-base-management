@@ -51,7 +51,7 @@ class APIKeyAuth:
                 "applicant": info.get("applicant", ""),
                 "applicant_note": info.get("applicant_note", ""),
                 "role": info.get("role", "user"),
-                "scope": json.dumps(info.get("scope", ["read"])),
+                "scope": info.get("scope", ["read"]) if isinstance(info.get("scope"), str) else json.dumps(info.get("scope", ["read"])),
                 "rate_limit": str(info.get("rate_limit", 30)),
                 "status": info.get("status", "active"),
                 "duration": info.get("duration", "7d"),
@@ -275,6 +275,40 @@ class APIKeyAuth:
         await self._sync_redis_to_file()
         logger.info(f"API Key revoked: key_hash={key_hash}, revoked_by={revoked_by}")
         return True
+
+    async def delete_key(self, key_hash: str) -> bool:
+        """永久删除 Key（仅限已吊销的 Key）"""
+        redis_key = f"api_key:{key_hash}"
+        # 检查是否存在且已吊销
+        info = await self.redis.hgetall(redis_key)
+        if not info:
+            keys = self._load_keys_from_file()
+            if key_hash not in keys:
+                return False
+            info = keys.get(key_hash, {})
+
+        # 解码 bytes
+        info_decoded = {
+            k.decode() if isinstance(k, bytes) else k: v.decode() if isinstance(v, bytes) else v
+            for k, v in (info.items() if isinstance(info, dict) else [])
+        }
+        if info_decoded.get("status") != "revoked":
+            return False  # 只能删除已吊销的 Key
+
+        await self.redis.delete(redis_key)
+        await self._sync_redis_to_file()
+        logger.info(f"API Key deleted: key_hash={key_hash}")
+        return True
+
+    async def find_key(self, key_or_prefix: str) -> dict | None:
+        """按 hash 或 prefix 查找 Key"""
+        keys = await self.list_keys()
+        for k in keys:
+            if k["key_hash"] == key_or_prefix:
+                return k
+            if k.get("key_prefix", "") and k["key_prefix"].startswith(key_or_prefix):
+                return k
+        return None
 
     async def list_keys(self, status_filter: str | None = None) -> list[dict]:
         """列出所有 Key"""

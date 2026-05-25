@@ -230,7 +230,7 @@ async def api_keys_list(request: Request, user: dict = Depends(require_admin)):
 
     return templates.TemplateResponse(request, "api_keys.html", {
         "request": request, "admin": user, "keys": keys,
-        "status_filter": status_filter, "format_datetime": format_datetime,
+        "current_status": status_filter, "format_datetime": format_datetime,
     })
 
 

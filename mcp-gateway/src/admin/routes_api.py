@@ -336,22 +336,31 @@ async def api_key_create(
     if scope_write:
         scope.append("write")
 
-    try:
-        duration_days = int(duration) if duration != "forever" else None
-    except ValueError:
-        duration_days = None
+    # 转换为 create_key 期望的 "permanent" / "Nd" 格式
+    if duration in ("forever", "permanent"):
+        dur_value = "permanent"
+    else:
+        try:
+            days = int(duration)
+            dur_value = f"{days}d"
+        except ValueError:
+            dur_value = "7d"
 
     api_key_auth = request.app.state.api_key_auth
     api_key = await api_key_auth.create_key(
         applicant=applicant,
         applicant_note=applicant_note,
         scope=scope,
-        duration=duration_days,
+        duration=dur_value,
         created_by=user["username"],
     )
 
     return templates.TemplateResponse(request, "api_key_create.html", {
         "request": request, "admin": user, "created_key": api_key, "applicant": applicant,
+        "success": True,
+        "duration": "长期有效" if dur_value == "permanent" else
+                    f"{dur_value[:-1]} 天" if dur_value.endswith("d") else
+                    str(dur_value),
     })
 
 
@@ -360,10 +369,41 @@ async def api_key_revoke(
     request: Request, key_prefix: str, user: dict = Depends(require_admin),
 ):
     api_key_auth = request.app.state.api_key_auth
-    success = await api_key_auth.revoke_key(key_prefix)
+    revoked_by = user.get("username", "admin") if user else "admin"
+
+    target = await api_key_auth.find_key(key_prefix)
+    if not target:
+        raise HTTPException(status_code=404, detail="API Key 不存在")
+
+    success = await api_key_auth.revoke_key(target["key_hash"], revoked_by)
     if not success:
         raise HTTPException(status_code=404, detail="API Key 不存在")
-    return JSONResponse({"success": True, "message": "API Key 已吊销"})
+
+    status_param = request.query_params.get("status", "")
+    redirect_url = f"/admin/api-keys?status={status_param}" if status_param else "/admin/api-keys"
+    return RedirectResponse(url=redirect_url, status_code=302)
+
+
+@api_router.post("/api-keys/{key_prefix}/delete")
+async def api_key_delete(
+    request: Request, key_prefix: str, user: dict = Depends(require_admin),
+):
+    api_key_auth = request.app.state.api_key_auth
+
+    target = await api_key_auth.find_key(key_prefix)
+    if not target:
+        raise HTTPException(status_code=404, detail="API Key 不存在")
+
+    if target.get("status") != "revoked":
+        raise HTTPException(status_code=400, detail="只能删除已吊销的 API Key")
+
+    success = await api_key_auth.delete_key(target["key_hash"])
+    if not success:
+        raise HTTPException(status_code=404, detail="API Key 不存在")
+
+    status_param = request.query_params.get("status", "")
+    redirect_url = f"/admin/api-keys?status={status_param}" if status_param else "/admin/api-keys"
+    return RedirectResponse(url=redirect_url, status_code=302)
 
 
 # ---------- 账户管理 (all roles) ----------

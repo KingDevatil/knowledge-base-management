@@ -95,6 +95,8 @@ services:
       - ollama_data:/root/.ollama
     ports:
       - "127.0.0.1:11434:11434"
+    environment:
+      - OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL:-4}
     deploy:
       resources:
         reservations:

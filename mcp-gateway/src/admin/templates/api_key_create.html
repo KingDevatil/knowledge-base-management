@@ -29,7 +29,7 @@
 
         <div class="bg-slate-900 rounded-xl p-4 border border-slate-700">
             <div class="flex items-center justify-between gap-3">
-                <code class="text-emerald-400 font-mono text-sm break-all">{{ full_key }}</code>
+                <code class="text-emerald-400 font-mono text-sm break-all">{{ created_key }}</code>
                 <button type="button" onclick="copyKey()" id="copy-btn"
                     class="flex-shrink-0 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white text-xs font-medium rounded-lg transition-colors">
                     <span id="copy-text">复制</span>
@@ -59,7 +59,7 @@
 
     <script>
         function copyKey() {
-            const key = '{{ full_key }}';
+            const key = '{{ created_key }}';
             navigator.clipboard.writeText(key).then(() => {
                 const btn = document.getElementById('copy-text');
                 btn.textContent = '已复制';
@@ -90,14 +90,16 @@
         <div>
             <label class="form-label">权限 <span class="text-red-500">*</span></label>
             <div class="space-y-3 mt-2">
-                <label class="flex items-center gap-3 p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/30 cursor-not-allowed">
-                    <input type="checkbox" name="scope_read" value="1" checked disabled
-                        class="w-4 h-4 text-brand-600 rounded focus:ring-brand-500 opacity-60">
+                <label class="flex items-center gap-3 p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/30">
+                    <input type="checkbox" checked
+                        onclick="this.checked=true"
+                        class="w-4 h-4 text-brand-600 rounded focus:ring-brand-500 opacity-80">
                     <div>
                         <span class="text-sm font-medium text-slate-700 dark:text-slate-300">只读</span>
                         <p class="text-xs text-slate-500 dark:text-slate-400">允许检索知识库</p>
                     </div>
                 </label>
+                <input type="hidden" name="scope_read" value="1">
                 <label class="flex items-center gap-3 p-3 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-brand-300 dark:hover:border-brand-700 hover:bg-brand-50/30 dark:hover:bg-brand-500/5 cursor-pointer transition-all">
                     <input type="checkbox" name="scope_write" value="1"
                         class="w-4 h-4 text-brand-600 border-slate-300 dark:border-slate-600 rounded focus:ring-brand-500">

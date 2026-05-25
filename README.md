@@ -105,7 +105,8 @@ docker compose up -d
 | 后台管理 | `http://服务器IP:8000/admin` | 管理员登录入口 |
 | 健康检查 | `http://服务器IP:8000/health` | 服务状态 |
 | 运行指标 | `http://服务器IP:8000/metrics` | 运行时长、文档数等 |
-| MCP SSE | `http://服务器IP:8000/sse` | Agent 连接端点 |
+| MCP Streamable HTTP (推荐) | `http://服务器IP:8000/mcp` | Agent 连接端点（新版） |
+| MCP SSE (兼容) | `http://服务器IP:8000/sse` | Agent 连接端点（旧版） |
 | REST API | `http://服务器IP:8000/api/*` | 直接调用 API |
 
 ---
@@ -449,7 +450,7 @@ Set-Service fdrespub -StartupType Automatic
 > |----------|---------------|------------|
 > | 外网 HTTPS | `https://wiki.yourcompany.com/sse` | `https://wiki.yourcompany.com/admin` |
 > | 内网 HTTP | `http://192.168.1.100/sse` | `http://192.168.1.100/admin` |
-> | Windows 开发 | `http://localhost:8000/sse` | `http://localhost:8000/admin` |
+> | Windows 开发 |  （推荐）,  （兼容）`http://localhost:8000/sse` | `http://localhost:8000/admin` |
 
 ---
 
