@@ -10,6 +10,7 @@ class Settings(BaseSettings):
 
     # 服务
     APP_NAME: str = "Knowledge Base Management"
+    APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
 
     # ==================== 数据存储路径 ====================

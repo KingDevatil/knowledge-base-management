@@ -3,9 +3,10 @@
 运行: python test_integration.py
 """
 import sys, os, json, re, secrets, hashlib, asyncio
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "mcp-gateway", "src"))
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(_ROOT, "mcp-gateway", "src"))
 os.environ["DEBUG"] = "true"
-os.environ["KBDATA_DIR"] = os.path.join(os.path.dirname(__file__), "kbdata")
+os.environ["KBDATA_DIR"] = os.path.join(_ROOT, "kbdata")
 os.environ["REDIS_URL"] = "redis://localhost:6379/0"
 
 import fakeredis.aioredis as fakeredis

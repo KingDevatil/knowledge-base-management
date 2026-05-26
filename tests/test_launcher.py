@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 
 # 确保项目在路径中
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 # ---- 测试框架 ----

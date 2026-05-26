@@ -21,7 +21,6 @@ class APIKeyAuth:
     def __init__(self, redis_client: redis.Redis, api_key_file: str):
         self.redis = redis_client
         self.api_key_file = api_key_file
-        self._keys_cache: dict = {}
 
     def _hash_key(self, key: str) -> str:
         return hashlib.sha256(key.encode()).hexdigest()

@@ -1,13 +1,10 @@
-import json
 import os
-import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
 
 import chromadb
 import redis.asyncio as redis
 from fastapi import FastAPI, Request, HTTPException, status
-from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
@@ -22,15 +19,15 @@ from knowledge_base import KnowledgeBase
 from source_store import SourceStore
 from embedding import OllamaEmbedder
 from tools import KnowledgeTools
-from models import AddDocumentRequest, UpdateDocumentRequest, ReindexByPathRequest
 from server import create_mcp_server
 from logger import setup_logger
+from middleware import request_logging_middleware, csrf_middleware
+from api_routes import api_router
 from mcp.server.sse import SseServerTransport
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
 settings = get_settings()
 logger = setup_logger()
-START_TIME = time.time()
 
 # ---------- Lifespan 管理 ----------
 
@@ -171,53 +168,9 @@ app.add_middleware(
     https_only=not settings.DEBUG,
 )
 
-# 请求日志中间件
-@app.middleware("http")
-async def log_requests(request: Request, call_next):
-    start = time.time()
-    client_host = request.client.host if request.client else "-"
-    method = request.method
-    path = request.url.path
-
-    response = await call_next(request)
-
-    duration = time.time() - start
-    logger.info(
-        f"{client_host} - \"{method} {path} HTTP/1.1\" {response.status_code} {duration:.3f}s"
-    )
-    return response
-
-
-# CSRF 防护中间件 (defense-in-depth, complements SameSite=Lax cookies)
-CSRF_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
-CSRF_CHECK_PREFIXES = ("/admin/",)  # Only check admin routes (API endpoints use API Key auth)
-
-
-@app.middleware("http")
-async def csrf_protection(request: Request, call_next):
-    """Lightweight CSRF check: require HX-Request or valid Origin for state-changing admin requests."""
-    if request.method.upper() not in CSRF_SAFE_METHODS:
-        if any(request.url.path.startswith(p) for p in CSRF_CHECK_PREFIXES):
-            # HTMX requests are safe (browser-enforced custom header)
-            if request.headers.get("HX-Request"):
-                return await call_next(request)
-
-            # Check Origin header if present (modern browsers send it)
-            origin = request.headers.get("Origin")
-            if origin:
-                from urllib.parse import urlparse
-                origin_host = urlparse(origin).netloc
-                host_header = request.headers.get("Host", "")
-                if origin_host != host_header and not origin_host.endswith(f".{host_header}"):
-                    logger.warning(f"CSRF: Origin mismatch - origin={origin}, host={host_header}")
-                    return JSONResponse(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        content={"detail": "CSRF check failed: Origin mismatch"},
-                    )
-            # If no Origin and no HX-Request, allow through but log (some clients don't send Origin)
-            # The SameSite=Lax cookie is the primary CSRF defense
-
-    return await call_next(request)
+# Request logging + CSRF protection middleware
+app.middleware("http")(request_logging_middleware)
+app.middleware("http")(csrf_middleware)
 
 # 静态文件
 static_dir = os.path.join(os.path.dirname(__file__), "admin", "static")
@@ -227,16 +180,8 @@ if os.path.exists(static_dir):
 
 # ---------- 依赖注入辅助 ----------
 
-def get_tools(request: Request) -> KnowledgeTools:
-    return request.app.state.tools
-
-
-def get_api_key_auth(request: Request) -> APIKeyAuth:
-    return request.app.state.api_key_auth
-
-
-def get_admin_auth(request: Request) -> AdminAuth:
-    return request.app.state.admin_auth
+from dependencies import (get_tools, get_api_key_auth, get_admin_auth,
+                          get_kb, get_source_store, get_embedder, get_write_lock)
 
 
 # 未登录 401 → 重定向到登录页（适用于后台管理页面）
@@ -248,22 +193,6 @@ async def admin_auth_exception_handler(request: Request, exc: HTTPException):
         status_code=exc.status_code,
         content={"detail": exc.detail},
     )
-
-
-def get_kb(request: Request) -> KnowledgeBase:
-    return request.app.state.kb
-
-
-def get_source_store(request: Request) -> SourceStore:
-    return request.app.state.source_store
-
-
-def get_embedder(request: Request) -> OllamaEmbedder:
-    return request.app.state.embedder
-
-
-def get_write_lock(request: Request) -> WriteLock:
-    return request.app.state.write_lock
 
 
 # ---------- MCP Streamable HTTP 路由 ----------
@@ -328,166 +257,9 @@ async def mcp_sse_messages(request: Request):
     )
 
 
-# ---------- API 端点（供 Agent 直接调用）----------
+# ---------- REST API / Health / Metrics ----------
 
-@app.get("/api/search")
-async def api_search(
-    request: Request,
-    q: str,
-    top_k: int = 5,
-    path: str = "",
-):
-    api_key_auth = get_api_key_auth(request)
-    await api_key_auth.authenticate(request, required_scope="read")
-    tools = get_tools(request)
-    result = await tools.search_knowledge(q, top_k, filter_path=path)
-    return JSONResponse(result)
-
-
-@app.post("/api/documents")
-async def api_add_document(request: Request, body: AddDocumentRequest):
-    api_key_auth = get_api_key_auth(request)
-    await api_key_auth.authenticate(request, required_scope="write")
-    tools = get_tools(request)
-    result = await tools.add_document(
-        title=body.title,
-        content=body.content,
-        path=body.path,
-        tags=body.tags,
-    )
-    return JSONResponse(result)
-
-
-@app.put("/api/documents/{doc_id}")
-async def api_update_document(request: Request, doc_id: str, body: UpdateDocumentRequest):
-    api_key_auth = get_api_key_auth(request)
-    await api_key_auth.authenticate(request, required_scope="write")
-    tools = get_tools(request)
-    result = await tools.update_document(
-        doc_id=doc_id,
-        title=body.title,
-        content=body.content,
-        path=body.path,
-        tags=body.tags,
-    )
-    return JSONResponse(result)
-
-
-@app.delete("/api/documents/{doc_id}")
-async def api_delete_document(request: Request, doc_id: str):
-    api_key_auth = get_api_key_auth(request)
-    await api_key_auth.authenticate(request, required_scope="write")
-    tools = get_tools(request)
-    result = await tools.delete_document(doc_id)
-    return JSONResponse(result)
-
-
-@app.get("/api/documents")
-async def api_list_documents(
-    request: Request,
-    path: str = "",
-    limit: int = 20,
-    offset: int = 0,
-):
-    api_key_auth = get_api_key_auth(request)
-    await api_key_auth.authenticate(request, required_scope="read")
-    tools = get_tools(request)
-    result = await tools.list_documents(path=path, limit=limit, offset=offset)
-    return JSONResponse(result)
-
-
-@app.get("/api/directories")
-async def api_list_directories(request: Request):
-    api_key_auth = get_api_key_auth(request)
-    await api_key_auth.authenticate(request, required_scope="read")
-    tools = get_tools(request)
-    result = await tools.list_directories()
-    return JSONResponse(result)
-
-
-# ---------- 健康检查 ----------
-
-@app.get("/health")
-async def health_check(request: Request):
-    health = {
-        "status": "ok",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "services": {},
-    }
-
-    # Redis
-    try:
-        await request.app.state.redis.ping()
-        health["services"]["redis"] = "ok"
-    except Exception as e:
-        health["services"]["redis"] = f"error: {str(e)}"
-        health["status"] = "degraded"
-
-    # Chroma
-    try:
-        request.app.state.chroma.heartbeat()
-        health["services"]["chroma"] = "ok"
-    except Exception as e:
-        health["services"]["chroma"] = f"error: {str(e)}"
-        health["status"] = "degraded"
-
-    # Ollama
-    try:
-        ollama_ok = await request.app.state.embedder.health_check()
-        health["services"]["ollama"] = "ok" if ollama_ok else "unavailable"
-        if not ollama_ok:
-            health["status"] = "degraded"
-    except Exception as e:
-        health["services"]["ollama"] = f"error: {str(e)}"
-        health["status"] = "degraded"
-
-    # MinIO / LocalFileStore
-    try:
-        store = request.app.state.source_store
-        if hasattr(store, 'client'):
-            store.client.bucket_exists(settings.MINIO_BUCKET)
-        else:
-            store.bucket_exists(settings.MINIO_BUCKET)  # LocalFileStore
-        health["services"]["minio"] = "ok"
-    except Exception as e:
-        health["services"]["minio"] = f"error: {str(e)}"
-        health["status"] = "degraded"
-
-    status_code = status.HTTP_200_OK if health["status"] == "ok" else status.HTTP_503_SERVICE_UNAVAILABLE
-    return JSONResponse(health, status_code=status_code)
-
-
-# ---------- 指标端点 ----------
-
-@app.get("/metrics")
-async def metrics(request: Request):
-    """运行指标（JSON 格式）"""
-    uptime = time.time() - START_TIME
-    kb = request.app.state.kb
-    api_key_auth = request.app.state.api_key_auth
-
-    doc_count = 0
-    try:
-        doc_count = await kb.count_documents()
-    except Exception:
-        pass
-
-    key_count = 0
-    try:
-        keys = await api_key_auth.list_keys()
-        key_count = len(keys)
-    except Exception:
-        pass
-
-    return JSONResponse({
-        "app": settings.APP_NAME,
-        "version": "1.0.0",
-        "uptime_seconds": round(uptime, 2),
-        "uptime_human": f"{int(uptime // 86400)}d {int((uptime % 86400) // 3600)}h {int((uptime % 3600) // 60)}m",
-        "documents_total": doc_count,
-        "api_keys_total": key_count,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    })
+app.include_router(api_router)
 
 
 # ---------- 导入后台管理路由 ----------

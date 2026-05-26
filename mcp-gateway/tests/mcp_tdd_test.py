@@ -3,9 +3,10 @@ MCP Streamable HTTP TDD Test
 验证 /mcp 端点处理标准 MCP initialize 请求
 """
 import sys, os, asyncio, json, hashlib
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'mcp-gateway', 'src'))
+_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 os.environ['DEBUG'] = 'true'
-os.environ['KBDATA_DIR'] = 'D:/kimicode/knowledge-base-management/kbdata'
+os.environ['KBDATA_DIR'] = os.path.join(_ROOT, 'kbdata')
 os.environ['REDIS_URL'] = 'redis://localhost:6379/0'
 os.environ['SESSION_SECRET'] = 'a' * 32
 

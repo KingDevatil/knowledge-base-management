@@ -1,46 +1,98 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" class="scroll-smooth">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ title }} — 知识库分享</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.min.js" defer></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'Noto Sans SC', 'system-ui', 'sans-serif'],
+                    },
+                    colors: {
+                        brand: {
+                            50: '#eef2ff', 100: '#e0e7ff', 200: '#c7d2fe', 300: '#a5b4fc',
+                            400: '#818cf8', 500: '#6366f1', 600: '#4f46e5', 700: '#4338ca',
+                            800: '#3730a3', 900: '#312e81',
+                        },
+                    },
+                }
+            }
+        }
+    </script>
     <style>
-        /* Markdown content styling */
+        body { font-family: 'Inter', 'Noto Sans SC', system-ui, sans-serif; }
+
+        /* Glass header */
+        .glass-header {
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(20px) saturate(180%);
+            -webkit-backdrop-filter: blur(20px) saturate(180%);
+        }
+        .dark .glass-header {
+            background: rgba(15, 23, 42, 0.85);
+        }
+
+        /* Markdown content styling (light + dark) */
         .markdown-body { line-height: 1.8; color: #1e293b; }
+        .dark .markdown-body { color: #e2e8f0; }
         .markdown-body h1 { font-size: 1.75rem; font-weight: 700; margin-top: 2rem; margin-bottom: 1rem; color: #0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom: 0.5rem; }
+        .dark .markdown-body h1 { color: #f1f5f9; border-bottom-color: #334155; }
         .markdown-body h2 { font-size: 1.4rem; font-weight: 600; margin-top: 1.75rem; margin-bottom: 0.75rem; color: #1e293b; }
+        .dark .markdown-body h2 { color: #e2e8f0; }
         .markdown-body h3 { font-size: 1.15rem; font-weight: 600; margin-top: 1.5rem; margin-bottom: 0.5rem; color: #334155; }
+        .dark .markdown-body h3 { color: #cbd5e1; }
         .markdown-body p { margin-bottom: 0.75rem; }
         .markdown-body code { background: #f1f5f9; padding: 0.15rem 0.4rem; border-radius: 0.25rem; font-size: 0.875rem; color: #db2777; }
+        .dark .markdown-body code { background: #1e293b; color: #f472b6; }
         .markdown-body pre { background: #0f172a; color: #e2e8f0; padding: 1rem 1.25rem; border-radius: 0.75rem; overflow-x: auto; margin: 1rem 0; }
+        .dark .markdown-body pre { background: #020617; }
         .markdown-body pre code { background: transparent; padding: 0; color: inherit; }
         .markdown-body table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
         .markdown-body th { background: #f1f5f9; padding: 0.5rem 0.75rem; text-align: left; font-weight: 600; border: 1px solid #e2e8f0; }
+        .dark .markdown-body th { background: #1e293b; border-color: #334155; }
         .markdown-body td { padding: 0.5rem 0.75rem; border: 1px solid #e2e8f0; }
+        .dark .markdown-body td { border-color: #334155; }
         .markdown-body blockquote { border-left: 3px solid #6366f1; padding-left: 1rem; color: #64748b; margin: 0.75rem 0; }
+        .dark .markdown-body blockquote { color: #94a3b8; }
         .markdown-body ul, .markdown-body ol { margin: 0.5rem 0; padding-left: 1.5rem; }
         .markdown-body li { margin-bottom: 0.25rem; }
         .markdown-body a { color: #6366f1; text-decoration: underline; }
+        .dark .markdown-body a { color: #818cf8; }
         .markdown-body hr { border: none; border-top: 1px solid #e2e8f0; margin: 2rem 0; }
+        .dark .markdown-body hr { border-top-color: #334155; }
+
+        /* Native select dark mode */
+        .dark select { color-scheme: dark; }
     </style>
 </head>
-<body class="bg-slate-50 min-h-screen">
+<body class="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 min-h-screen">
     <!-- Header -->
-    <header class="bg-white border-b border-slate-200 sticky top-0 z-10">
+    <header class="glass-header sticky top-0 z-20 border-b border-slate-200/80 dark:border-slate-800/80">
         <div class="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
             <div class="flex items-center gap-3">
-                <div class="w-8 h-8 rounded-lg bg-indigo-100 flex items-center justify-center">
-                    <i data-lucide="share-2" class="w-4 h-4 text-indigo-600"></i>
+                <div class="relative">
+                    <div class="absolute inset-0 bg-brand-500 rounded-lg blur-lg opacity-20"></div>
+                    <div class="relative w-9 h-9 rounded-lg bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center">
+                        <i data-lucide="share-2" class="w-4 h-4 text-white"></i>
+                    </div>
                 </div>
                 <div>
-                    <h1 class="text-base font-bold text-slate-900">{{ title }}</h1>
-                    <p class="text-xs text-slate-400">分享文档 &middot; 只读</p>
+                    <h1 class="text-base font-bold text-slate-900 dark:text-white">{{ title }}</h1>
+                    <p class="text-xs text-slate-400 dark:text-slate-500">分享文档 &middot; 只读</p>
                 </div>
             </div>
-            <div class="text-xs text-slate-400">
-                {{ chunk_count }} 个切片
+            <div class="flex items-center gap-3">
+                <span class="text-xs text-slate-400 dark:text-slate-500">{{ chunk_count }} 个切片</span>
+                <button onclick="toggleTheme()" class="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors" title="切换主题">
+                    <i data-lucide="moon" class="w-4 h-4 hidden dark:block"></i>
+                    <i data-lucide="sun" class="w-4 h-4 block dark:hidden"></i>
+                </button>
             </div>
         </div>
     </header>
@@ -48,23 +100,23 @@
     <!-- Content -->
     <main class="max-w-4xl mx-auto px-6 py-8">
         {% if html_content %}
-        <article class="bg-white rounded-2xl border border-slate-200 p-8 shadow-sm">
+        <article class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-8 shadow-sm animate-fade-in">
             <div class="markdown-body">
                 {{ html_content | safe }}
             </div>
         </article>
         {% else %}
-        <div class="bg-white rounded-2xl border border-slate-200 p-12 shadow-sm text-center">
-            <div class="w-16 h-16 rounded-2xl bg-slate-100 flex items-center justify-center mx-auto mb-4">
-                <i data-lucide="file-text" class="w-8 h-8 text-slate-300"></i>
+        <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-12 shadow-sm text-center">
+            <div class="w-16 h-16 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center mx-auto mb-4">
+                <i data-lucide="file-text" class="w-8 h-8 text-slate-300 dark:text-slate-600"></i>
             </div>
-            <p class="text-slate-500">文档内容为空</p>
+            <p class="text-slate-500 dark:text-slate-400">文档内容为空</p>
         </div>
         {% endif %}
 
         <!-- Footer -->
         <div class="mt-8 text-center">
-            <p class="text-xs text-slate-400">
+            <p class="text-xs text-slate-400 dark:text-slate-500">
                 通过分享链接访问 &middot;
                 {% if share_expires_at %}
                 有效期至 {{ share_expires_at[:10] }}
@@ -73,6 +125,26 @@
         </div>
     </main>
 
-    <script>lucide.createIcons()</script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+        });
+
+        function toggleTheme() {
+            const html = document.documentElement;
+            if (html.classList.contains('dark')) {
+                html.classList.remove('dark');
+                localStorage.theme = 'light';
+            } else {
+                html.classList.add('dark');
+                localStorage.theme = 'dark';
+            }
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+        }
+
+        if (localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+            document.documentElement.classList.add('dark');
+        }
+    </script>
 </body>
 </html>

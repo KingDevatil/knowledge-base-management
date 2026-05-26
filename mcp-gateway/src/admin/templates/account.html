@@ -11,7 +11,7 @@
     </div>
 
     <!-- 用户信息卡片 -->
-    <div class="card p-6 mb-5">
+    <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden p-6 mb-5">
         <h2 class="text-base font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
             <div class="w-8 h-8 rounded-lg bg-brand-100 dark:bg-brand-500/10 flex items-center justify-center">
                 <i data-lucide="user" class="w-4 h-4 text-brand-600 dark:text-brand-400"></i>
@@ -33,7 +33,7 @@
     </div>
 
     <!-- 修改密码卡片 -->
-    <div class="card p-6">
+    <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden p-6">
         <h2 class="text-base font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
             <div class="w-8 h-8 rounded-lg bg-amber-100 dark:bg-amber-500/10 flex items-center justify-center">
                 <i data-lucide="lock" class="w-4 h-4 text-amber-600 dark:text-amber-400"></i>
@@ -59,35 +59,35 @@
 
         <form method="post" action="/admin/account/change-password" class="space-y-5">
             <div>
-                <label class="form-label">当前密码 <span class="text-red-500">*</span></label>
+                <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">当前密码 <span class="text-red-500">*</span></label>
                 <div class="relative">
                     <input type="password" name="old_password" required
-                        class="form-input pr-12"
+                        class="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-900 dark:text-slate-100 focus:border-brand-400 dark:focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10 dark:focus:ring-brand-500/20 outline-none transition-all duration-200 pr-12"
                         placeholder="请输入当前密码">
                 </div>
             </div>
 
             <div>
-                <label class="form-label">新密码 <span class="text-red-500">*</span></label>
+                <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">新密码 <span class="text-red-500">*</span></label>
                 <input type="password" name="new_password" required minlength="6"
-                    class="form-input"
+                    class="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-900 dark:text-slate-100 focus:border-brand-400 dark:focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10 dark:focus:ring-brand-500/20 outline-none transition-all duration-200"
                     placeholder="至少 6 位字符">
                 <p class="text-xs text-slate-500 dark:text-slate-400 mt-1.5">密码长度至少 6 位，建议使用字母、数字组合</p>
             </div>
 
             <div>
-                <label class="form-label">确认新密码 <span class="text-red-500">*</span></label>
+                <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">确认新密码 <span class="text-red-500">*</span></label>
                 <input type="password" name="confirm_password" required minlength="6"
-                    class="form-input"
+                    class="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-900 dark:text-slate-100 focus:border-brand-400 dark:focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10 dark:focus:ring-brand-500/20 outline-none transition-all duration-200"
                     placeholder="再次输入新密码">
             </div>
 
             <div class="flex gap-3 pt-2">
-                <button type="submit" class="btn-primary">
+                <button type="submit" class="inline-flex items-center gap-1.5 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-xl transition-all duration-200 border-0 cursor-pointer">
                     <i data-lucide="save" class="w-4 h-4"></i>
                     保存修改
                 </button>
-                <a href="/admin/dashboard" class="btn-secondary">返回</a>
+                <a href="/admin/dashboard" class="inline-flex items-center gap-1.5 px-4 py-2 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-sm font-medium rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 transition-all duration-200 cursor-pointer no-underline">返回</a>
             </div>
         </form>
     </div>

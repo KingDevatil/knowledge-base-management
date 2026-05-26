@@ -240,10 +240,48 @@ docker compose up -d
 
 性能有限的 Windows 设备，使用全原生组件，详见 `start-dev.ps1`。
 
+**前置依赖安装：**
+
+| 组件 | 用途 | 最低版本 | 下载/安装 |
+|------|------|---------|----------|
+| **Python** | Gateway 运行环境 | 3.11+ | `winget install Python.Python.3.11` 或 [python.org](https://www.python.org/downloads/) |
+| **Memurai** | Redis 替代（Session/缓存/锁） | 4.0+ | [memurai.com](https://www.memurai.com/get-memurai) — 免费 Developer 版即可 |
+| **Ollama** | Embedding 模型服务 | 0.5.0+ | `winget install Ollama.Ollama` 或 [ollama.com](https://ollama.com/download/windows) |
+| **Chroma** | 向量数据库 | 0.6.0+ | `pip install chromadb`（脚本自动安装） |
+| **MinIO** | 对象存储 | 2024+ | `winget install MinIO.MinIO` 或 [min.io](https://min.io/download) |
+
+**验证安装：**
+
 ```powershell
-# 需要手动安装：Memurai（替代 Redis）、Ollama
-.\start-dev.ps1
+# Python
+python --version               # 应输出 Python 3.11+
+
+# Memurai（安装后自动注册为 Windows 服务）
+Get-Service Memurai             # Status 应为 Running
+
+# Ollama
+ollama --version                # 确认已安装
+ollama pull bge-m3              # 预下载 embedding 模型（约 1GB，首次必需）
+
+# MinIO
+minio --version                 # 确认已安装
 ```
+
+**启动服务：**
+
+```powershell
+# 仅启动服务（前提：启动前确保 Memurai 服务已运行）
+.\start-dev.ps1
+
+# 停止所有服务
+.\start-dev.ps1 -Stop
+```
+
+> **常见问题**：
+> - Memurai 安装后需重启终端（或刷新环境变量）才能被 `redis-cli` 识别
+> - 如果 Ollama 启动后端口冲突，检查是否已有 Ollama 托盘图标在运行
+> - 所有服务日志写入 `start-dev.log`，遇到问题先查看日志
+> - Chroma/MinIO 首次启动会自动在 `kbdata/` 下初始化数据目录
 
 ---
 

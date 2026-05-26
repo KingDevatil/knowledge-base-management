@@ -2,7 +2,6 @@ import json
 from typing import Any
 
 from mcp.server import Server
-from mcp.server.sse import SseServerTransport
 from mcp.types import TextContent, Tool
 
 from config import get_settings
@@ -139,85 +138,45 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
             ),
         ]
 
+    def _make_result(result: dict) -> list[TextContent]:
+        return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
+
+    _DISPATCH = {
+        "search_knowledge": lambda a, t: t.search_knowledge(
+            query=a.get("query", ""), top_k=a.get("top_k", 5),
+            filter_tags=a.get("filter_tags") or [], filter_path=a.get("filter_path", ""),
+        ),
+        "add_document": lambda a, t: t.add_document(
+            title=a.get("title", ""), content=a.get("content", ""),
+            path=a.get("path", ""), tags=a.get("tags") or [],
+        ),
+        "get_document": lambda a, t: t.get_document(doc_id=a.get("doc_id", "")),
+        "update_document": lambda a, t: t.update_document(
+            doc_id=a.get("doc_id", ""), title=a.get("title", ""),
+            content=a.get("content", ""), path=a.get("path", ""), tags=a.get("tags") or [],
+        ),
+        "delete_document": lambda a, t: t.delete_document(doc_id=a.get("doc_id", "")),
+        "list_documents": lambda a, t: t.list_documents(
+            tags=a.get("tags") or [], path=a.get("path", ""),
+            limit=a.get("limit", 20), offset=a.get("offset", 0),
+        ),
+        "list_directories": lambda a, t: t.list_directories(),
+        "rename_directory": lambda a, t: t.rename_directory(
+            old_path=a.get("old_path", ""), new_path=a.get("new_path", ""),
+        ),
+        "delete_directory": lambda a, t: t.delete_directory(path=a.get("path", "")),
+        "reindex_document": lambda a, t: t.reindex_document(doc_id=a.get("doc_id", "")),
+    }
+
     @server.call_tool()
     async def call_tool(name: str, arguments: Any) -> list[TextContent]:
+        handler = _DISPATCH.get(name)
+        if handler is None:
+            return _make_result({"error": f"未知工具: {name}"})
         try:
-            if name == "search_knowledge":
-                result = await tools.search_knowledge(
-                    query=arguments.get("query", ""),
-                    top_k=arguments.get("top_k", 5),
-                    filter_tags=arguments.get("filter_tags") or [],
-                    filter_path=arguments.get("filter_path", ""),
-                )
-                return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
-
-            elif name == "add_document":
-                result = await tools.add_document(
-                    title=arguments.get("title", ""),
-                    content=arguments.get("content", ""),
-                    path=arguments.get("path", ""),
-                    tags=arguments.get("tags") or [],
-                )
-                return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
-
-            elif name == "get_document":
-                result = await tools.get_document(
-                    doc_id=arguments.get("doc_id", ""),
-                )
-                return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
-
-            elif name == "update_document":
-                result = await tools.update_document(
-                    doc_id=arguments.get("doc_id", ""),
-                    title=arguments.get("title", ""),
-                    content=arguments.get("content", ""),
-                    path=arguments.get("path", ""),
-                    tags=arguments.get("tags") or [],
-                )
-                return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
-
-            elif name == "delete_document":
-                result = await tools.delete_document(
-                    doc_id=arguments.get("doc_id", ""),
-                )
-                return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
-
-            elif name == "list_documents":
-                result = await tools.list_documents(
-                    tags=arguments.get("tags") or [],
-                    path=arguments.get("path", ""),
-                    limit=arguments.get("limit", 20),
-                    offset=arguments.get("offset", 0),
-                )
-                return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
-
-            elif name == "list_directories":
-                result = await tools.list_directories()
-                return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
-
-            elif name == "rename_directory":
-                result = await tools.rename_directory(
-                    old_path=arguments.get("old_path", ""),
-                    new_path=arguments.get("new_path", ""),
-                )
-                return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
-
-            elif name == "delete_directory":
-                result = await tools.delete_directory(
-                    path=arguments.get("path", ""),
-                )
-                return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
-
-            elif name == "reindex_document":
-                result = await tools.reindex_document(
-                    doc_id=arguments.get("doc_id", ""),
-                )
-                return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
-
-            else:
-                return [TextContent(type="text", text=json.dumps({"error": f"未知工具: {name}"}, ensure_ascii=False))]
-
+            result = await handler(arguments, tools)
+            return _make_result(result)
         except Exception as e:
-            return [TextContent(type="text", text=json.dumps({"error": str(e)}, ensure_ascii=False))]
+            return _make_result({"error": str(e)})
 
     return server

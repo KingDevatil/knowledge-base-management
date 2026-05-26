@@ -119,7 +119,7 @@
             <h1 class="text-xl font-bold text-slate-900 dark:text-white">目录管理</h1>
             <p class="text-sm text-slate-500 dark:text-slate-400 mt-0.5">管理和创建知识库文档目录结构</p>
         </div>
-        <button onclick="openCreateModal()" class="btn-primary text-sm">
+        <button onclick="openCreateModal()" class="inline-flex items-center gap-1.5 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-xl transition-all duration-200 border-0 cursor-pointer text-sm">
             <i data-lucide="folder-plus" class="w-4 h-4"></i>
             新建目录
         </button>
@@ -128,7 +128,7 @@
 
 <div class="px-8 py-6">
     <!-- 目录树 -->
-    <div class="card p-6">
+    <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden p-6">
         <h2 class="text-base font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
             <i data-lucide="folder-tree" class="w-4 h-4 text-brand-500"></i>
             全部目录
@@ -142,7 +142,7 @@
     </div>
 
     <!-- 目录下文档列表 -->
-    <div class="card p-6 mt-5" id="dir-docs-panel">
+    <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden p-6 mt-5" id="dir-docs-panel">
         <h2 class="text-base font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
             <i data-lucide="file-text" class="w-4 h-4 text-brand-500"></i>
             目录文档
@@ -168,23 +168,23 @@
             </div>
             <form id="create-dir-form" class="space-y-4">
                 <div>
-                    <label class="form-label">父目录</label>
+                    <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">父目录</label>
                     <p class="text-xs text-slate-400 mb-2">点击选择父目录：<span id="parent-dir-label" class="text-brand-600">根目录</span></p>
                     <div id="parent-dir-tree" class="max-h-40 overflow-y-auto border border-slate-200 dark:border-slate-700 rounded-xl p-2"></div>
                 </div>
                 <div>
-                    <label class="form-label">目录名称 <span class="text-red-500">*</span></label>
+                    <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">目录名称 <span class="text-red-500">*</span></label>
                     <input type="text" id="dir-name" required
-                        class="form-input"
+                        class="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-900 dark:text-slate-100 focus:border-brand-400 dark:focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10 dark:focus:ring-brand-500/20 outline-none transition-all duration-200"
                         placeholder="如: 技术文档/API参考">
                     <p class="text-xs text-slate-500 dark:text-slate-400 mt-1.5">支持多级目录，用 / 分隔</p>
                 </div>
                 <div class="flex gap-3 pt-2">
-                    <button type="submit" class="btn-primary flex-1">
+                    <button type="submit" class="inline-flex items-center gap-1.5 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-xl transition-all duration-200 border-0 cursor-pointer flex-1">
                         <i data-lucide="check" class="w-4 h-4"></i>
                         创建
                     </button>
-                    <button type="button" onclick="closeCreateModal()" class="btn-secondary flex-1">取消</button>
+                    <button type="button" onclick="closeCreateModal()" class="inline-flex items-center gap-1.5 px-4 py-2 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-sm font-medium rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 transition-all duration-200 cursor-pointer no-underline flex-1">取消</button>
                 </div>
             </form>
         </div>

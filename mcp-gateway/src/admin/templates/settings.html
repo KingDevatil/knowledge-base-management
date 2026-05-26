@@ -12,7 +12,7 @@
 
     <div class="space-y-4">
         <!-- Embedding 配置 -->
-        <div class="card p-5">
+        <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden p-5">
             <h2 class="text-base font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
                 <div class="w-8 h-8 rounded-lg bg-purple-100 dark:bg-purple-500/10 flex items-center justify-center">
                     <i data-lucide="brain" class="w-4 h-4 text-purple-600 dark:text-purple-400"></i>
@@ -32,7 +32,7 @@
         </div>
 
         <!-- 切片配置 -->
-        <div class="card p-5">
+        <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden p-5">
             <h2 class="text-base font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
                 <div class="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-500/10 flex items-center justify-center">
                     <i data-lucide="scissors" class="w-4 h-4 text-blue-600 dark:text-blue-400"></i>
@@ -52,7 +52,7 @@
         </div>
 
         <!-- 写入锁配置 -->
-        <div class="card p-5">
+        <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden p-5">
             <h2 class="text-base font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
                 <div class="w-8 h-8 rounded-lg bg-orange-100 dark:bg-orange-500/10 flex items-center justify-center">
                     <i data-lucide="lock" class="w-4 h-4 text-orange-600 dark:text-orange-400"></i>
@@ -66,7 +66,7 @@
         </div>
 
         <!-- 限流配置 -->
-        <div class="card p-5">
+        <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden p-5">
             <h2 class="text-base font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
                 <div class="w-8 h-8 rounded-lg bg-emerald-100 dark:bg-emerald-500/10 flex items-center justify-center">
                     <i data-lucide="gauge" class="w-4 h-4 text-emerald-600 dark:text-emerald-400"></i>
@@ -79,8 +79,27 @@
             </div>
         </div>
 
+        <!-- 备份与导出 -->
+        <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden p-5">
+            <h2 class="text-base font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
+                <div class="w-8 h-8 rounded-lg bg-indigo-100 dark:bg-indigo-500/10 flex items-center justify-center">
+                    <i data-lucide="download" class="w-4 h-4 text-indigo-600 dark:text-indigo-400"></i>
+                </div>
+                备份与导出
+            </h2>
+            <p class="text-sm text-slate-600 dark:text-slate-400 mb-4">导出知识库所有文档为 Markdown 文件，按目录结构打包为 ZIP 压缩包。</p>
+            <div class="flex gap-3 items-center">
+                <a href="/admin/api/backup/export"
+                   class="inline-flex items-center gap-2 px-4 py-2.5 bg-brand-600 hover:bg-brand-700 text-white text-sm font-semibold rounded-xl shadow-lg shadow-brand-500/25 hover:shadow-brand-500/40 transition-all duration-200 hover:-translate-y-0.5">
+                    <i data-lucide="archive" class="w-4 h-4"></i>
+                    导出备份 ZIP
+                </a>
+                <span class="text-xs text-slate-400 dark:text-slate-500">系统将收集所有文档并打包</span>
+            </div>
+        </div>
+
         <!-- 危险操作 -->
-        <div class="card p-5 border-red-200 dark:border-red-500/20">
+        <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden p-5 border-red-200 dark:border-red-500/20">
             <h2 class="text-base font-semibold text-red-700 dark:text-red-400 mb-4 flex items-center gap-2">
                 <div class="w-8 h-8 rounded-lg bg-red-100 dark:bg-red-500/10 flex items-center justify-center">
                     <i data-lucide="alert-triangle" class="w-4 h-4 text-red-600 dark:text-red-400"></i>

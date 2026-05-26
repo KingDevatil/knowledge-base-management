@@ -15,7 +15,7 @@
     {% endif %}
 
     <!-- ========== Step 1: 统一拖拽上传区 ========== -->
-    <div class="card p-6 space-y-5" id="upload-step1">
+    <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden p-6 space-y-5" id="upload-step1">
         <div class="border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-2xl p-10 text-center
                     hover:border-brand-400 dark:hover:border-brand-500 hover:bg-brand-50/30 dark:hover:bg-brand-500/5
                     transition-all cursor-pointer group" id="drop-zone">
@@ -52,7 +52,7 @@
 
     <!-- ========== Step 2: 文件审核表格 ========== -->
     <div id="upload-step2" class="hidden">
-        <div class="card p-6 space-y-5">
+        <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden p-6 space-y-5">
             <div class="flex items-center justify-between">
                 <h3 class="text-lg font-semibold text-slate-900 dark:text-white">
                     待导入文件（<span id="review-count">0</span> 个）
@@ -68,7 +68,7 @@
                     全局标签
                     <span id="archive-tag-note" class="hidden text-xs font-normal text-amber-600 dark:text-amber-400">（压缩包文件共用）</span>
                 </label>
-                <input type="text" id="global-tags" class="form-input flex-1 min-w-[200px]" placeholder="技术, API, 文档">
+                <input type="text" id="global-tags" class="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-900 dark:text-slate-100 focus:border-brand-400 dark:focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10 dark:focus:ring-brand-500/20 outline-none transition-all duration-200 flex-1 min-w-[200px]" placeholder="技术, API, 文档">
                 <button type="button" onclick="applyGlobalTags()" class="px-4 py-2 text-sm font-medium rounded-xl
                     border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400
                     hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
@@ -78,7 +78,7 @@
 
             <!-- 目标目录 -->
             <div>
-                <label class="form-label">目标目录</label>
+                <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">目标目录</label>
                 <div class="flex items-center gap-2 p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
                     <i data-lucide="folder" class="w-4 h-4 text-amber-500 flex-shrink-0"></i>
                     <span id="selected-dir" class="text-sm text-slate-600 dark:text-slate-400 flex-1 truncate">{{ path or '根目录' }}</span>
@@ -121,18 +121,18 @@
 
             <!-- 提交按钮 -->
             <div class="flex gap-3 pt-2">
-                <button type="button" onclick="startImport()" class="btn-primary" id="import-btn">
+                <button type="button" onclick="startImport()" class="inline-flex items-center gap-1.5 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-xl transition-all duration-200 border-0 cursor-pointer" id="import-btn">
                     <i data-lucide="upload" class="w-4 h-4"></i>
                     <span id="import-btn-text">开始导入（<span id="import-count">0</span> 个）</span>
                 </button>
-                <button type="button" onclick="resetToStep1()" class="btn-secondary">取消</button>
+                <button type="button" onclick="resetToStep1()" class="inline-flex items-center gap-1.5 px-4 py-2 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-sm font-medium rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 transition-all duration-200 cursor-pointer no-underline">取消</button>
             </div>
         </div>
     </div>
 
     <!-- ========== Step 3: 导入进度 ========== -->
     <div id="upload-step3" class="hidden">
-        <div class="card p-6">
+        <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden p-6">
             <div class="alert alert-info">
                 <div class="flex items-center gap-3">
                     <svg class="animate-spin h-5 w-5 text-brand-600 dark:text-brand-400 flex-shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -157,11 +157,11 @@
                 <div id="import-results" class="mt-3 space-y-1 max-h-48 overflow-y-auto"></div>
             </div>
             <div class="flex gap-3 mt-4">
-                <button type="button" onclick="goToDocuments()" class="btn-primary hidden" id="done-btn">
+                <button type="button" onclick="goToDocuments()" class="inline-flex items-center gap-1.5 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-xl transition-all duration-200 border-0 cursor-pointer hidden" id="done-btn">
                     <i data-lucide="check" class="w-4 h-4"></i>
                     完成，前往文档列表
                 </button>
-                <button type="button" onclick="resetAll()" class="btn-secondary hidden" id="retry-btn">
+                <button type="button" onclick="resetAll()" class="inline-flex items-center gap-1.5 px-4 py-2 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-sm font-medium rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 transition-all duration-200 cursor-pointer no-underline hidden" id="retry-btn">
                     重新上传
                 </button>
             </div>
@@ -186,8 +186,8 @@
                 </div>
             </div>
             <div class="flex gap-3 mt-4 pt-4 border-t border-slate-100 dark:border-slate-800">
-                <button onclick="selectDir('')" class="btn-secondary flex-1 text-sm">根目录</button>
-                <button onclick="confirmDirPicker()" class="btn-primary flex-1 text-sm">确认选择</button>
+                <button onclick="selectDir('')" class="inline-flex items-center gap-1.5 px-4 py-2 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-sm font-medium rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 transition-all duration-200 cursor-pointer no-underline flex-1 text-sm">根目录</button>
+                <button onclick="confirmDirPicker()" class="inline-flex items-center gap-1.5 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-xl transition-all duration-200 border-0 cursor-pointer flex-1 text-sm">确认选择</button>
             </div>
         </div>
     </div>
@@ -361,7 +361,7 @@
                     <td class="px-4 py-2.5 text-slate-500 dark:text-slate-400 text-xs whitespace-nowrap">${sizeStr}</td>
                     <td class="px-4 py-2.5">
                         <input type="text"
-                            class="form-input text-xs py-1.5 px-2 min-w-[100px] tag-input"
+                            class="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-900 dark:text-slate-100 focus:border-brand-400 dark:focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10 dark:focus:ring-brand-500/20 outline-none transition-all duration-200 text-xs py-1.5 px-2 min-w-[100px] tag-input"
                             value="${escapeHtml(f.tags)}"
                             placeholder="${isArchiveMode ? '共用全局标签' : '标签...'}"
                             data-index="${i}"

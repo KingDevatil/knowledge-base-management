@@ -1,14 +1,16 @@
 """Admin API routes (POST/PUT/DELETE - form submissions and JSON APIs)."""
+import io
 import json
 import os
 import re
 import secrets
 import uuid
+import zipfile
 from datetime import datetime, timezone, timedelta
 
 from pydantic import BaseModel
 from fastapi import APIRouter, Request, Form, UploadFile, File, HTTPException, Depends
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, StreamingResponse
 
 from directory_tree import DirectoryTree
 from chunker import chunk_markdown
@@ -421,6 +423,9 @@ async def document_save(
         except WriteLockError:
             raise HTTPException(status_code=423, detail="写入锁被占用")
 
+    # 保存后重定向到文档列表，保持路径上下文
+    if path:
+        return RedirectResponse(url=f"/admin/documents?path={path}", status_code=302)
     return RedirectResponse(url=f"/admin/documents/{doc_id}", status_code=302)
 
 
@@ -438,6 +443,11 @@ async def document_delete(
 
     if request.headers.get("HX-Request"):
         return HTMLResponse("")
+
+    form = await request.form()
+    redirect_path = form.get("path", "")
+    if redirect_path:
+        return RedirectResponse(url=f"/admin/documents?path={redirect_path}", status_code=302)
     return RedirectResponse(url="/admin/documents", status_code=302)
 
 
@@ -708,6 +718,66 @@ async def share_revoke(
 
     await redis.delete(key)
     return JSONResponse({"success": True})
+
+
+# ---------- 备份导出 (admin only) ----------
+
+def _sanitize_filename(name: str) -> str:
+    """去除文件名中的非法字符，保留可读性"""
+    sanitized = re.sub(r'[<>:"/\\|?*]', '_', name)
+    return sanitized.strip(' ._') or 'untitled'
+
+
+@api_router.get("/api/backup/export")
+async def api_backup_export(
+    request: Request,
+    user: dict = Depends(require_admin),
+):
+    """导出知识库所有文档为 .md 文件，按目录结构打包为 ZIP 下载"""
+    kb = request.app.state.kb
+    tools = request.app.state.tools
+
+    # 列出所有文档（大 limit 确保全量导出）
+    listing = await kb.list_documents(limit=10000, offset=0)
+    docs = listing.get("documents", [])
+    total = listing.get("total", len(docs))
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        exported = 0
+        for doc in docs:
+            doc_id = doc.get("doc_id")
+            if not doc_id:
+                continue
+            try:
+                detail = await tools.get_document(doc_id)
+            except Exception:
+                continue
+
+            title = detail.get("title", "untitled")
+            content = detail.get("content", "")
+            doc_path = detail.get("path", "")
+
+            # 构造 ZIP 内部路径：{目录}/{文件名}.md
+            safe_name = _sanitize_filename(title)
+            if doc_path:
+                arcname = f"{doc_path.replace('/', os.sep)}/{safe_name}.md"
+            else:
+                arcname = f"{safe_name}.md"
+
+            zf.writestr(arcname, content)
+            exported += 1
+
+    buf.seek(0)
+
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f"attachment; filename=kb-backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}.zip",
+            "Content-Type": "application/zip",
+        },
+    )
 
 
 @api_router.get("/api/documents/{doc_id}/shares")

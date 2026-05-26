@@ -10,7 +10,7 @@
             <h1 class="text-2xl font-bold text-slate-900 dark:text-white">API Key 管理</h1>
             <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">管理员工访问令牌与权限</p>
         </div>
-        <a href="/admin/api-keys/create" class="btn-primary">
+        <a href="/admin/api-keys/create" class="inline-flex items-center gap-1.5 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-xl transition-all duration-200 border-0 cursor-pointer">
             <i data-lucide="plus" class="w-4 h-4"></i>
             新建 API Key
         </a>
@@ -37,17 +37,17 @@
     </div>
 
     <!-- 数据表格 -->
-    <div class="card">
+    <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
         <table class="w-full">
             <thead>
                 <tr>
-                    <th class="table-header">Key 前缀</th>
-                    <th class="table-header">申请人</th>
-                    <th class="table-header">权限</th>
-                    <th class="table-header">有效期</th>
-                    <th class="table-header">调用次数</th>
-                    <th class="table-header">状态</th>
-                    <th class="table-header text-right">操作</th>
+                    <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800">Key 前缀</th>
+                    <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800">申请人</th>
+                    <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800">权限</th>
+                    <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800">有效期</th>
+                    <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800">调用次数</th>
+                    <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800">状态</th>
+                    <th class="px-4 py-3 text-right text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800">操作</th>
                 </tr>
             </thead>
             <tbody>
@@ -55,8 +55,8 @@
                 {% set is_expired_soon = key.expires_at and (key.expires_at | datetime) != '' and
                      ((key.expires_at | string).replace('Z', '+00:00') | length > 0) %}
                 <tr class="doc-row {% if is_expired_soon and key.status == 'active' %}bg-amber-50/50 dark:bg-amber-500/5{% endif %}">
-                    <td class="table-cell font-mono text-xs text-slate-500 dark:text-slate-400">{{ key.key_prefix }}...</td>
-                    <td class="table-cell">
+                    <td class="px-4 py-3.5 text-sm text-slate-900 dark:text-slate-100 border-b border-slate-50 dark:border-slate-800/50 font-mono text-xs text-slate-500 dark:text-slate-400">{{ key.key_prefix }}...</td>
+                    <td class="px-4 py-3.5 text-sm text-slate-900 dark:text-slate-100 border-b border-slate-50 dark:border-slate-800/50">
                         <div>
                             <p class="font-medium text-slate-900 dark:text-slate-100">{{ key.applicant }}</p>
                             {% if key.applicant_note %}
@@ -64,14 +64,14 @@
                             {% endif %}
                         </div>
                     </td>
-                    <td class="table-cell">
+                    <td class="px-4 py-3.5 text-sm text-slate-900 dark:text-slate-100 border-b border-slate-50 dark:border-slate-800/50">
                         {% if 'write' in key.scope %}
-                        <span class="badge badge-purple">读写</span>
+                        <span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full bg-purple-50 dark:bg-purple-500/10 text-purple-700 dark:text-purple-400">读写</span>
                         {% else %}
-                        <span class="badge badge-gray">只读</span>
+                        <span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full bg-slate-100 dark:bg-slate-700/50 text-slate-600 dark:text-slate-400">只读</span>
                         {% endif %}
                     </td>
-                    <td class="table-cell text-sm">
+                    <td class="px-4 py-3.5 text-sm text-slate-900 dark:text-slate-100 border-b border-slate-50 dark:border-slate-800/50 text-sm">
                         {% if key.duration == 'permanent' %}
                         <span class="text-slate-500 dark:text-slate-400">长期有效</span>
                         {% else %}
@@ -81,26 +81,26 @@
                         <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{{ key.expires_at | datetime }}</p>
                         {% endif %}
                     </td>
-                    <td class="table-cell text-sm text-slate-700 dark:text-slate-300">{{ key.use_count }}</td>
-                    <td class="table-cell">
+                    <td class="px-4 py-3.5 text-sm text-slate-900 dark:text-slate-100 border-b border-slate-50 dark:border-slate-800/50 text-sm text-slate-700 dark:text-slate-300">{{ key.use_count }}</td>
+                    <td class="px-4 py-3.5 text-sm text-slate-900 dark:text-slate-100 border-b border-slate-50 dark:border-slate-800/50">
                         {% if key.status == 'active' %}
-                        <span class="badge badge-green">
+                        <span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400">
                             <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
                             活跃
                         </span>
                         {% elif key.status == 'expired' %}
-                        <span class="badge badge-gray">
+                        <span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full bg-slate-100 dark:bg-slate-700/50 text-slate-600 dark:text-slate-400">
                             <span class="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
                             已过期
                         </span>
                         {% else %}
-                        <span class="badge badge-red">
+                        <span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-400">
                             <span class="w-1.5 h-1.5 rounded-full bg-red-500"></span>
                             已吊销
                         </span>
                         {% endif %}
                     </td>
-                    <td class="table-cell text-right">
+                    <td class="px-4 py-3.5 text-sm text-slate-900 dark:text-slate-100 border-b border-slate-50 dark:border-slate-800/50 text-right">
                         {% if key.status == 'active' %}
                         <form method="post" action="/admin/api-keys/{{ key.key_hash }}/revoke?status={{ current_status }}"
                               hx-post="/admin/api-keys/{{ key.key_hash }}/revoke?status={{ current_status }}"

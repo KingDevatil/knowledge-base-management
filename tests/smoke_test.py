@@ -58,7 +58,7 @@ def _load_existing_key():
 
     # 2) 回退到 api_keys.json 取任意 active + read scope 的 Key
     keys_file = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
         "kbdata", "config", "api_keys.json")
     if os.path.exists(keys_file):
         with open(keys_file, encoding="utf-8") as f:

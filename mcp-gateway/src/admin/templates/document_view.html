@@ -213,7 +213,7 @@
                 {% if tags %}
                 <div class="flex gap-1 flex-wrap">
                     {% for tag in tags %}
-                    <span class="badge badge-blue text-[10px] px-1.5 py-0.5">{{ tag }}</span>
+                    <span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-full bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400 text-[10px] px-1.5 py-0.5">{{ tag }}</span>
                     {% endfor %}
                 </div>
                 {% endif %}
@@ -229,21 +229,21 @@
         </div>
         <div class="flex gap-2 flex-shrink-0">
             {% if admin.role in ('super_admin', 'admin') %}
-            <a href="/admin/documents/{{ doc_id }}/edit" class="btn-secondary text-xs px-3 py-1.5">
+            <a href="/admin/documents/{{ doc_id }}/edit{% if path %}?path={{ path }}{% endif %}" class="inline-flex items-center gap-1.5 px-4 py-2 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-sm font-medium rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 transition-all duration-200 cursor-pointer no-underline text-xs px-3 py-1.5">
                 <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
                 编辑
             </a>
             {% endif %}
-            <button onclick="toggleSharePanel()" class="btn-secondary text-xs px-3 py-1.5">
+            <button onclick="toggleSharePanel()" class="inline-flex items-center gap-1.5 px-4 py-2 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-sm font-medium rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 transition-all duration-200 cursor-pointer no-underline text-xs px-3 py-1.5">
                 <i id="share-icon" data-lucide="share-2" class="w-3.5 h-3.5"></i>
                 分享
             </button>
             {% if admin.role in ('super_admin', 'admin') %}
             <form method="post" action="/admin/documents/{{ doc_id }}/delete"
-                  hx-post="/admin/documents/{{ doc_id }}/delete"
-                  hx-confirm="&#x786e;&#x5b9a;&#x5220;&#x9664;&#x6587;&#x6863;&#x300c;{{ title }}&#x300d;&#x5417;&#xff1f;&#x6b64;&#x64cd;&#x4f5c;&#x4e0d;&#x53ef;&#x6062;&#x590d;&#x3002;"
+                  onsubmit="return confirm('&#x786e;&#x5b9a;&#x5220;&#x9664;&#x6587;&#x6863;&#x300c;{{ title }}&#x300d;&#x5417;&#xff1f;&#x6b64;&#x64cd;&#x4f5c;&#x4e0d;&#x53ef;&#x6062;&#x590d;&#x3002;')"
                   class="inline">
-                <button type="submit" class="btn-danger text-xs px-3 py-1.5">
+                <input type="hidden" name="path" value="{{ path }}">
+                <button type="submit" class="inline-flex items-center gap-1.5 px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-xl transition-all duration-200 border-0 cursor-pointer text-xs px-3 py-1.5">
                     <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
                     删除
                 </button>
