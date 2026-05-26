@@ -28,10 +28,10 @@ class LocalFileStore:
         return f"documents/{doc_id}/source.md"
 
     def _atomic_write(self, full_path: str, content: str) -> None:
-        """原子写入：临时文件 + 重命名"""
+        """原子写入：临时文件 + 重命名（newline='' 禁止平台换行翻译）"""
         os.makedirs(os.path.dirname(full_path), exist_ok=True)
         dirname = os.path.dirname(full_path)
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8",
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="",
                                          dir=dirname, delete=False, suffix=".tmp") as tmp:
             tmp.write(content)
             tmp_path = tmp.name
@@ -46,16 +46,16 @@ class LocalFileStore:
         return object_path
 
     def get_source(self, doc_id: str, path: str = "") -> str:
-        """读取原始 Markdown"""
+        """读取原始 Markdown（newline='' 禁止平台换行翻译）"""
         object_path = self._build_path(doc_id, path)
         full_path = os.path.join(self.base_dir, self.bucket, object_path)
-        with open(full_path, "r", encoding="utf-8") as f:
+        with open(full_path, "r", encoding="utf-8", newline="") as f:
             return f.read()
 
     def get_source_by_full_path(self, source_path: str) -> str:
         """通过完整路径读取"""
         full_path = os.path.join(self.base_dir, self.bucket, source_path)
-        with open(full_path, "r", encoding="utf-8") as f:
+        with open(full_path, "r", encoding="utf-8", newline="") as f:
             return f.read()
 
     def delete_source(self, doc_id: str, path: str = "") -> None:

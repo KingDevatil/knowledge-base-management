@@ -6,6 +6,7 @@ import secrets
 import uuid
 from datetime import datetime, timezone, timedelta
 
+from pydantic import BaseModel
 from fastapi import APIRouter, Request, Form, UploadFile, File, HTTPException, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
@@ -124,6 +125,29 @@ async def api_create_directory(request: Request, user: dict = Depends(require_ad
     raise HTTPException(status_code=500, detail="目录保存失败")
 
 
+# Request models for directory operations
+class RenameDirRequest(BaseModel):
+    old_path: str
+    new_path: str
+
+class DeleteDirRequest(BaseModel):
+    path: str
+
+
+@api_router.post("/api/directories/rename")
+async def api_dir_rename(request: Request, body: RenameDirRequest, user: dict = Depends(require_admin)):
+    tools = request.app.state.tools
+    result = await tools.rename_directory(body.old_path, body.new_path)
+    return JSONResponse(result)
+
+
+@api_router.post("/api/directories/delete")
+async def api_dir_delete(request: Request, body: DeleteDirRequest, user: dict = Depends(require_admin)):
+    tools = request.app.state.tools
+    result = await tools.delete_directory(body.path)
+    return JSONResponse(result)
+
+
 # ---------- 文档上传 (admin only) ----------
 
 @api_router.post("/api/upload")
@@ -158,6 +182,176 @@ async def api_batch_upload(
             results.append({"filename": file.filename, "status": "error", "reason": str(e)})
 
     return JSONResponse({"results": results})
+
+
+# ---------- 压缩包上传 (admin only) ----------
+
+@api_router.post("/api/upload-archive")
+async def api_upload_archive(
+    request: Request,
+    file: UploadFile = File(...),
+    path: str = Form(""),
+    tags: str = Form(""),
+    user: dict = Depends(require_admin),
+):
+    """上传压缩包（.zip/.tar.gz），保留目录结构，合并入已有目录"""
+    if not file.filename:
+        return JSONResponse({"error": "未选择文件"}, status_code=400)
+
+    ext = file.filename.lower()
+    if not (ext.endswith('.zip') or ext.endswith('.tar.gz') or ext.endswith('.tgz')):
+        return JSONResponse({"error": "仅支持 .zip / .tar.gz"}, status_code=400)
+
+    import tempfile
+    import zipfile
+    import tarfile
+    import shutil
+
+    tmpdir = tempfile.mkdtemp(prefix="kb_archive_")
+    archive_path = os.path.join(tmpdir, file.filename)
+
+    try:
+        # 保存压缩包
+        content = await file.read()
+        with open(archive_path, 'wb') as f:
+            f.write(content)
+
+        # 解压
+        extract_dir = os.path.join(tmpdir, "extracted")
+        os.makedirs(extract_dir, exist_ok=True)
+
+        if ext.endswith('.zip'):
+            with zipfile.ZipFile(archive_path, 'r') as zf:
+                zf.extractall(extract_dir)
+        else:
+            with tarfile.open(archive_path, 'r:gz') as tf:
+                tf.extractall(extract_dir)
+
+        # 收集 .md 文件
+        md_files = []
+        for root, dirs, files_ in os.walk(extract_dir):
+            for fn in files_:
+                if fn.endswith('.md'):
+                    full_path = os.path.join(root, fn)
+                    rel_path = os.path.relpath(os.path.dirname(full_path), extract_dir).replace("\\", "/")
+                    if rel_path == ".":
+                        rel_path = ""
+                    md_files.append((full_path, rel_path, fn))
+
+        if not md_files:
+            return JSONResponse({"error": "压缩包内没有 .md 文件"}, status_code=400)
+
+        # 导入
+        tools = request.app.state.tools
+        tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+        results = []
+        success = 0
+
+        for full_path, rel_path, fn in md_files:
+            try:
+                content_md = open(full_path, 'r', encoding='utf-8').read()
+            except UnicodeDecodeError:
+                try:
+                    content_md = open(full_path, 'r', encoding='gbk').read()
+                except Exception:
+                    results.append({"filename": fn, "path": rel_path, "status": "error", "reason": "编码错误"})
+                    continue
+
+            title = fn.rsplit(".", 1)[0]
+            # 合并目录: 用户指定path + 压缩包内相对目录
+            if path and rel_path:
+                merged_path = f"{path}/{rel_path}"
+            elif path:
+                merged_path = path
+            else:
+                merged_path = rel_path
+
+            try:
+                result = await tools.import_markdown(
+                    title=title, markdown_content=content_md,
+                    path=merged_path, tags=tag_list,
+                    created_by=user["username"],
+                )
+                results.append({"filename": fn, "path": merged_path, "status": "ok", "doc_id": result["doc_id"]})
+                success += 1
+            except WriteLockError:
+                results.append({"filename": fn, "status": "error", "reason": "写锁被占用"})
+            except Exception as e:
+                results.append({"filename": fn, "status": "error", "reason": str(e)})
+
+        return JSONResponse({
+            "results": results,
+            "total": len(md_files),
+            "success": success,
+            "failed": len(md_files) - success,
+        })
+
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+# ---------- 压缩包预览 (admin only) ----------
+
+@api_router.post("/api/preview-archive")
+async def api_preview_archive(
+    request: Request,
+    file: UploadFile = File(...),
+    user: dict = Depends(require_admin),
+):
+    """预览压缩包内容：返回文件列表但不导入"""
+    if not file.filename:
+        return JSONResponse({"error": "未选择文件"}, status_code=400)
+
+    ext = file.filename.lower()
+    if not (ext.endswith('.zip') or ext.endswith('.tar.gz') or ext.endswith('.tgz')):
+        return JSONResponse({"error": "仅支持 .zip / .tar.gz"}, status_code=400)
+
+    # 大小限制：防止内存溢出
+    MAX_SIZE = 200 * 1024 * 1024  # 200MB
+    content = await file.read()
+    if len(content) > MAX_SIZE:
+        return JSONResponse(
+            {"error": f"压缩包过大（{len(content) // 1024 // 1024}MB），最大支持 200MB"},
+            status_code=400,
+        )
+
+    import tempfile
+    import zipfile
+    import tarfile
+    import shutil
+
+    tmpdir = tempfile.mkdtemp(prefix="kb_preview_")
+    archive_path = os.path.join(tmpdir, file.filename)
+
+    try:
+        with open(archive_path, 'wb') as f:
+            f.write(content)
+
+        extract_dir = os.path.join(tmpdir, "extracted")
+        os.makedirs(extract_dir, exist_ok=True)
+
+        if ext.endswith('.zip'):
+            with zipfile.ZipFile(archive_path, 'r') as zf:
+                zf.extractall(extract_dir)
+        else:
+            with tarfile.open(archive_path, 'r:gz') as tf:
+                tf.extractall(extract_dir)
+
+        files = []
+        for root, dirs, fnames in os.walk(extract_dir):
+            for fn in fnames:
+                if fn.endswith('.md'):
+                    full = os.path.join(root, fn)
+                    rel = os.path.relpath(os.path.dirname(full), extract_dir).replace("\\", "/")
+                    if rel == ".":
+                        rel = ""
+                    size = os.path.getsize(full)
+                    files.append({"filename": fn, "path": rel, "size": size})
+
+        return JSONResponse({"files": files, "total": len(files)})
+
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 @api_router.post("/documents/upload")

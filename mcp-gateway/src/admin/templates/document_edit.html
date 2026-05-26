@@ -130,10 +130,12 @@
             <!-- 所在目录 -->
             <div>
                 <label class="form-label">所在目录 <span class="text-red-500">*</span></label>
-                <input type="text" name="path" value="{{ path }}"
-                    class="form-input"
-                    placeholder="如：技术/API（多级用/分隔）">
-                <p class="text-xs text-slate-500 dark:text-slate-400 mt-1.5">多级目录用 / 分隔，如：技术/API/认证</p>
+                <div class="flex items-center gap-2 p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
+                    <i data-lucide="folder" class="w-4 h-4 text-amber-500 flex-shrink-0"></i>
+                    <span id="selected-dir" class="text-sm text-slate-600 dark:text-slate-400 flex-1 truncate">{{ path or '根目录' }}</span>
+                    <button type="button" onclick="openDirPicker()" class="text-xs text-brand-600 dark:text-brand-400 hover:text-brand-700 font-medium flex-shrink-0">选择目录</button>
+                </div>
+                <input type="hidden" name="path" id="path-input" value="{{ path }}">
             </div>
 
             <!-- 标签 -->
@@ -149,9 +151,7 @@
                 <label class="form-label">内容（Markdown）</label>
                 <div class="editor-container mt-2">
                     <div class="editor-pane">
-                        <textarea name="content" id="content-editor" placeholder="# 标题
-
-开始输入 Markdown 内容...">{{ content }}</textarea>
+                        <textarea name="content" id="content-editor" placeholder="# 标题&#10;&#10;开始输入 Markdown 内容...">{{ content }}</textarea>
                     </div>
                     <div class="preview-pane prose prose-slate max-w-none dark:prose-invert" id="preview-pane">
                         <p class="text-slate-400 dark:text-slate-500">右侧实时预览...</p>
@@ -194,5 +194,57 @@
 
     editor.addEventListener('input', updatePreview);
     updatePreview();
+
+// ----- 目录选择器 -----
+let pickedDir = '{{ path or "" }}';
+let dirPickerSelected = '';
+function openDirPicker() { dirPickerSelected = pickedDir; document.getElementById('dir-picker-modal').style.display = 'block'; loadDirPickerTree(); }
+function closeDirPicker() { document.getElementById('dir-picker-modal').style.display = 'none'; }
+async function loadDirPickerTree() {
+    const c = document.getElementById('dir-picker-tree');
+    try { const r = await fetch('/admin/api/directories'); c.innerHTML = ''; renderDirPicker(await r.json(), c, 0); }
+    catch { c.innerHTML = '<div class="text-sm text-red-500 text-center py-4">加载失败</div>'; }
+}
+function renderDirPicker(node, container, depth) {
+    container.innerHTML = '';
+    if (!node.children || !node.children.length) { container.innerHTML = '<div class="text-sm text-slate-400 text-center py-4">暂无目录</div>'; return; }
+    node.children.forEach(child => {
+        const item = document.createElement('div');
+        const pad = depth * 16 + 8;
+        const p = child.path || child.name;
+        const sel = dirPickerSelected === p;
+        item.className = `flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-colors ${sel ? 'bg-brand-50 dark:bg-brand-500/10 text-brand-700 dark:text-brand-400' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300'}`;
+        item.style.paddingLeft = pad + 'px';
+        item.innerHTML = `<i data-lucide="folder" class="w-4 h-4 text-amber-500 flex-shrink-0"></i><span class="text-sm flex-1 truncate">${esc(child.name)}</span>${sel ? '<i data-lucide="check" class="w-3.5 h-3.5 text-brand-500 flex-shrink-0"></i>' : ''}`;
+        item.addEventListener('click', () => { dirPickerSelected = p; loadDirPickerTree(); });
+        container.appendChild(item);
+        if (child.children && child.children.length > 0) { const sub = document.createElement('div'); renderDirPicker(child, sub, depth + 1); container.appendChild(sub); }
+    });
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+function selectDir(p) { pickedDir = p; document.getElementById('selected-dir').textContent = p || '根目录'; document.getElementById('path-input').value = p; closeDirPicker(); }
+function confirmDirPicker() { pickedDir = dirPickerSelected; document.getElementById('selected-dir').textContent = pickedDir || '根目录'; document.getElementById('path-input').value = pickedDir; closeDirPicker(); }
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 </script>
+<!-- 目录选择弹窗 -->
+<div id="dir-picker-modal" class="fixed inset-0 z-50" style="display:none">
+    <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" onclick="closeDirPicker()"></div>
+    <div class="fixed inset-0 flex items-center justify-center p-4 pointer-events-none">
+        <div class="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 w-full max-w-md pointer-events-auto" onclick="event.stopPropagation()">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-semibold text-slate-900 dark:text-white">选择目标目录</h3>
+                <button onclick="closeDirPicker()" class="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <div id="dir-picker-tree" class="max-h-64 overflow-y-auto space-y-1">
+                <div class="text-sm text-slate-400 text-center py-8"><i data-lucide="loader" class="w-5 h-5 animate-spin mx-auto"></i></div>
+            </div>
+            <div class="flex gap-3 mt-4 pt-4 border-t border-slate-100 dark:border-slate-800">
+                <button onclick="selectDir('')" class="btn-secondary flex-1 text-sm">根目录</button>
+                <button onclick="confirmDirPicker()" class="btn-primary flex-1 text-sm">确认选择</button>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}

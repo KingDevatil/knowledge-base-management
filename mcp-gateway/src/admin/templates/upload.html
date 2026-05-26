@@ -3,65 +3,136 @@
 {% block title %}上传文档 - 文档管理{% endblock %}
 
 {% block content %}
-<div class="p-8 max-w-2xl mx-auto">
+<div class="p-8 max-w-3xl mx-auto">
     <!-- 页面标题 -->
     <div class="mb-6">
-        <h1 class="text-2xl font-bold text-slate-900 dark:text-white">上传 Markdown 文件</h1>
-        <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">支持拖拽或选择多个 .md 文件</p>
+        <h1 class="text-2xl font-bold text-slate-900 dark:text-white">上传文档</h1>
+        <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">支持 .md 文件、文件夹、.zip / .tar.gz 压缩包</p>
     </div>
 
     {% if error %}
     <div class="alert alert-error mb-5">{{ error }}</div>
     {% endif %}
 
-    <form method="post" action="/admin/documents/upload" enctype="multipart/form-data" class="card p-6 space-y-6" id="upload-form">
-        <!-- 文件上传区域 -->
-        <div>
-            <label class="form-label">选择文件 <span class="text-red-500">*</span></label>
-            <div class="border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-2xl p-10 text-center hover:border-brand-400 dark:hover:border-brand-500 hover:bg-brand-50/30 dark:hover:bg-brand-500/5 transition-all cursor-pointer group" id="drop-zone">
-                <div class="w-14 h-14 mx-auto mb-4 rounded-2xl bg-slate-100 dark:bg-slate-800 group-hover:bg-brand-100 dark:group-hover:bg-brand-500/10 flex items-center justify-center transition-colors">
-                    <i data-lucide="upload-cloud" class="w-7 h-7 text-slate-400 dark:text-slate-500 group-hover:text-brand-500 dark:group-hover:text-brand-400 transition-colors"></i>
-                </div>
-                <p class="text-sm text-slate-600 dark:text-slate-300 mb-1">拖拽文件到此处，或 <span class="text-brand-600 dark:text-brand-400 font-medium">点击选择</span></p>
-                <p class="text-xs text-slate-400 dark:text-slate-500">支持多个 .md 文件</p>
-                <input type="file" id="file-input" name="files" accept=".md" multiple required class="hidden">
+    <!-- ========== Step 1: 统一拖拽上传区 ========== -->
+    <div class="card p-6 space-y-5" id="upload-step1">
+        <div class="border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-2xl p-10 text-center
+                    hover:border-brand-400 dark:hover:border-brand-500 hover:bg-brand-50/30 dark:hover:bg-brand-500/5
+                    transition-all cursor-pointer group" id="drop-zone">
+            <div class="w-14 h-14 mx-auto mb-4 rounded-2xl bg-slate-100 dark:bg-slate-800
+                        group-hover:bg-brand-100 dark:group-hover:bg-brand-500/10 flex items-center justify-center transition-colors">
+                <i data-lucide="upload-cloud" class="w-7 h-7 text-slate-400 dark:text-slate-500 group-hover:text-brand-500 dark:group-hover:text-brand-400 transition-colors"></i>
             </div>
-
-            <!-- 文件列表 -->
-            <div id="file-list" class="mt-4 space-y-2 hidden">
-                <p class="text-xs font-medium text-slate-500 dark:text-slate-400">已选择 <span id="file-count">0</span> 个文件</p>
+            <p class="text-sm text-slate-600 dark:text-slate-300 mb-1">
+                拖拽文件/文件夹/压缩包到此处，或 <span class="text-brand-600 dark:text-brand-400 font-medium">点击选择</span>
+            </p>
+            <p class="text-xs text-slate-400 dark:text-slate-500 mb-3">.md / .zip / .tar.gz</p>
+            <div class="flex gap-2 justify-center">
+                <input type="file" id="file-input" accept=".md,.zip,.tar.gz,.tgz" multiple class="hidden">
+                <button type="button" onclick="selectFolder()" class="px-4 py-2 text-sm font-medium rounded-xl
+                    border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400
+                    hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
+                    <i data-lucide="folder-open" class="w-4 h-4 inline mr-1.5"></i>选择文件夹
+                </button>
+                <input type="file" id="folder-input" webkitdirectory directory class="hidden">
             </div>
         </div>
 
-        <!-- 目标目录 -->
-        <div>
-            <label class="form-label">目标目录</label>
-            <div class="flex items-center gap-2 p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
-                <i data-lucide="folder" class="w-4 h-4 text-amber-500 flex-shrink-0"></i>
-                <span id="selected-dir" class="text-sm text-slate-600 dark:text-slate-400 flex-1 truncate">{{ path or '根目录' }}</span>
-                <button type="button" onclick="openDirPicker()" class="text-xs text-brand-600 dark:text-brand-400 hover:text-brand-700 font-medium flex-shrink-0">
-                    选择目录
+        <!-- Processing indicator -->
+        <div id="processing-indicator" class="hidden">
+            <div class="flex items-center gap-3 px-4 py-3 rounded-xl bg-brand-50 dark:bg-brand-500/10 border border-brand-200 dark:border-brand-500/20">
+                <svg class="animate-spin h-5 w-5 text-brand-600 dark:text-brand-400 flex-shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                </svg>
+                <p class="text-sm text-brand-700 dark:text-brand-400 font-medium" id="processing-text">正在分析压缩包...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========== Step 2: 文件审核表格 ========== -->
+    <div id="upload-step2" class="hidden">
+        <div class="card p-6 space-y-5">
+            <div class="flex items-center justify-between">
+                <h3 class="text-lg font-semibold text-slate-900 dark:text-white">
+                    待导入文件（<span id="review-count">0</span> 个）
+                </h3>
+                <button type="button" onclick="resetToStep1()" class="text-sm text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition-colors">
+                    <i data-lucide="arrow-left" class="w-4 h-4 inline mr-1"></i>重新选择
                 </button>
             </div>
-            <input type="hidden" name="path" id="path-input" value="{{ path }}">
-        </div>
 
-        <!-- 标签 -->
-        <div>
-            <label class="form-label">标签（逗号分隔，所有文件共用）</label>
-            <input type="text" name="tags" class="form-input" placeholder="技术, API">
-        </div>
+            <!-- 全局标签 -->
+            <div class="flex gap-3 items-center flex-wrap">
+                <label class="text-sm font-medium text-slate-700 dark:text-slate-300 whitespace-nowrap">
+                    全局标签
+                    <span id="archive-tag-note" class="hidden text-xs font-normal text-amber-600 dark:text-amber-400">（压缩包文件共用）</span>
+                </label>
+                <input type="text" id="global-tags" class="form-input flex-1 min-w-[200px]" placeholder="技术, API, 文档">
+                <button type="button" onclick="applyGlobalTags()" class="px-4 py-2 text-sm font-medium rounded-xl
+                    border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400
+                    hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
+                    应用到全部
+                </button>
+            </div>
 
-        <div class="flex gap-3 pt-2">
-            <button type="submit" class="btn-primary" id="submit-btn">
-                <i data-lucide="upload" class="w-4 h-4" id="submit-icon"></i>
-                <span id="submit-text">开始导入</span>
-            </button>
-            <a href="/admin/documents" class="btn-secondary" id="cancel-btn">取消</a>
-        </div>
+            <!-- 目标目录 -->
+            <div>
+                <label class="form-label">目标目录</label>
+                <div class="flex items-center gap-2 p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
+                    <i data-lucide="folder" class="w-4 h-4 text-amber-500 flex-shrink-0"></i>
+                    <span id="selected-dir" class="text-sm text-slate-600 dark:text-slate-400 flex-1 truncate">{{ path or '根目录' }}</span>
+                    <button type="button" onclick="openDirPicker()" class="text-xs text-brand-600 dark:text-brand-400 hover:text-brand-700 font-medium flex-shrink-0">
+                        选择目录
+                    </button>
+                </div>
+                <input type="hidden" id="path-input" value="{{ path }}">
+            </div>
 
-        <!-- 加载状态 -->
-        <div id="upload-status" class="hidden">
+            <!-- 文件审核表格 -->
+            <div class="overflow-x-auto border border-slate-200 dark:border-slate-700 rounded-xl">
+                <div class="overflow-y-auto max-h-96">
+                    <table class="w-full text-sm">
+                        <thead class="bg-slate-50 dark:bg-slate-800/50 sticky top-0 z-10">
+                            <tr>
+                                <th class="text-left px-4 py-3 font-medium text-slate-600 dark:text-slate-400 whitespace-nowrap">文件名</th>
+                                <th class="text-left px-4 py-3 font-medium text-slate-600 dark:text-slate-400 whitespace-nowrap">路径</th>
+                                <th class="text-left px-4 py-3 font-medium text-slate-600 dark:text-slate-400 whitespace-nowrap">大小</th>
+                                <th class="text-left px-4 py-3 font-medium text-slate-600 dark:text-slate-400 whitespace-nowrap">标签</th>
+                                <th class="text-center px-4 py-3 font-medium text-slate-600 dark:text-slate-400 whitespace-nowrap w-12"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="review-table" class="divide-y divide-slate-100 dark:divide-slate-800">
+                            <!-- rows injected by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 提示信息 -->
+            <div id="archive-mode-hint" class="hidden">
+                <div class="flex items-start gap-2 px-4 py-3 rounded-xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20">
+                    <i data-lucide="info" class="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5"></i>
+                    <p class="text-sm text-amber-700 dark:text-amber-400">
+                        压缩包导入时所有文件共享同一组标签。如需为每个文件设置不同标签，请解压后以文件/文件夹方式上传。
+                    </p>
+                </div>
+            </div>
+
+            <!-- 提交按钮 -->
+            <div class="flex gap-3 pt-2">
+                <button type="button" onclick="startImport()" class="btn-primary" id="import-btn">
+                    <i data-lucide="upload" class="w-4 h-4"></i>
+                    <span id="import-btn-text">开始导入（<span id="import-count">0</span> 个）</span>
+                </button>
+                <button type="button" onclick="resetToStep1()" class="btn-secondary">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========== Step 3: 导入进度 ========== -->
+    <div id="upload-step3" class="hidden">
+        <div class="card p-6">
             <div class="alert alert-info">
                 <div class="flex items-center gap-3">
                     <svg class="animate-spin h-5 w-5 text-brand-600 dark:text-brand-400 flex-shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -69,7 +140,7 @@
                         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
                     </svg>
                     <div>
-                        <p class="font-medium text-slate-700 dark:text-slate-300" id="status-text">正在上传...</p>
+                        <p class="font-medium text-slate-700 dark:text-slate-300" id="status-text">正在导入...</p>
                         <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5" id="status-detail">请稍候</p>
                     </div>
                 </div>
@@ -82,12 +153,23 @@
                         <div id="progress-bar" class="h-full bg-brand-500 rounded-full transition-all duration-300" style="width: 0%"></div>
                     </div>
                 </div>
+                <!-- 结果列表 -->
+                <div id="import-results" class="mt-3 space-y-1 max-h-48 overflow-y-auto"></div>
+            </div>
+            <div class="flex gap-3 mt-4">
+                <button type="button" onclick="goToDocuments()" class="btn-primary hidden" id="done-btn">
+                    <i data-lucide="check" class="w-4 h-4"></i>
+                    完成，前往文档列表
+                </button>
+                <button type="button" onclick="resetAll()" class="btn-secondary hidden" id="retry-btn">
+                    重新上传
+                </button>
             </div>
         </div>
-    </form>
+    </div>
 </div>
 
-<!-- 目录选择弹窗 -->
+<!-- ========== 目录选择弹窗（保持不变） ========== -->
 <div id="dir-picker-modal" class="fixed inset-0 z-50" style="display:none">
     <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" onclick="closeDirPicker()"></div>
     <div class="fixed inset-0 flex items-center justify-center p-4 pointer-events-none">
@@ -112,67 +194,430 @@
 </div>
 
 <script>
-    let selectedFiles = [];
+    // ========== 全局状态 ==========
+    let reviewFiles = [];       // [{file, name, path, size, tags}]
+    let isArchiveMode = false;  // true = 来自压缩包，false = 来自文件/文件夹
+    let originalArchiveFile = null;  // 原始压缩包 File 对象
     let pickedDir = '{{ path or "" }}';
     let dirPickerSelected = '';
 
-    // ---------- 文件选择 ----------
-function handleFiles(files) {
-    selectedFiles = Array.from(files).filter(f => f.name.endsWith('.md'));
-    const list = document.getElementById('file-list');
-    const count = document.getElementById('file-count');
-
-    if (selectedFiles.length === 0) {
-        list.classList.add('hidden');
-        return;
+    // ========== Step 切换 ==========
+    function showStep1() {
+        document.getElementById('upload-step1').classList.remove('hidden');
+        document.getElementById('upload-step2').classList.add('hidden');
+        document.getElementById('upload-step3').classList.add('hidden');
     }
 
-    list.classList.remove('hidden');
-    count.textContent = selectedFiles.length;
+    function showStep2() {
+        document.getElementById('upload-step1').classList.add('hidden');
+        document.getElementById('upload-step2').classList.remove('hidden');
+        document.getElementById('upload-step3').classList.add('hidden');
+        document.getElementById('processing-indicator').classList.add('hidden');
+    }
 
-    // 重建文件列表
-    let html = '';
-    selectedFiles.forEach((f, i) => {
-        const size = (f.size / 1024).toFixed(1);
-        html += `
-            <div class="flex items-center gap-3 px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800/50">
-                <i data-lucide="file-text" class="w-4 h-4 text-brand-500 flex-shrink-0"></i>
-                <span class="text-sm text-slate-700 dark:text-slate-300 flex-1 truncate">${f.name}</span>
-                <span class="text-xs text-slate-400">${size} KB</span>
-                <button type="button" onclick="removeFile(${i})" class="p-1 rounded text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors">
-                    <i data-lucide="x" class="w-3 h-3"></i>
-                </button>
-            </div>`;
-    });
-    // 保留计数行，替换文件列表
-    const countHtml = list.querySelector('p') ? list.querySelector('p').outerHTML : '<p class="text-xs font-medium text-slate-500 dark:text-slate-400">已选择 <span id="file-count">' + selectedFiles.length + '</span> 个文件</p>';
-    list.innerHTML = countHtml + html;
-    if (typeof lucide !== 'undefined') lucide.createIcons();
-}
+    function showStep3() {
+        document.getElementById('upload-step1').classList.add('hidden');
+        document.getElementById('upload-step2').classList.add('hidden');
+        document.getElementById('upload-step3').classList.remove('hidden');
+    }
 
-function removeFile(index) {
-    selectedFiles.splice(index, 1);
-    // 直接用 selectedFiles 重建显示，不依赖 input.files
-    handleFiles(selectedFiles);
-    // 同步更新 input.files
-    const dt = new DataTransfer();
-    selectedFiles.forEach(f => dt.items.add(f));
-    document.getElementById('file-input').files = dt.files;
-}
+    function resetToStep1() {
+        reviewFiles = [];
+        isArchiveMode = false;
+        originalArchiveFile = null;
+        document.getElementById('file-input').value = '';
+        document.getElementById('folder-input').value = '';
+        try { sessionStorage.removeItem('kb-upload-review'); } catch(e) {}
+        showStep1();
+    }
 
-    // 点击选择
+    function resetAll() {
+        resetToStep1();
+    }
+
+    // ========== 处理中指示器 ==========
+    function showProcessing(msg) {
+        document.getElementById('processing-text').textContent = msg;
+        document.getElementById('processing-indicator').classList.remove('hidden');
+    }
+
+    // ========== 文件夹选择 ==========
+    function selectFolder() {
+        document.getElementById('folder-input').click();
+    }
+
+    // ========== 文件输入处理 ==========
+    function handleInput(files) {
+        const arr = Array.from(files);
+        const archives = arr.filter(f => {
+            const name = f.name.toLowerCase();
+            return name.endsWith('.zip') || name.endsWith('.tar.gz') || name.endsWith('.tgz');
+        });
+        const mdFiles = arr.filter(f => f.name.endsWith('.md'));
+
+        if (archives.length > 0) {
+            // 压缩包模式：上传到预览端点
+            originalArchiveFile = archives[0];
+            isArchiveMode = true;
+            previewArchive(archives[0]);
+        } else if (mdFiles.length > 0) {
+            // 文件/文件夹模式
+            isArchiveMode = false;
+            originalArchiveFile = null;
+            const isFolder = mdFiles[0].webkitRelativePath && mdFiles[0].webkitRelativePath !== '';
+            processFiles(mdFiles, isFolder);
+        } else {
+            alert('请选择 .md 文件、文件夹（含 .md 文件）或 .zip/.tar.gz 压缩包');
+        }
+    }
+
+    // ========== 压缩包预览 ==========
+    async function previewArchive(file) {
+        showProcessing('正在分析压缩包内容...');
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        try {
+            const resp = await fetch('/admin/api/preview-archive', {
+                method: 'POST',
+                body: formData
+            });
+            const data = await resp.json();
+
+            if (!resp.ok) {
+                alert('预览失败：' + (data.error || '未知错误'));
+                document.getElementById('processing-indicator').classList.add('hidden');
+                return;
+            }
+
+            reviewFiles = data.files.map(f => ({
+                file: null,           // 压缩包模式没有独立文件引用
+                name: f.filename,
+                path: f.path,
+                size: f.size,
+                tags: ''
+            }));
+
+            showReviewTable();
+        } catch (err) {
+            alert('预览失败：' + err.message);
+            document.getElementById('processing-indicator').classList.add('hidden');
+        }
+    }
+
+    // ========== 文件处理 ==========
+    function processFiles(files, isFolder) {
+        reviewFiles = files.map((f) => {
+            const wp = f.webkitRelativePath || '';
+            const path = isFolder ? wp.split('/').slice(0, -1).join('/') : '';
+            return {
+                file: f,              // 保留原始 File 对象
+                name: f.name,
+                path: path,
+                size: f.size,
+                tags: ''
+            };
+        });
+
+        showReviewTable();
+    }
+
+    // ========== 显示审核表格 ==========
+    function showReviewTable() {
+        document.getElementById('review-count').textContent = reviewFiles.length;
+        document.getElementById('import-count').textContent = reviewFiles.length;
+        document.getElementById('archive-tag-note').classList.toggle('hidden', !isArchiveMode);
+        document.getElementById('archive-mode-hint').classList.toggle('hidden', !isArchiveMode);
+
+        // 持久化审核状态（页面刷新后恢复标签编辑，File 对象除外）
+        try {
+            const persist = {
+                files: reviewFiles.map(f => ({ name: f.name, path: f.path, size: f.size, tags: f.tags })),
+                isArchive: isArchiveMode, pickedDir: pickedDir
+            };
+            sessionStorage.setItem('kb-upload-review', JSON.stringify(persist));
+        } catch(e) { /* ignore quota errors */ }
+
+        const tbody = document.getElementById('review-table');
+        let html = '';
+        reviewFiles.forEach((f, i) => {
+            const sizeStr = f.size < 1024
+                ? f.size + ' B'
+                : (f.size / 1024).toFixed(1) + ' KB';
+            const filePath = f.path || '';
+            const displayPath = (pickedDir ? pickedDir + (filePath ? '/' + filePath : '') : filePath) || '（根目录）';
+            const tagDisabled = isArchiveMode ? 'disabled' : '';
+
+            html += `
+                <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
+                    <td class="px-4 py-2.5 text-slate-700 dark:text-slate-300">
+                        <div class="flex items-center gap-2">
+                            <i data-lucide="file-text" class="w-3.5 h-3.5 text-slate-400 flex-shrink-0"></i>
+                            <span class="truncate max-w-[180px]" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</span>
+                        </div>
+                    </td>
+                    <td class="px-4 py-2.5 text-slate-500 dark:text-slate-400 text-xs">${escapeHtml(displayPath)}</td>
+                    <td class="px-4 py-2.5 text-slate-500 dark:text-slate-400 text-xs whitespace-nowrap">${sizeStr}</td>
+                    <td class="px-4 py-2.5">
+                        <input type="text"
+                            class="form-input text-xs py-1.5 px-2 min-w-[100px] tag-input"
+                            value="${escapeHtml(f.tags)}"
+                            placeholder="${isArchiveMode ? '共用全局标签' : '标签...'}"
+                            data-index="${i}"
+                            ${tagDisabled}
+                            onchange="updateTag(${i}, this.value)">
+                    </td>
+                    <td class="px-4 py-2.5 text-center">
+                        <button type="button" onclick="removeRow(${i})"
+                            class="p-1 rounded text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors"
+                            title="移除">
+                            <i data-lucide="x" class="w-3.5 h-3.5"></i>
+                        </button>
+                    </td>
+                </tr>`;
+        });
+
+        if (reviewFiles.length === 0) {
+            html = `<tr><td colspan="5" class="text-center py-8 text-slate-400 dark:text-slate-500">暂无文件</td></tr>`;
+        }
+
+        tbody.innerHTML = html;
+        showStep2();
+
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+    }
+
+    function escapeHtml(str) {
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    }
+
+    // ========== 表格操作 ==========
+    function updateTag(index, value) {
+        if (index >= 0 && index < reviewFiles.length) {
+            reviewFiles[index].tags = value;
+        }
+    }
+
+    function removeRow(index) {
+        reviewFiles.splice(index, 1);
+        if (reviewFiles.length === 0) {
+            resetToStep1();
+        } else {
+            showReviewTable();
+        }
+    }
+
+    function applyGlobalTags() {
+        const globalVal = document.getElementById('global-tags').value;
+        reviewFiles.forEach((f, i) => {
+            f.tags = globalVal;
+        });
+        // 更新表格中的输入框
+        const inputs = document.querySelectorAll('#review-table .tag-input');
+        inputs.forEach(inp => {
+            inp.value = globalVal;
+        });
+    }
+
+    // ========== 开始导入 ==========
+    async function startImport() {
+        if (reviewFiles.length === 0) {
+            alert('没有可导入的文件');
+            return;
+        }
+
+        showStep3();
+
+        const statusText = document.getElementById('status-text');
+        const statusDetail = document.getElementById('status-detail');
+        const progressText = document.getElementById('progress-text');
+        const progressBar = document.getElementById('progress-bar');
+        const importResults = document.getElementById('import-results');
+        const doneBtn = document.getElementById('done-btn');
+        const retryBtn = document.getElementById('retry-btn');
+
+        importResults.innerHTML = '';
+        progressBar.style.width = '0%';
+        doneBtn.classList.add('hidden');
+        retryBtn.classList.add('hidden');
+
+        if (isArchiveMode) {
+            // 压缩包模式：重新上传原始压缩包到 /admin/api/upload-archive
+            await importArchive(statusText, statusDetail, progressText, progressBar, importResults, doneBtn, retryBtn);
+        } else {
+            // 文件模式：逐个上传
+            await importIndividualFiles(statusText, statusDetail, progressText, progressBar, importResults, doneBtn, retryBtn);
+        }
+    }
+
+    async function importArchive(statusText, statusDetail, progressText, progressBar, importResults, doneBtn, retryBtn) {
+        if (!originalArchiveFile) {
+            statusText.textContent = '❌ 错误';
+            statusDetail.textContent = '原始压缩包文件丢失，请重新选择';
+            retryBtn.classList.remove('hidden');
+            return;
+        }
+
+        statusText.textContent = '正在导入压缩包...';
+        statusDetail.textContent = originalArchiveFile.name;
+        progressText.textContent = `0 / ${reviewFiles.length}`;
+
+        const formData = new FormData();
+        formData.append('file', originalArchiveFile);
+        formData.append('path', pickedDir);
+        formData.append('tags', document.getElementById('global-tags').value || '');
+
+        try {
+            const resp = await fetch('/admin/api/upload-archive', {
+                method: 'POST',
+                body: formData
+            });
+            const data = await resp.json();
+
+            if (resp.ok && data.total !== undefined) {
+                progressBar.style.width = '100%';
+                progressText.textContent = `${data.success} / ${data.total}`;
+
+                let resultsHtml = '';
+                if (data.results) {
+                    data.results.forEach(r => {
+                        const icon = r.status === 'ok' ? '✅' : '❌';
+                        const reason = r.reason ? ` — ${r.reason}` : '';
+                        resultsHtml += `<div class="text-xs text-slate-600 dark:text-slate-400">${icon} ${escapeHtml(r.filename)}${reason}</div>`;
+                    });
+                }
+                importResults.innerHTML = resultsHtml;
+
+                if (data.failed === 0) {
+                    statusText.textContent = `✅ 全部完成！${data.success} 个文档导入成功`;
+                } else {
+                    statusText.textContent = `⚠️ 完成 ${data.success} 个，${data.failed} 个失败`;
+                }
+                statusDetail.textContent = originalArchiveFile.name;
+                doneBtn.classList.remove('hidden');
+            } else {
+                statusText.textContent = '❌ 导入失败';
+                statusDetail.textContent = data.error || '未知错误';
+                retryBtn.classList.remove('hidden');
+            }
+        } catch (err) {
+            statusText.textContent = '❌ 网络错误';
+            statusDetail.textContent = err.message;
+            retryBtn.classList.remove('hidden');
+        }
+    }
+
+    async function importIndividualFiles(statusText, statusDetail, progressText, progressBar, importResults, doneBtn, retryBtn) {
+        const total = reviewFiles.length;
+        let completed = 0;
+        let failed = 0;
+
+        statusText.textContent = '正在逐个导入...';
+
+        for (let i = 0; i < total; i++) {
+            const f = reviewFiles[i];
+            statusDetail.textContent = f.name;
+            progressText.textContent = `${i} / ${total}`;
+
+            const formData = new FormData();
+            formData.append('files', f.file);
+
+            // 构建路径：用户选择的基础目录 + 文件相对路径
+            const filePath = f.path || '';
+            const fullPath = pickedDir
+                ? (pickedDir + (filePath ? '/' + filePath : ''))
+                : filePath;
+            formData.append('path', fullPath);
+            formData.append('tags', f.tags || '');
+
+            try {
+                const resp = await fetch('/admin/api/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await resp.json();
+
+                if (resp.ok && data.results) {
+                    data.results.forEach(r => {
+                        if (r.status === 'ok') {
+                            completed++;
+                            addResultItem(importResults, true, r.filename);
+                        } else {
+                            failed++;
+                            addResultItem(importResults, false, r.filename, r.reason);
+                        }
+                    });
+                } else {
+                    failed++;
+                    addResultItem(importResults, false, f.name, '请求失败');
+                }
+            } catch (err) {
+                failed++;
+                addResultItem(importResults, false, f.name, err.message);
+            }
+
+            const pct = ((i + 1) / total * 100);
+            progressBar.style.width = Math.min(pct, 100) + '%';
+            progressText.textContent = `${i + 1} / ${total}`;
+        }
+
+        // 完成
+        progressBar.style.width = '100%';
+        progressText.textContent = `${completed} / ${total}`;
+
+        if (failed === 0) {
+            statusText.textContent = `✅ 全部完成！${completed} 个文档导入成功`;
+            statusDetail.textContent = '';
+        } else {
+            statusText.textContent = `⚠️ 完成 ${completed} 个，${failed} 个失败`;
+            statusDetail.textContent = '请检查文件格式后重试';
+        }
+
+        doneBtn.classList.remove('hidden');
+        if (failed > 0) {
+            retryBtn.classList.remove('hidden');
+        }
+    }
+
+    function addResultItem(container, ok, filename, reason) {
+        const icon = ok ? '✅' : '❌';
+        const reasonStr = reason ? ` — ${reason}` : '';
+        const div = document.createElement('div');
+        div.className = 'text-xs text-slate-600 dark:text-slate-400';
+        div.textContent = `${icon} ${filename}${reasonStr}`;
+        container.appendChild(div);
+    }
+
+    function goToDocuments() {
+        window.location.href = '/admin/documents' + (pickedDir ? '?path=' + encodeURIComponent(pickedDir) : '');
+    }
+
+    // ========== 点击选择文件 ==========
     document.getElementById('drop-zone').addEventListener('click', (e) => {
-        if (e.target !== document.getElementById('file-input')) {
-            document.getElementById('file-input').click();
+        // 不要拦截按钮点击
+        if (e.target.closest('button')) return;
+        document.getElementById('file-input').click();
+    });
+
+    document.getElementById('file-input').addEventListener('change', (e) => {
+        if (e.target.files.length > 0) {
+            handleInput(e.target.files);
         }
     });
-    document.getElementById('file-input').addEventListener('change', (e) => {
-        handleFiles(e.target.files);
+
+    document.getElementById('folder-input').addEventListener('change', (e) => {
+        if (e.target.files.length > 0) {
+            handleInput(e.target.files);
+        }
     });
 
-    // 拖拽
+    // ========== 拖拽处理 ==========
     document.addEventListener('dragover', (e) => e.preventDefault());
     document.addEventListener('drop', (e) => e.preventDefault());
+
     const dz = document.getElementById('drop-zone');
     dz.addEventListener('dragover', (e) => {
         e.preventDefault();
@@ -184,13 +629,61 @@ function removeFile(index) {
     dz.addEventListener('drop', (e) => {
         e.preventDefault();
         dz.classList.remove('border-brand-400', 'dark:border-brand-500', 'bg-brand-50/50', 'dark:bg-brand-500/10');
-        handleFiles(e.dataTransfer.files);
-        const dt = new DataTransfer();
-        Array.from(e.dataTransfer.files).filter(f => f.name.endsWith('.md')).forEach(f => dt.items.add(f));
-        document.getElementById('file-input').files = dt.files;
+        const items = e.dataTransfer.items;
+        if (items && items.length > 0) {
+            // 递归遍历支持文件夹拖拽（保留目录结构）
+            dropItemsToFiles(items).then(files => {
+                if (files.length > 0) handleInput(files);
+            });
+        }
     });
 
-    // ---------- 目录选择 ----------
+    // 递归遍历拖拽条目（支持文件夹保留路径）
+    async function dropItemsToFiles(items) {
+        const files = [];
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            if (item.kind !== 'file') continue;
+            const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
+            if (entry && entry.isDirectory) {
+                await traverseDirectory(entry, '', files);
+            } else {
+                const file = item.getAsFile();
+                if (file) files.push(file);
+            }
+        }
+        return files;
+    }
+
+    async function traverseDirectory(entry, prefix, files) {
+        const reader = entry.createReader();
+        const readAll = () => new Promise((resolve) => {
+            const all = [];
+            const read = () => {
+                reader.readEntries(entries => {
+                    if (entries.length === 0) resolve(all);
+                    else { all.push(...entries); read(); }
+                });
+            };
+            read();
+        });
+        const entries = await readAll();
+        for (const e of entries) {
+            const fullPath = prefix + e.name;
+            if (e.isDirectory) {
+                await traverseDirectory(e, fullPath + '/', files);
+            } else {
+                const file = await new Promise(resolve => e.file(resolve));
+                // 注入 webkitRelativePath 模拟文件夹选择
+                Object.defineProperty(file, 'webkitRelativePath', {
+                    value: fullPath, writable: false
+                });
+                files.push(file);
+            }
+        }
+    }
+
+    // ========== 目录选择器 ==========
     function openDirPicker() {
         dirPickerSelected = pickedDir;
         document.getElementById('dir-picker-modal').style.display = 'block';
@@ -231,7 +724,7 @@ function removeFile(index) {
 
             item.innerHTML = `
                 <i data-lucide="folder" class="w-4 h-4 text-amber-500 flex-shrink-0"></i>
-                <span class="text-sm flex-1 truncate">${child.name}</span>
+                <span class="text-sm flex-1 truncate">${escapeHtml(child.name)}</span>
                 ${isSelected ? '<i data-lucide="check" class="w-3.5 h-3.5 text-brand-500 flex-shrink-0"></i>' : ''}
             `;
 
@@ -253,7 +746,6 @@ function removeFile(index) {
 
     function selectDir(path) {
         dirPickerSelected = path;
-        // 直接确认
         pickedDir = path;
         document.getElementById('selected-dir').textContent = path || '根目录';
         document.getElementById('path-input').value = path;
@@ -267,80 +759,29 @@ function removeFile(index) {
         closeDirPicker();
     }
 
-    // ---------- 表单提交 ----------
-    const form = document.getElementById('upload-form');
-    const submitBtn = document.getElementById('submit-btn');
-    const submitIcon = document.getElementById('submit-icon');
-    const submitText = document.getElementById('submit-text');
-    const cancelBtn = document.getElementById('cancel-btn');
-    const uploadStatus = document.getElementById('upload-status');
-    const statusText = document.getElementById('status-text');
-    const statusDetail = document.getElementById('status-detail');
-    const progressText = document.getElementById('progress-text');
-    const progressBar = document.getElementById('progress-bar');
+    // ========== 初始化图标 ==========
+    if (typeof lucide !== 'undefined') lucide.createIcons();
 
-    form.addEventListener('submit', async function(e) {
-        e.preventDefault();
-
-        if (selectedFiles.length === 0) {
-            alert('请选择至少一个 .md 文件');
-            return;
-        }
-
-        // 禁用界面
-        submitBtn.disabled = true;
-        submitBtn.classList.add('opacity-70', 'cursor-not-allowed');
-        submitText.textContent = '处理中...';
-        cancelBtn.classList.add('pointer-events-none', 'opacity-50');
-        uploadStatus.classList.remove('hidden');
-        statusText.textContent = '正在上传...';
-        progressText.textContent = `0 / ${selectedFiles.length}`;
-        progressBar.style.width = '0%';
-
-        const tags = document.querySelector('[name="tags"]').value;
-        let completed = 0;
-        let failed = 0;
-
-        for (let i = 0; i < selectedFiles.length; i++) {
-            const file = selectedFiles[i];
-            statusDetail.textContent = `${file.name}`;
-            progressText.textContent = `${i} / ${selectedFiles.length}`;
-
-            const formData = new FormData();
-            formData.append('files', file);
-            formData.append('path', pickedDir);
-            formData.append('tags', tags);
-
-            try {
-                const resp = await fetch('/admin/api/upload', { method: 'POST', body: formData });
-                if (resp.ok) {
-                    completed++;
-                } else {
-                    failed++;
+    // ========== 恢复上次审核状态（页面刷新后恢复标签） ==========
+    (function() {
+        try {
+            const saved = JSON.parse(sessionStorage.getItem('kb-upload-review'));
+            if (saved && saved.files && saved.files.length > 0) {
+                reviewFiles = saved.files.map(f => ({
+                    file: null, name: f.name, path: f.path, size: f.size, tags: f.tags || ''
+                }));
+                isArchiveMode = saved.isArchive || false;
+                pickedDir = saved.pickedDir || pickedDir;
+                document.getElementById('selected-dir').textContent = pickedDir || '根目录';
+                document.getElementById('path-input').value = pickedDir;
+                showReviewTable();
+                // 不触发实际导入，用户需重新选择文件（压缩包模式下 file=null）
+                if (isArchiveMode) {
+                    document.getElementById('import-btn').classList.add('opacity-50', 'cursor-not-allowed');
+                    document.getElementById('import-btn-text').textContent = '需重新选择压缩包';
                 }
-            } catch {
-                failed++;
             }
-
-            const pct = ((i + 1) / selectedFiles.length * 100);
-            progressBar.style.width = Math.min(pct, 100) + '%';
-            progressText.textContent = `${i + 1} / ${selectedFiles.length}`;
-        }
-
-        // 完成
-        progressBar.style.width = '100%';
-        if (failed === 0) {
-            statusText.textContent = `✅ 全部完成！${completed} 个文档导入成功`;
-            statusDetail.textContent = '即将跳转到文档列表...';
-            setTimeout(() => { window.location.href = '/admin/documents?path=' + encodeURIComponent(pickedDir); }, 1500);
-        } else {
-            statusText.textContent = `⚠️ 完成 ${completed} 个，${failed} 个失败`;
-            statusDetail.textContent = '请检查文件格式后重试';
-            submitBtn.disabled = false;
-            submitBtn.classList.remove('opacity-70', 'cursor-not-allowed');
-            submitText.textContent = '重试失败文件';
-            cancelBtn.classList.remove('pointer-events-none', 'opacity-50');
-        }
-    });
+        } catch(e) {}
+    })();
 </script>
 {% endblock %}

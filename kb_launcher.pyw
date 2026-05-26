@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import sys
 import time
+import signal
 import socket
 import shutil
 import threading
@@ -47,11 +48,13 @@ import urllib.error
 PROJECT_ROOT = Path(__file__).resolve().parent
 PYTHON_EXE = sys.executable
 KBDATA_DIR = PROJECT_ROOT / "kbdata"
+LOGS_DIR = KBDATA_DIR / "logs"
 
 # Ensure kbdata directories exist
 (KBDATA_DIR / "config").mkdir(parents=True, exist_ok=True)
 (KBDATA_DIR / "minio").mkdir(parents=True, exist_ok=True)
 (KBDATA_DIR / "chroma").mkdir(parents=True, exist_ok=True)
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -126,7 +129,7 @@ SERVICES: list[ServiceDef] = [
             "MinIO API:    http://localhost:9000",
             "MinIO Console: http://localhost:9001",
         ],
-        start_cmd=[str(PROJECT_ROOT / "minio.exe"), "server", str(KBDATA_DIR / "minio"), "--console-address", ":9001"],
+        start_cmd=[str(PROJECT_ROOT / ("minio.exe" if sys.platform == "win32" else "minio")), "server", str(KBDATA_DIR / "minio"), "--console-address", ":9001"],
         process_name="minio",
         startup_delay=3.0,
     ),
@@ -137,7 +140,8 @@ SERVICES: list[ServiceDef] = [
         access_urls=[
             "API:   http://localhost:8000",
             "Admin: http://localhost:8000/admin",
-            "MCP:   http://localhost:8000/sse",
+            "MCP:   http://localhost:8000/mcp (推荐)",
+            "MCP:   http://localhost:8000/sse (兼容)",
         ],
         start_cmd=[
             PYTHON_EXE, "-m", "uvicorn", "src.main:app",
@@ -211,10 +215,68 @@ def kill_process(process_name: str) -> bool:
         return False
 
 
+def kill_process_by_pid(pid: int) -> bool:
+    """跨平台按 PID 终止进程"""
+    if sys.platform == "win32":
+        try:
+            subprocess.run(["taskkill", "/F", "/PID", str(pid)],
+                           capture_output=True, timeout=10)
+            return True
+        except Exception:
+            return False
+    else:
+        try:
+            os.kill(pid, signal.SIGKILL)
+            return True
+        except (ProcessLookupError, PermissionError):
+            return False
+
+
+def find_pid_by_port(port: int) -> int | None:
+    """跨平台按端口查找 PID"""
+    if sys.platform == "win32":
+        try:
+            result = subprocess.run(
+                ["netstat", "-ano"],
+                capture_output=True, timeout=10,
+                encoding="gbk", errors="replace",
+            )
+            for line in result.stdout.splitlines():
+                if f":{port}" in line and "LISTENING" in line:
+                    return int(line.strip().split()[-1])
+        except Exception:
+            pass
+    else:
+        try:
+            result = subprocess.run(
+                ["ss", "-tlnp"],
+                capture_output=True, timeout=5,
+                encoding="utf-8",
+            )
+            for line in result.stdout.splitlines():
+                if f":{port}" in line and "LISTEN" in line:
+                    m = re.search(r"pid=(\d+)", line)
+                    if m:
+                        return int(m.group(1))
+        except Exception:
+            pass
+        try:
+            result = subprocess.run(
+                ["fuser", f"{port}/tcp"],
+                capture_output=True, timeout=5,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return int(result.stdout.decode().strip().split()[-1])
+        except Exception:
+            pass
+    return None
+
+
 def clear_gateway_cache(project_root: str) -> tuple[int, str]:
     """清除 mcp-gateway 的 Python 缓存，返回 (删除数量, 消息)"""
     gateway_dir = os.path.join(project_root, "mcp-gateway")
     count = 0
+    failed = []
     for root, dirs, files in os.walk(gateway_dir):
         if "__pycache__" in dirs:
             pycache = os.path.join(root, "__pycache__")
@@ -222,15 +284,19 @@ def clear_gateway_cache(project_root: str) -> tuple[int, str]:
                 import shutil
                 shutil.rmtree(pycache)
                 count += 1
-            except Exception:
+            except Exception as e:
+                failed.append(f"{pycache}: {e}")
                 pass
         for f in files:
             if f.endswith(".pyc"):
                 try:
                     os.remove(os.path.join(root, f))
                     count += 1
-                except Exception:
+                except Exception as e:
+                    failed.append(f"{f}: {e}")
                     pass
+    if failed:
+        return count, f"已清除 {count} 个缓存项，但 {len(failed)} 个失败: {'; '.join(failed[:3])}"
     if count:
         return count, f"已清除 {count} 个缓存项"
     return 0, "没有缓存需要清除"
@@ -440,6 +506,19 @@ class KBLauncher:
         )
         stop_btn.pack(side=tk.LEFT, padx=2)
 
+        # Gateway 专属：清除缓存并重启
+        restart_btn = None
+        if svc.name == "MCP Gateway":
+            restart_btn = tk.Button(
+                action_frame, text="清除缓存并重启",
+                font=("微软雅黑", 9),
+                bg="#e67e22", fg="white",
+                activebackground="#d35400",
+                relief=tk.FLAT, padx=8, pady=1,
+                command=lambda s=svc: self._restart_gateway_with_cache_clear(s),
+            )
+            restart_btn.pack(side=tk.LEFT, padx=2)
+
         # Access URLs
         url_text = "\n".join(svc.access_urls) if svc.access_urls else "-"
         url_label = tk.Label(
@@ -455,6 +534,7 @@ class KBLauncher:
             "url": url_label,
             "start_btn": start_btn,
             "stop_btn": stop_btn,
+            "restart_btn": restart_btn,
         }
 
     def _build_access_tab(self):
@@ -508,16 +588,20 @@ class KBLauncher:
         )
         mcp_frame.pack(fill=tk.X, padx=12, pady=(6, 6))
 
+        # StreamableHTTP（推荐，端点 /mcp）
         self._make_url_row(mcp_frame,
-            "🔗 MCP Streamable HTTP", "http://localhost:8000/sse", fg="#2ecc71")
+            "🔗 MCP StreamableHTTP（推荐）", "http://localhost:8000/mcp", fg="#2ecc71")
+        # SSE 兼容端点 /sse
+        self._make_url_row(mcp_frame,
+            "🔗 MCP SSE（兼容旧客户端）", "http://localhost:8000/sse", fg="#f39c12")
 
         # MCP 客户端配置 (只读代码块 + 复制按钮)
         configs = [
-            ("Cursor / Windsurf", (
+            ("Cursor / Windsurf（支持 StreamableHTTP）", (
                 '{\n'
                 '  "mcpServers": {\n'
                 '    "knowledge-base": {\n'
-                '      "url": "http://localhost:8000/sse",\n'
+                '      "url": "http://localhost:8000/mcp",\n'
                 '      "headers": {\n'
                 '        "X-API-Key": "<your-api-key>"\n'
                 '      }\n'
@@ -525,7 +609,7 @@ class KBLauncher:
                 '  }\n'
                 '}'
             )),
-            ("Claude Desktop / Kimi Code", (
+            ("Claude Desktop / Kimi Code（需 mcp-proxy 中转）", (
                 '{\n'
                 '  "mcpServers": {\n'
                 '    "knowledge-base": {\n'
@@ -575,40 +659,6 @@ class KBLauncher:
             "🗄 MinIO 控制台", "http://localhost:9001", fg="#e67e22")
         self._make_url_row(minio_frame,
             "🔑 默认账号/密码", "minioadmin / minioadmin", fg="#7f8c8d")
-
-        # ---- 缓存管理 ----
-        cache_frame = tk.LabelFrame(
-            access_content, text="  缓存管理  ",
-            font=("微软雅黑", 11, "bold"),
-            bg=self.COLOR_BG, fg=self.COLOR_TEXT,
-            foreground=self.COLOR_TEXT,
-        )
-        cache_frame.pack(fill=tk.X, padx=12, pady=(6, 12))
-
-        btn_frame = tk.Frame(cache_frame, bg=self.COLOR_BG)
-        btn_frame.pack(fill=tk.X, padx=10, pady=8)
-
-        clear_btn = tk.Button(
-            btn_frame, text="🗑 清除 Gateway 缓存",
-            font=("微软雅黑", 11),
-            bg="#e74c3c", fg="white",
-            activebackground="#c0392b", activeforeground="white",
-            cursor="hand2",
-            relief=tk.FLAT,
-            padx=16, pady=6,
-            command=self._clear_gateway_cache,
-        )
-        clear_btn.pack(side=tk.LEFT)
-        clear_btn.bind("<Enter>", lambda e: clear_btn.config(bg="#c0392b"))
-        clear_btn.bind("<Leave>", lambda e: clear_btn.config(bg="#e74c3c"))
-
-        self._cache_status_label = tk.Label(
-            btn_frame, text="",
-            font=("微软雅黑", 10),
-            bg=self.COLOR_BG, fg=self.COLOR_TEXT,
-        )
-        self._cache_status_label.pack(side=tk.LEFT, padx=(15, 0))
-
     def _make_url_row(self, parent, label: str, url: str, fg: str = "#3498db"):
         """创建 URL 行（标签 + URL + 复制按钮）"""
         row = tk.Frame(parent, bg=self.COLOR_BG)
@@ -684,12 +734,40 @@ class KBLauncher:
         except Exception:
             pass
 
-    def _clear_gateway_cache(self):
-        """清除 Gateway Python 缓存"""
-        count, msg = clear_gateway_cache(PROJECT_ROOT)
-        self._cache_status_label.config(text=msg)
-        self._log(f"[缓存] {msg}")
-        self.set_status(msg)
+    def _restart_gateway_with_cache_clear(self, svc: ServiceDef):
+        """停止 Gateway → 等待完全退出 → 清除缓存 → 启动 Gateway"""
+        self.set_status("正在重启 Gateway（清除缓存）...")
+        self._log("--- 清除缓存并重启 Gateway ---")
+
+        def task():
+            # 1. 停止 Gateway
+            self._log("[Step 1/4] 停止 Gateway")
+            self._do_stop_service(svc)
+
+            # 2. 等待进程完全退出（防止旧进程继续生成缓存）
+            self._log("[Step 2/4] 等待进程完全退出...")
+            import time
+            for i in range(20):
+                if not self._is_service_running(svc):
+                    break
+                time.sleep(0.1)
+            if self._is_service_running(svc):
+                self._log("  [WARN] 进程仍在运行，尝试强制终止")
+                self._do_stop_service(svc)
+                time.sleep(0.3)
+
+            # 3. 清除缓存
+            self._log("[Step 3/4] 清除 Python 缓存")
+            count, msg = clear_gateway_cache(PROJECT_ROOT)
+            self._log(f"  {msg}")
+
+            # 4. 启动 Gateway
+            self._log("[Step 4/4] 启动 Gateway")
+            self._do_start_service(svc)
+            self._log(f"--- Gateway 重启完成 ---")
+            self.root.after(0, self.set_status, "Gateway 已重启（缓存已清除）")
+
+        threading.Thread(target=task, daemon=True).start()
 
     def _build_logs_tab(self):
         """构建日志 Tab"""
@@ -723,6 +801,34 @@ class KBLauncher:
             wrap=tk.WORD,
         )
         self.log_area.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+    def _start_log_reader(self, log_path: str):
+        """在后台线程读取 Gateway 日志并输出到运行日志区域"""
+        self._log("[LOG] Gateway 日志已开启，内容实时显示 ↓")
+        self._gw_log_stop = False
+
+        def reader():
+            # 等待日志文件创建
+            for _ in range(20):
+                if os.path.exists(log_path) and os.path.getsize(log_path) > 0:
+                    break
+                time.sleep(0.3)
+            try:
+                with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                    # seek to end
+                    f.seek(0, 2)
+                    while not self._gw_log_stop:
+                        line = f.readline()
+                        if line:
+                            line = line.rstrip("\n")
+                            if line.strip():
+                                self.root.after(0, self._log, f"[GW] {line}")
+                        else:
+                            time.sleep(0.1)
+            except Exception:
+                pass
+
+        threading.Thread(target=reader, daemon=True).start()
 
     # ------------------------------------------------------------------
     # Window management
@@ -919,6 +1025,8 @@ class KBLauncher:
                 env["CORS_ORIGINS"] = "*"
                 env["ADMIN_ACCOUNTS_FILE"] = str(KBDATA_DIR / "config" / "admin_accounts.json")
                 env["API_KEY_FILE"] = str(KBDATA_DIR / "config" / "api_keys.json")
+                # 开发模式：禁用 Python 字节码缓存，避免旧代码残留问题
+                env["PYTHONDONTWRITEBYTECODE"] = "1"
 
             if svc.name == "MinIO":
                 env["MINIO_ROOT_USER"] = "minioadmin"
@@ -930,14 +1038,29 @@ class KBLauncher:
                 cwd = str(PROJECT_ROOT)
 
             self._log(f"[CMD] {' '.join(svc.start_cmd)}")
-            svc.process = subprocess.Popen(
-                svc.start_cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                env=env,
-                cwd=cwd,
-                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
-            )
+            # Gateway logs: capture to file for debugging
+            if svc.name == "MCP Gateway":
+                log_file = open(str(LOGS_DIR / "gateway.log"), "w", encoding="utf-8")
+                svc.process = subprocess.Popen(
+                    svc.start_cmd,
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                    env=env,
+                    cwd=cwd,
+                    creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+                )
+                svc._log_file = log_file  # keep reference for closing
+                # start reader thread
+                self._start_log_reader(str(LOGS_DIR / "gateway.log"))
+            else:
+                svc.process = subprocess.Popen(
+                    svc.start_cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    env=env,
+                    cwd=cwd,
+                    creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+                )
             svc.pid = svc.process.pid  # 记录 PID 用于精确停止
 
             # 等待启动
@@ -958,37 +1081,39 @@ class KBLauncher:
             return False
 
     def _start_redis(self, svc: ServiceDef) -> bool:
-        """特殊处理 Redis / Memurai"""
-        # 尝试 Memurai (Windows Redis 兼容)
-        memurai_paths = [
-            os.path.expandvars(r"%ProgramFiles%\Memurai\memurai.exe"),
-            os.path.expandvars(r"%ProgramFiles(x86)%\Memurai\memurai.exe"),
-        ]
-        for p in memurai_paths:
-            if os.path.exists(p):
-                try:
-                    subprocess.Popen(
-                        [p],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        creationflags=subprocess.CREATE_NO_WINDOW,
-                    )
-                    self._log(f"[INFO] 启动 Memurai: {p}")
-                    time.sleep(2)
-                    if check_port(6379):
-                        self._log("[OK] Redis (Memurai) 启动成功")
-                        return True
-                except Exception as e:
-                    self._log(f"[WARN] Memurai 启动失败: {e}")
+        """特殊处理 Redis / Memurai（跨平台）"""
+        # Windowspak: 尝试 Memurai
+        if sys.platform == "win32":
+            memurai_paths = [
+                os.path.expandvars(r"%ProgramFiles%\Memurai\memurai.exe"),
+                os.path.expandvars(r"%ProgramFiles(x86)%\Memurai\memurai.exe"),
+            ]
+            for p in memurai_paths:
+                if os.path.exists(p):
+                    try:
+                        subprocess.Popen(
+                            [p],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            creationflags=subprocess.CREATE_NO_WINDOW,
+                        )
+                        self._log(f"[INFO] 启动 Memurai: {p}")
+                        time.sleep(2)
+                        if check_port(6379):
+                            self._log("[OK] Redis (Memurai) 启动成功")
+                            return True
+                    except Exception as e:
+                        self._log(f"[WARN] Memurai 启动失败: {e}")
 
-        # 尝试 redis-server
+        # 尝试 redis-server（Windows/Linux 通用）
+        creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
         if self._find_exe("redis-server"):
             try:
                 subprocess.Popen(
                     ["redis-server"],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
-                    creationflags=subprocess.CREATE_NO_WINDOW,
+                    creationflags=creationflags,
                 )
                 self._log("[INFO] 启动 redis-server")
                 time.sleep(2)
@@ -1003,7 +1128,7 @@ class KBLauncher:
             self._log("[INFO] Redis 端口 6379 已被占用，跳过启动")
             return True
 
-        svc.error_msg = "Redis/Memurai 未安装。下载: https://www.memurai.com/download"
+        svc.error_msg = "Redis 未安装。Windows: https://www.memurai.com | Linux: apt install redis-server" if sys.platform == "win32" else "Redis 未安装。Linux: apt install redis-server"
         self._log(f"[ERROR] {svc.error_msg}")
         return False
 
@@ -1022,14 +1147,30 @@ class KBLauncher:
         """实际执行停止逻辑（多级回退，确保进程被终止）"""
         self._log(f"--- 停止 {svc.name} ---")
 
+        # Stop gateway log reader
+        if svc.name == "MCP Gateway":
+            self._gw_log_stop = True
+            if hasattr(svc, '_log_file') and svc._log_file:
+                try:
+                    svc._log_file.close()
+                except Exception:
+                    pass
+                svc._log_file = None
+
         # 1) 记录的进程句柄
         if svc.process and svc.process.poll() is None:
             self._log(f"  终止进程 PID={svc.process.pid}")
             try:
                 svc.process.terminate()
-                time.sleep(0.5)
+                # 等待进程完全退出（最多 3 秒），防止旧进程在后台继续生成缓存
+                for _ in range(30):
+                    if svc.process.poll() is not None:
+                        break
+                    time.sleep(0.1)
                 if svc.process.poll() is None:
+                    self._log(f"  [WARN] 进程未响应 terminate()，强制 kill")
                     svc.process.kill()
+                    time.sleep(0.3)
             except Exception as e:
                 self._log(f"  [WARN] 终止异常: {e}")
             svc.process = None
@@ -1039,14 +1180,7 @@ class KBLauncher:
         # 2) 记录的 PID
         if getattr(svc, "pid", None):
             self._log(f"  按 PID={svc.pid} 终止")
-            try:
-                subprocess.run(
-                    ["taskkill", "/F", "/PID", str(svc.pid)],
-                    capture_output=True, timeout=10,
-                    encoding="gbk", errors="replace",
-                )
-            except Exception as e:
-                self._log(f"  [WARN] 按 PID 终止失败: {e}")
+            kill_process_by_pid(svc.pid)
             svc.pid = None
             self._log(f"[OK] {svc.name} 已停止")
             return
@@ -1059,26 +1193,12 @@ class KBLauncher:
 
         # 4) 有端口时，按端口找出占用进程并杀
         if svc.port:
-            try:
-                result = subprocess.run(
-                    ["netstat", "-ano"],
-                    capture_output=True, timeout=10,
-                    encoding="gbk", errors="replace",
-                )
-                for line in result.stdout.splitlines():
-                    if f":{svc.port}" in line and "LISTENING" in line:
-                        parts = line.strip().split()
-                        pid = parts[-1]
-                        self._log(f"  按端口 {svc.port} 找到 PID={pid}，终止中")
-                        subprocess.run(
-                            ["taskkill", "/F", "/PID", pid],
-                            capture_output=True, timeout=10,
-                            encoding="gbk", errors="replace",
-                        )
-                        self._log(f"[OK] {svc.name} (端口 {svc.port}) 已停止")
-                        return
-            except Exception as e:
-                self._log(f"  [WARN] 端口扫描失败: {e}")
+            pid = find_pid_by_port(svc.port)
+            if pid:
+                self._log(f"  按端口 {svc.port} 找到 PID={pid}，终止中")
+                kill_process_by_pid(pid)
+                self._log(f"[OK] {svc.name} (端口 {svc.port}) 已停止")
+                return
 
         self._log(f"[OK] {svc.name} 未找到运行中进程")
 

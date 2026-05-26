@@ -1,7 +1,7 @@
 # 代码审查标准与流程 — knowledge-base-management
 
 > **适用范围**: mcp-gateway 及 knowledge-base-management 全部代码
-> **版本**: v1.0 | **制定日期**: 2026-05-24 | **维护**: CodeReviewExpert
+> **版本**: v1.1 | **制定日期**: 2026-05-24 | **最后更新**: 2026-05-26 | **维护**: CodeReviewExpert
 
 ---
 
@@ -129,7 +129,40 @@
 | I2 | 模板中是否有大量内联 Python 逻辑？（应移到 helper.py 过滤器） | P2 |
 | I3 | 跨模块导入是否有循环依赖风险？ | P1 |
 
-### 5.3 类型标注
+### 5.4 前端一致性规范（Tailwind + 动态渲染）
+
+| # | 检查项 | 严重度 |
+|---|--------|--------|
+| M1 | **JS 动态渲染禁止使用 Tailwind 工具类**（`group-hover:`, `hover:`, `md:` 等）。原因：Tailwind JIT 编译器只扫描 `.html` 文件中的静态 class 字符串，无法识别 `innerHTML` / `createElement` 中的 class。必须用原生 CSS（`<style>` 块 + 显式 class 名，或 inline `style=`）替代 | P0 |
+| M2 | 静态 HTML 模板中的 Tailwind class 可正常使用（`dashboard.html`, `base.html` 等已验证） | P2 |
+| M3 | 所有 JS 动态渲染的 HTML 片段必须通过 `<style>` 块或 inline `style=` 控制样式 | P0 |
+| M4 | 审查前端变更时，确认 `innerHTML = \`...\`` 字符串中不含 Tailwind 动态 class（`hover:`, `group-`, `focus:`, `md:`, `lg:` 等） | P0 |
+
+**正确模式（JS 动态渲染）：**
+
+```javascript
+// ✅ <style> 块
+// .dir-row:hover .dir-actions { opacity: 1; }
+
+// ✅ inline style
+`<span style="opacity:0; transition: opacity 0.15s">`
+
+// ✅ 静态 class（Tailwind 能扫到）
+`<span class="text-slate-400 flex items-center gap-1">`
+```
+
+**错误模式（禁止）：**
+
+```javascript
+// ❌ Tailwind 动态 class — JIT 无法扫描
+`<span class="opacity-0 group-hover:opacity-100 transition-opacity">`
+```
+
+### 5.5 已发生的典型违例
+
+| 日期 | 文件 | 问题 | 修复 |
+|------|------|------|------|
+| 2026-05-26 | `directories.html` | `item.innerHTML` 中使用 `group-hover:opacity-100` → 按钮不显示 | 改用 `.dir-row:hover .dir-actions { opacity: 1 }` 原生 CSS |
 
 | # | 检查项 | 严重度 |
 |---|--------|--------|

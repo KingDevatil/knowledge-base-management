@@ -1,7 +1,6 @@
 import json
 import os
 import time
-import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
@@ -12,6 +11,8 @@ from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.routing import BaseRoute, Match
+from starlette.types import Scope, Receive, Send
 
 from config import get_settings
 from auth import APIKeyAuth
@@ -25,7 +26,7 @@ from models import AddDocumentRequest, UpdateDocumentRequest, ReindexByPathReque
 from server import create_mcp_server
 from logger import setup_logger
 from mcp.server.sse import SseServerTransport
-from mcp.server.streamable_http import StreamableHTTPServerTransport
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
 settings = get_settings()
 logger = setup_logger()
@@ -85,6 +86,12 @@ async def lifespan(app: FastAPI):
     )
     app.state.mcp_server = create_mcp_server(app.state.tools)
     app.state.sse_transport = SseServerTransport("/sse/messages/")
+    # 官方 StreamableHTTP Session Manager —— 管理会话、transport 和消息路由
+    app.state.mcp_session_manager = StreamableHTTPSessionManager(
+        app=app.state.mcp_server,
+        json_response=True,
+        stateless=False,
+    )
 
     # 将文件中的 Key 同步到 Redis（不删除 Redis 中已有 Key）
     await app.state.api_key_auth._load_keys_to_redis()
@@ -127,7 +134,9 @@ async def lifespan(app: FastAPI):
 
     logger.info(f"MCP Gateway started successfully. Startup checks: {startup_checks}")
 
-    yield
+    # 在 Session Manager 的 run() 上下文中 yield，让其 task group 管理所有会话
+    async with app.state.mcp_session_manager.run():
+        yield
 
     # 关闭
     logger.info("Shutting down MCP Gateway...")
@@ -139,6 +148,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.APP_NAME,
     lifespan=lifespan,
+    redirect_slashes=False,
 )
 
 # CORS 中间件
@@ -256,12 +266,45 @@ def get_write_lock(request: Request) -> WriteLock:
     return request.app.state.write_lock
 
 
+# ---------- MCP Streamable HTTP 路由 ----------
+
+class _MCPRoute(BaseRoute):
+    """原始 ASGI Route：认证后委托给 StreamableHTTPSessionManager 处理"""
+
+    async def handle(self, scope: Scope, receive: Receive, send: Send) -> None:
+        from starlette.requests import Request
+        from starlette.responses import JSONResponse
+
+        request = Request(scope, receive)
+        try:
+            await request.app.state.api_key_auth.authenticate(request)
+        except HTTPException as e:
+            resp = JSONResponse(status_code=e.status_code, content={"detail": e.detail})
+            await resp(scope, receive, send)
+            return
+
+        # 委托给官方 Session Manager —— 它处理会话创建、transport 生命周期和消息路由
+        await request.app.state.mcp_session_manager.handle_request(scope, receive, send)
+
+    def matches(self, scope: Scope) -> tuple[Match, dict[str, str]]:
+        if scope["path"] in ("/mcp", "/mcp/") and scope["method"] in ("GET", "POST", "DELETE"):
+            return Match.FULL, {}
+        return Match.NONE, {}
+
+
+app.router.routes.insert(0, _MCPRoute())
+
+
 # ---------- MCP SSE 路由 ----------
 
 @app.get("/sse")
 async def mcp_sse_endpoint(request: Request):
-    """MCP SSE 连接端点"""
-    # API Key 认证
+    """MCP SSE 连接端点 —— 支持 Header / Query 两种 API Key 认证"""
+    # 如果 Query 参数有 api_key，注入到 header 供 authenticate 使用
+    if "api_key" in request.query_params:
+        request.headers.__dict__["_list"].append(
+            (b"x-api-key", request.query_params["api_key"].encode())
+        )
     api_key_auth = get_api_key_auth(request)
     await api_key_auth.authenticate(request)
 

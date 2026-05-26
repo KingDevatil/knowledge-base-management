@@ -1,0 +1,12 @@
+{
+  "_comment": "MCP 客户端配置示例 - 复制以下内容到 Cursor/Claude/Kimi Code 的 MCP 配置中",
+  "_comment2": "StreamableHTTP 端点 /mcp 为推荐方式，SSE 端点 /sse 为兼容方式",
+  "mcpServers": {
+    "knowledge-base": {
+      "url": "http://localhost:8000/mcp",
+      "headers": {
+        "X-API-Key": "sk-your-api-key-here"
+      }
+    }
+  }
+}

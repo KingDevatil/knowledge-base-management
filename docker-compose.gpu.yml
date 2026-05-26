@@ -1,0 +1,12 @@
+# GPU 加速配置（独立文件，自动按需加载）
+# docker-compose.yml 会按 ${OLLAMA_GPU_COUNT:-0} 决定是否启用 GPU
+
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: ${OLLAMA_GPU_COUNT:-1}
+              capabilities: [gpu]

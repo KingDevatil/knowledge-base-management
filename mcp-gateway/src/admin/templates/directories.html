@@ -3,6 +3,116 @@
 {% block title %}目录管理 - 知识库管理后台{% endblock %}
 
 {% block content %}
+<style>
+    /* 目录行 */
+    .dir-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: background-color 0.15s ease;
+    }
+    .dir-row:hover { background-color: #f1f5f9; }
+    .dark .dir-row:hover { background-color: rgba(51, 65, 85, 0.5); }
+
+    /* 目录图标 */
+    .dir-icon {
+        width: 16px;
+        height: 16px;
+        color: #f59e0b;
+        flex-shrink: 0;
+    }
+
+    /* 目录名称 */
+    .dir-name {
+        font-size: 0.875rem;
+        color: #334155;
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .dark .dir-name { color: #cbd5e1; }
+
+    /* 操作按钮容器 */
+    .dir-actions {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        flex-shrink: 0;
+    }
+
+    /* 操作按钮 */
+    .dir-rename-btn, .dir-delete-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 4px;
+        border-radius: 6px;
+        border: none;
+        background: transparent;
+        cursor: pointer;
+        color: #94a3b8;
+        transition: all 0.15s ease;
+    }
+    .dir-rename-btn:hover {
+        background: #e2e8f0;
+        color: #475569;
+    }
+    .dark .dir-rename-btn:hover {
+        background: #334155;
+        color: #cbd5e1;
+    }
+    .dir-delete-btn:hover {
+        background: #fef2f2;
+        color: #ef4444;
+    }
+    .dark .dir-delete-btn:hover {
+        background: rgba(239, 68, 68, 0.1);
+        color: #f87171;
+    }
+
+    /* 空状态 */
+    .dir-empty {
+        font-size: 0.875rem;
+        color: #94a3b8;
+        padding: 16px 12px;
+        text-align: center;
+    }
+
+    /* 目录文档链接 */
+    .dir-doc-link {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 16px;
+        border-radius: 8px;
+        text-decoration: none;
+        transition: background-color 0.15s ease;
+    }
+    .dir-doc-link:hover { background-color: #f8fafc; }
+    .dark .dir-doc-link:hover { background-color: rgba(30, 41, 59, 0.5); }
+
+    /* 上传链接 */
+    .dir-upload-link {
+        color: #6366f1;
+        text-decoration: none;
+        font-size: 0.875rem;
+        margin-top: 8px;
+        display: inline-block;
+    }
+    .dir-upload-link:hover { text-decoration: underline; }
+
+    /* 文档列表容器 */
+    .dir-docs-divider {
+        border-top: 1px solid #f1f5f9;
+    }
+    .dark .dir-docs-divider {
+        border-top-color: rgba(30, 41, 59, 0.5);
+    }
+</style>
 <header class="glass-header sticky top-0 z-20 border-b border-slate-200/80 dark:border-slate-800/80 px-8 py-4">
     <div class="flex items-center justify-between">
         <div>
@@ -59,9 +169,8 @@
             <form id="create-dir-form" class="space-y-4">
                 <div>
                     <label class="form-label">父目录</label>
-                    <select id="parent-dir" class="form-select">
-                        <option value="">根目录</option>
-                    </select>
+                    <p class="text-xs text-slate-400 mb-2">点击选择父目录：<span id="parent-dir-label" class="text-brand-600">根目录</span></p>
+                    <div id="parent-dir-tree" class="max-h-40 overflow-y-auto border border-slate-200 dark:border-slate-700 rounded-xl p-2"></div>
                 </div>
                 <div>
                     <label class="form-label">目录名称 <span class="text-red-500">*</span></label>
@@ -83,19 +192,52 @@
 </div>
 
 <script>
-    let currentTreeData = [];
+    let parentDirSelected = '';
     let currentDir = '';
+    let currentTreeData = [];
 
     // 加载目录树
+    // Rename
+    function startRename(oldPath, oldName) {
+        const newName = prompt('重命名目录 "' + oldName + '"：', oldName);
+        if (!newName || newName === oldName) return;
+        const parts = oldPath.split('/');
+        parts[parts.length - 1] = newName;
+        const newPath = parts.join('/');
+        fetch('/admin/api/directories/rename', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({old_path: oldPath, new_path: newPath})
+        }).then(r => {
+            if (r.ok) { loadTree(); selectDir(newPath); }
+            else r.json().then(e => alert('重命名失败: ' + (e.detail || '未知错误')));
+        }).catch(() => alert('网络错误'));
+    }
+
+    // Delete
+    function confirmDeleteDir(path, name) {
+        if (!confirm('确定要删除目录 "' + name + '"吗？\n\n目录下的所有文档将移至根目录。')) return;
+        fetch('/admin/api/directories/delete', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({path: path})
+        }).then(r => {
+            if (r.ok) loadTree();
+            else r.json().then(e => alert('删除失败: ' + (e.detail || '未知错误')));
+        }).catch(() => alert('网络错误'));
+    }
+
     async function loadTree() {
         try {
-            // 从文档管理 API 获取目录树
             const resp = await fetch('/admin/api/directories');
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
             const tree = await resp.json();
+            currentTreeData = tree;
             renderTree(tree, document.getElementById('directory-tree'));
         } catch (e) {
+            console.error('加载目录树失败:', e);
             document.getElementById('directory-tree').innerHTML =
-                '<div class="text-sm text-red-500 px-3 py-2">加载失败</div>';
+                '<div style="color:#ef4444;padding:8px 12px;font-size:0.875rem;">加载失败: ' + (e.message || '未知错误') + '</div>';
         }
     }
 
@@ -104,38 +246,77 @@
         container.innerHTML = '';
         if (node.children && node.children.length > 0) {
             node.children.forEach(child => {
-                const item = document.createElement('div');
-                const hasChildren = child.children && child.children.length > 0;
-                const padding = depth * 20 + 12;
-                const path = child.path || child.name;
+                try {
+                    const item = document.createElement('div');
+                    const hasChildren = child.children && child.children.length > 0;
+                    const padding = depth * 20 + 12;
+                    const path = child.path || child.name;
+                    const name = child.name || '未命名';
 
-                item.className = 'flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition-colors group';
-                item.style.paddingLeft = padding + 'px';
+                    item.className = 'dir-row';
+                    item.style.paddingLeft = padding + 'px';
+                    item.addEventListener('click', function() { selectDir(path); });
 
-                item.innerHTML = `
-                    <i data-lucide="${hasChildren ? 'folder' : 'folder-open'}" class="w-4 h-4 text-amber-500 flex-shrink-0"></i>
-                    <span class="text-sm text-slate-700 dark:text-slate-300 flex-1 truncate">${child.name}</span>
-                    <span class="text-xs text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity">${child.children ? child.children.length + ' 子目录' : '0 文档'}</span>
-                `;
+                    // 图标
+                    const icon = document.createElement('i');
+                    icon.setAttribute('data-lucide', hasChildren ? 'folder' : 'folder-open');
+                    icon.className = 'dir-icon';
+                    item.appendChild(icon);
 
-                item.addEventListener('click', () => selectDir(path, child));
+                    // 目录名
+                    const nameSpan = document.createElement('span');
+                    nameSpan.className = 'dir-name';
+                    nameSpan.textContent = name;
+                    item.appendChild(nameSpan);
 
-                container.appendChild(item);
+                    // 操作按钮容器
+                    const actions = document.createElement('span');
+                    actions.className = 'dir-actions';
 
-                // 递归渲染子目录
-                if (hasChildren) {
-                    const subContainer = document.createElement('div');
-                    renderTree(child, subContainer, depth + 1);
-                    container.appendChild(subContainer);
+                    // 重命名按钮
+                    const renameBtn = document.createElement('button');
+                    renameBtn.className = 'dir-rename-btn';
+                    renameBtn.title = '重命名';
+                    renameBtn.innerHTML = '<i data-lucide="pencil" style="width:12px;height:12px;"></i>';
+                    renameBtn.addEventListener('click', function(e) {
+                        e.stopPropagation();
+                        startRename(path, name);
+                    });
+                    actions.appendChild(renameBtn);
+
+                    // 删除按钮
+                    const deleteBtn = document.createElement('button');
+                    deleteBtn.className = 'dir-delete-btn';
+                    deleteBtn.title = '删除';
+                    deleteBtn.innerHTML = '<i data-lucide="trash-2" style="width:12px;height:12px;"></i>';
+                    deleteBtn.addEventListener('click', function(e) {
+                        e.stopPropagation();
+                        confirmDeleteDir(path, name);
+                    });
+                    actions.appendChild(deleteBtn);
+
+                    item.appendChild(actions);
+                    container.appendChild(item);
+
+                    // 递归渲染子目录
+                    if (hasChildren) {
+                        const subContainer = document.createElement('div');
+                        renderTree(child, subContainer, depth + 1);
+                        container.appendChild(subContainer);
+                    }
+                } catch (err) {
+                    console.error('渲染目录节点失败:', child, err);
                 }
             });
+            // 重新渲染 Lucide 图标
+            if (typeof lucide !== 'undefined') lucide.createIcons();
         } else {
-            container.innerHTML = '<div class="text-sm text-slate-400 px-3 py-4 text-center">暂无目录，请先上传文档或创建目录</div>';
+            container.innerHTML = '<div class="dir-empty">暂无目录，请先上传文档或创建目录</div>';
         }
     }
 
     // 选中目录
-    function selectDir(path, node) {
+    function selectDir(path) {
         currentDir = path;
         document.getElementById('dir-docs-path').textContent = '/' + path;
         document.getElementById('dir-docs-list').innerHTML =
@@ -150,20 +331,21 @@
                         <div class="text-center py-8">
                             <i data-lucide="folder" class="w-8 h-8 mx-auto mb-2 text-slate-300"></i>
                             <p class="text-sm text-slate-400">该目录下暂无文档</p>
-                            <a href="/admin/documents/upload?path=${encodeURIComponent(path)}" class="text-sm text-brand-600 hover:text-brand-700 mt-2 inline-block">上传文档</a>
+                            <a href="/admin/documents/upload?path=${encodeURIComponent(path)}" class="dir-upload-link" style="font-size:0.875rem;margin-top:8px;display:inline-block;">上传文档</a>
                         </div>`;
                 } else {
-                    let html = '<div class="divide-y divide-slate-100 dark:divide-slate-800">';
+                    let html = '<div class="dir-docs-divider">';
                     docs.forEach(doc => {
                         const title = doc.title || doc.doc_id;
-                        html += `<a href="/admin/documents/${doc.doc_id}" class="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors rounded-lg">
+                        html += `<a href="/admin/documents/${doc.doc_id}" class="dir-doc-link">
                             <i data-lucide="file-text" class="w-4 h-4 text-slate-400"></i>
                             <span class="text-sm text-slate-700 dark:text-slate-300">${title}</span>
-                            <span class="text-xs text-slate-400 ml-auto">${doc.updated_at || ''}</span>
+                            <span class="text-xs text-slate-400" style="margin-left:auto;">${doc.updated_at || ''}</span>
                         </a>`;
                     });
                     html += '</div>';
                     document.getElementById('dir-docs-list').innerHTML = html;
+                    if (typeof lucide !== 'undefined') lucide.createIcons();
                 }
             })
             .catch(() => {
@@ -174,23 +356,44 @@
 
     // 新建目录弹窗
     function openCreateModal() {
-        const select = document.getElementById('parent-dir');
-        // 清空并重建选项
-        select.innerHTML = '<option value="">根目录</option>';
-        if (currentTreeData.children) {
-            function addOptions(nodes, prefix) {
-                nodes.forEach(n => {
-                    const path = n.path || n.name;
-                    const opt = document.createElement('option');
-                    opt.value = path;
-                    opt.textContent = prefix + n.name;
-                    select.appendChild(opt);
-                    if (n.children) addOptions(n.children, prefix + '  ');
-                });
-            }
-            addOptions(currentTreeData.children, '');
-        }
+        document.getElementById('parent-dir-label').textContent = parentDirSelected || '根目录';
         document.getElementById('create-modal').style.display = 'block';
+        // 延迟加载树（dom ready）
+        setTimeout(() => {
+            const container = document.getElementById('parent-dir-tree');
+            if (currentTreeData.children && currentTreeData.children.length > 0) {
+                container.innerHTML = '';
+                renderParentDirTree(currentTreeData, container, 0);
+            } else {
+                container.innerHTML = '<div class="text-sm text-slate-400 text-center py-4">暂无目录</div>';
+            }
+        }, 50);
+    }
+
+    function renderParentDirTree(node, container, depth) {
+        if (node.children && node.children.length > 0) {
+            node.children.forEach(child => {
+                const path = child.path || child.name;
+                const item = document.createElement('div');
+                const pad = depth * 16 + 12;
+                const isSel = parentDirSelected === path;
+                item.className = `flex items-center gap-2 px-3 py-1.5 rounded-lg cursor-pointer transition-colors ${isSel ? 'bg-brand-50 dark:bg-brand-500/10 text-brand-700 dark:text-brand-400' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300'}`;
+                item.style.paddingLeft = pad + 'px';
+                item.innerHTML = `<i data-lucide="folder" class="w-4 h-4 text-amber-500 flex-shrink-0"></i><span class="text-sm flex-1 truncate">${child.name}</span>${isSel ? '<i data-lucide="check" class="w-3.5 h-3.5 text-brand-500 flex-shrink-0"></i>' : ''}`;
+                item.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    parentDirSelected = path;
+                    openCreateModal();  // re-render tree
+                });
+                container.appendChild(item);
+                if (child.children && child.children.length > 0) {
+                    const sub = document.createElement('div');
+                    renderParentDirTree(child, sub, depth + 1);
+                    container.appendChild(sub);
+                }
+            });
+        }
+        if (typeof lucide !== 'undefined') lucide.createIcons();
     }
 
     function closeCreateModal() {
@@ -200,7 +403,7 @@
     // 创建目录提交
     document.getElementById('create-dir-form').addEventListener('submit', async (e) => {
         e.preventDefault();
-        const parent = document.getElementById('parent-dir').value;
+        const parent = parentDirSelected;
         const name = document.getElementById('dir-name').value.trim();
         if (!name) return;
 

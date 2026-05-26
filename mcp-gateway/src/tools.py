@@ -12,6 +12,7 @@ from embedding import OllamaEmbedder, EmbeddingError
 from chunker import chunk_markdown
 from lock import WriteLock, WriteLockError
 from directory_tree import DirectoryTree
+from directory_store import get_user_directories, _load_dirs, _save_dirs
 from auth import APIKeyAuth
 from logger import get_logger
 
@@ -138,6 +139,161 @@ class KnowledgeTools:
         tree = DirectoryTree.build_from_metadata(metadatas)
         return {"tree": tree}
 
+    async def get_document(self, doc_id: str) -> dict:
+        """获取单个文档的完整信息，包括内容、标签和所有切片"""
+        if not doc_id:
+            raise HTTPException(status_code=400, detail="文档 ID 不能为空")
+
+        # 1. 从 Redis 索引获取文档元信息
+        doc_info = await self.kb._doc_index_get(doc_id)
+        if not doc_info:
+            raise HTTPException(
+                status_code=404,
+                detail=f"文档 (doc_id={doc_id}) 不存在，可能已被删除",
+            )
+
+        path = doc_info.get("path", "")
+        source_path = ""
+        content = ""
+
+        # 2. 从 Chroma 获取文档的所有 chunk
+        chunks = await self.kb.get_document_chunks(doc_id)
+        if chunks:
+            # 优先从 chunk metadata 中获取 source_path
+            source_path = chunks[0]["metadata"].get("source_path", "")
+
+        # 3. 从 SourceStore 读取文档内容
+        if chunks:
+            try:
+                if source_path:
+                    content = self.source_store.get_source_by_full_path(source_path) or ""
+                else:
+                    content = self.source_store.get_source(doc_id, path) or ""
+            except Exception as e:
+                logger.warning(
+                    f"Failed to read source content for doc_id={doc_id}: {e}"
+                )
+                # 如果无法读取源文件，从 chunks 重建内容
+                content = "\n\n".join(
+                    ch.get("content", "") for ch in chunks
+                )
+
+        # 4. 构建 chunks 列表
+        chunk_list = []
+        for ch in chunks:
+            meta = ch.get("metadata", {})
+            chunk_list.append({
+                "chunk_index": meta.get("chunk_index", 0),
+                "content": ch.get("content", ""),
+                "metadata": {
+                    "total_chunks": meta.get("total_chunks", 0),
+                    "source_format": meta.get("source_format", ""),
+                },
+            })
+
+        # 5. 处理 tags：Redis 索引中可能是逗号分隔字符串或列表
+        tags_raw = doc_info.get("tags", "")
+        if isinstance(tags_raw, str) and tags_raw:
+            tags = [t.strip() for t in tags_raw.split(",") if t.strip()]
+        elif isinstance(tags_raw, list):
+            tags = tags_raw
+        else:
+            tags = []
+
+        return {
+            "doc_id": doc_id,
+            "title": doc_info.get("title", ""),
+            "content": content,
+            "path": path,
+            "tags": tags,
+            "created_by": doc_info.get("created_by", ""),
+            "created_at": doc_info.get("created_at", ""),
+            "updated_at": doc_info.get("updated_at", ""),
+            "chunks": chunk_list,
+        }
+
+    async def rename_directory(self, old_path: str, new_path: str) -> dict:
+        """重命名目录：移动所有子文档（需写锁保护），同步更新空目录记录"""
+        old_path = DirectoryTree.validate_path(old_path)
+        new_path = DirectoryTree.validate_path(new_path)
+        if not old_path:
+            raise HTTPException(status_code=400, detail="不能重命名根目录")
+        if old_path == new_path:
+            return {"success": True, "moved": 0}
+
+        async with self.write_lock:
+            # 从 Redis 索引获取所有文档，按路径前缀匹配
+            all_docs = await self.kb._doc_index_all()
+            matching_docs = [
+                d for d in all_docs
+                if d.get("path", "") == old_path or d.get("path", "").startswith(old_path + "/")
+            ]
+
+            moved = 0
+            for doc in matching_docs:
+                doc_id = doc.get("doc_id", "")
+                doc_path = doc.get("path", "")
+                new_doc_path = new_path if doc_path == old_path else new_path + doc_path[len(old_path):]
+
+                self.source_store.move_source(doc_id, doc_path, new_doc_path)
+                doc["path"] = new_doc_path
+                await self.kb._doc_index_set(doc_id, doc)
+                chunks = await self.kb.get_document_chunks(doc_id)
+                for ch in chunks:
+                    ch["metadata"]["path"] = new_doc_path
+                    self.kb.collection.update(ids=[ch["id"]], metadatas=[ch["metadata"]])
+                moved += 1
+
+            # 同步更新 directories.json 中的目录记录
+            dirs = _load_dirs()
+            dirs = [new_path if d == old_path or d.startswith(old_path + "/") else d for d in dirs]
+            # 对于以 old_path 开头的子目录，替换前缀
+            new_dirs = []
+            for d in dirs:
+                if d == old_path:
+                    new_dirs.append(new_path)
+                elif d.startswith(old_path + "/"):
+                    new_dirs.append(new_path + d[len(old_path):])
+                else:
+                    new_dirs.append(d)
+            _save_dirs(new_dirs)
+
+        return {"success": True, "moved": moved, "old_path": old_path, "new_path": new_path}
+
+    async def delete_directory(self, path: str) -> dict:
+        """删除目录：所有文档移至根目录（需写锁保护），同时清除空目录记录"""
+        path = DirectoryTree.validate_path(path)
+        if not path:
+            raise HTTPException(status_code=400, detail="不能删除根目录")
+
+        async with self.write_lock:
+            # 从 Redis 索引获取所有文档，按路径前缀匹配
+            all_docs = await self.kb._doc_index_all()
+            matching_docs = [
+                d for d in all_docs
+                if d.get("path", "") == path or d.get("path", "").startswith(path + "/")
+            ]
+
+            moved = 0
+            for doc in matching_docs:
+                doc_id = doc.get("doc_id", "")
+                doc_path = doc.get("path", "")
+                self.source_store.move_source(doc_id, doc_path, "")
+                doc["path"] = ""
+                await self.kb._doc_index_set(doc_id, doc)
+                chunks = await self.kb.get_document_chunks(doc_id)
+                for ch in chunks:
+                    ch["metadata"]["path"] = ""
+                    self.kb.collection.update(ids=[ch["id"]], metadatas=[ch["metadata"]])
+                moved += 1
+
+            # 从 directories.json 移除被删目录及其子目录
+            dirs = _load_dirs()
+            dirs = [d for d in dirs if d != path and not d.startswith(path + "/")]
+            _save_dirs(dirs)
+
+        return {"success": True, "moved_to_root": moved, "deleted_path": path}
+
     # ---------- 写操作（需锁保护）----------
 
     async def _import_document(
@@ -150,6 +306,8 @@ class KnowledgeTools:
         doc_id: str | None = None,
     ) -> str:
         """内部方法：导入文档（生成embedding、切片、写Chroma）"""
+        # 规范化换行：浏览器表单提交可能携带 \r\n
+        content = content.replace("\r\n", "\n").replace("\r", "\n")
         if not title or not title.strip():
             raise HTTPException(status_code=400, detail="文档标题不能为空，请提供有效的标题")
         if not content or not content.strip():

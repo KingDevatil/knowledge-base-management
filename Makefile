@@ -1,4 +1,14 @@
-.PHONY: help up down logs restart build backup health clean test
+.PHONY: help up down logs restart build backup health clean test pull-model
+
+# ── GPU 自动检测 ──
+# 有 NVIDIA GPU → 加载 docker-compose.gpu.yml
+# 无 GPU / Intel / AMD → 仅用 docker-compose.yml (CPU)
+NVIDIA_SMI := $(shell command -v nvidia-smi 2>/dev/null)
+ifdef NVIDIA_SMI
+  COMPOSE_FILES := -f docker-compose.yml -f docker-compose.gpu.yml
+else
+  COMPOSE_FILES := -f docker-compose.yml
+endif
 
 # 默认目标
 help:
@@ -10,39 +20,42 @@ help:
 	@echo "  make build   - 重新构建 Gateway 镜像"
 	@echo "  make logs    - 查看 Gateway 日志"
 	@echo "  make logs-all- 查看所有服务日志"
-	@echo "  make health  - 检查服务健康状态
-  make metrics - 查看运行指标"
+	@echo "  make health  - 检查服务健康状态"
+	@echo "  make metrics - 查看运行指标"
 	@echo "  make backup  - 备份 Chroma 和 MinIO 数据"
 	@echo "  make clean   - 清理所有数据和卷 (⚠️ 危险)"
 	@echo "  make test    - 运行基础连通性测试"
 	@echo "  make pull-model - 拉取 Ollama bge-m3 模型"
+	@echo ""
+	@echo "GPU 检测: $$(if [ -n '$(NVIDIA_SMI)' ]; then echo '🟢 NVIDIA GPU 已启用'; else echo '🟡 CPU 模式'; fi)"
 
 # 启动服务
 up:
-	docker compose up -d
+	docker compose $(COMPOSE_FILES) up -d
 	@echo "服务启动中，约需 30-60 秒..."
 	@sleep 5
 	@make health
 
 # 停止服务
 down:
-	docker compose down
+	docker compose $(COMPOSE_FILES) down
 
 # 重启服务
 restart:
-	docker compose restart
+	docker compose $(COMPOSE_FILES) restart
 
-# 重新构建 build:
-	docker compose build --no-cache mcp-gateway
-	docker compose up -d mcp-gateway
+# 重新构建
+build:
+	docker compose $(COMPOSE_FILES) build --no-cache mcp-gateway
+	docker compose $(COMPOSE_FILES) up -d mcp-gateway
 
 # 查看 Gateway 日志
 logs:
-	docker compose logs -f mcp-gateway
+	docker compose $(COMPOSE_FILES) logs -f mcp-gateway
 
 # 查看所有日志
 logs-all:
-	docker compose logs -f
+	docker compose $(COMPOSE_FILES) logs -f
 
 # 健康检查
 health:

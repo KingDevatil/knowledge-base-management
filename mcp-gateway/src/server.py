@@ -46,6 +46,17 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
                 },
             ),
             Tool(
+                name="get_document",
+                description="获取单个文档的完整信息，包括内容、标签和所有切片",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "doc_id": {"type": "string", "description": "文档 ID"},
+                    },
+                    "required": ["doc_id"],
+                },
+            ),
+            Tool(
                 name="update_document",
                 description="更新已有文档",
                 inputSchema={
@@ -85,25 +96,45 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
                 },
             ),
             Tool(
-                name="import_markdown",
-                description="导入 Markdown 内容到知识库",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "title": {"type": "string", "description": "文档标题"},
-                        "markdown_content": {"type": "string", "description": "Markdown 内容"},
-                        "path": {"type": "string", "default": "", "description": "目标目录路径"},
-                        "tags": {"type": "array", "items": {"type": "string"}, "default": [], "description": "标签列表"},
-                    },
-                    "required": ["title", "markdown_content"],
-                },
-            ),
-            Tool(
                 name="list_directories",
                 description="列出知识库的目录树结构",
                 inputSchema={
                     "type": "object",
                     "properties": {},
+                },
+            ),
+            Tool(
+                name="rename_directory",
+                description="重命名目录，将该目录及其所有子目录下的文档移动到新路径",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "old_path": {"type": "string", "description": "当前目录路径"},
+                        "new_path": {"type": "string", "description": "新目录路径"},
+                    },
+                    "required": ["old_path", "new_path"],
+                },
+            ),
+            Tool(
+                name="delete_directory",
+                description="删除目录，将该目录及其子目录下的所有文档移至根目录",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "description": "要删除的目录路径"},
+                    },
+                    "required": ["path"],
+                },
+            ),
+            Tool(
+                name="reindex_document",
+                description="重新切片并向量化单个文档（用于切片策略变更后重建索引）",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "doc_id": {"type": "string", "description": "文档 ID"},
+                    },
+                    "required": ["doc_id"],
                 },
             ),
         ]
@@ -126,6 +157,12 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
                     content=arguments.get("content", ""),
                     path=arguments.get("path", ""),
                     tags=arguments.get("tags") or [],
+                )
+                return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
+
+            elif name == "get_document":
+                result = await tools.get_document(
+                    doc_id=arguments.get("doc_id", ""),
                 )
                 return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
 
@@ -154,17 +191,27 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
                 )
                 return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
 
-            elif name == "import_markdown":
-                result = await tools.import_markdown(
-                    title=arguments.get("title", ""),
-                    markdown_content=arguments.get("markdown_content", ""),
-                    path=arguments.get("path", ""),
-                    tags=arguments.get("tags") or [],
+            elif name == "list_directories":
+                result = await tools.list_directories()
+                return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
+
+            elif name == "rename_directory":
+                result = await tools.rename_directory(
+                    old_path=arguments.get("old_path", ""),
+                    new_path=arguments.get("new_path", ""),
                 )
                 return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
 
-            elif name == "list_directories":
-                result = await tools.list_directories()
+            elif name == "delete_directory":
+                result = await tools.delete_directory(
+                    path=arguments.get("path", ""),
+                )
+                return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
+
+            elif name == "reindex_document":
+                result = await tools.reindex_document(
+                    doc_id=arguments.get("doc_id", ""),
+                )
                 return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
 
             else:
