@@ -1051,6 +1051,12 @@ class KBLauncher:
                             key, val = key.strip(), val.strip().strip("\"'")
                             if key:
                                 env[key] = val
+                        # KBDATA_DIR 如果是相对路径，转为基于项目根目录的绝对路径
+                        # 避免因 Gateway CWD 不同导致路径错位
+                        kbdata = env.get("KBDATA_DIR", "")
+                        if kbdata and not os.path.isabs(kbdata):
+                            env["KBDATA_DIR"] = str(PROJECT_ROOT / kbdata)
+                            self._log(f"[INFO] KBDATA_DIR 已转为绝对路径: {env['KBDATA_DIR']}")
                     else:
                         self._log("[INFO] 未找到 .env 文件，使用默认配置")
                 env["CORS_ORIGINS"] = "*"

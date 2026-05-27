@@ -159,13 +159,13 @@ if settings.CORS_ORIGINS:
         allow_headers=["*"],
     )
 
-# Session 中间件
+# Session 中间件 — 允许 HTTP 访问（Nginx 在生产环境处理 HTTPS）
 app.add_middleware(
     SessionMiddleware,
     secret_key=settings.SESSION_SECRET,
     max_age=settings.SESSION_MAX_AGE,
     same_site="lax",
-    https_only=not settings.DEBUG,
+    https_only=False,
 )
 
 # Request logging + CSRF protection middleware

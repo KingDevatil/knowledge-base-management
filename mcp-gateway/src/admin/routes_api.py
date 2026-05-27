@@ -78,9 +78,12 @@ async def login_submit(
     redirect_url = _validate_redirect_url(next)
 
     response = RedirectResponse(url=redirect_url, status_code=302)
+    # Secure 标志取决于实际请求协议，而非 DEBUG 配置
+    # 这样不论 HTTP 还是 HTTPS 都能正常工作（生产环境由 Nginx 决定 HTTPS）
+    is_secure = request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
     response.set_cookie(
         key="session", value=token, max_age=settings.SESSION_MAX_AGE,
-        httponly=True, secure=not settings.DEBUG, samesite="lax",
+        httponly=True, secure=is_secure, samesite="lax",
     )
     return response
 

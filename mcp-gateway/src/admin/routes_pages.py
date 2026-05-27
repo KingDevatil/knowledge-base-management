@@ -164,7 +164,7 @@ async def document_view(request: Request, doc_id: str, user: dict = Depends(get_
         else:
             content = source_store.get_source(doc_id, doc_path)
     except Exception:
-        content = ""
+        content = "\n\n".join(chunk.get("content", "") for chunk in chunks)
 
     # 预处理：段落后的无序/有序列表前补空行（Python-Markdown 需要空行才能识别列表）
     content = re.sub(
@@ -215,7 +215,7 @@ async def document_edit_page(request: Request, doc_id: str, user: dict = Depends
         else:
             content = source_store.get_source(doc_id, meta.get("path", ""))
     except Exception:
-        content = ""
+        content = "\n\n".join(chunk.get("content", "") for chunk in chunks)
 
     return templates.TemplateResponse(request, "document_edit.html", {
         "request": request, "admin": user, "doc_id": doc_id,

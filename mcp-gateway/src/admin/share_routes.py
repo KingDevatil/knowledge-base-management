@@ -63,7 +63,7 @@ async def share_view(request: Request, token: str):
         else:
             content = source_store.get_source(doc_id, meta.get("path", ""))
     except Exception:
-        content = ""
+        content = "\n\n".join(chunk.get("content", "") for chunk in chunks)
 
     # 预处理：段落后的列表前补空行（同 document_view）
     content = re.sub(
