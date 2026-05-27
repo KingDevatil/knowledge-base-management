@@ -26,15 +26,15 @@ templates = Jinja2Templates(directory=templates_dir)
 
 # ---------- 模拟数据 ----------
 
-MOCK_ADMIN = {"username": "admin", "role": "管理员"}
+MOCK_ADMIN = {"username": "admin", "role": "admin"}
 
 MOCK_SETTINGS = {
-    "ollama_model": "bge-m3",
-    "ollama_url": "http://localhost:11434",
-    "chunk_size": 512,
-    "chunk_overlap": 50,
-    "write_lock_ttl": 30,
-    "rate_limit": 30,
+    "OLLAMA_MODEL": "bge-m3",
+    "OLLAMA_URL": "http://localhost:11434",
+    "CHUNK_SIZE": 512,
+    "CHUNK_OVERLAP": 50,
+    "WRITE_LOCK_TTL": 30,
+    "RATE_LIMIT_DEFAULT": 30,
 }
 
 MOCK_KEYS = [
@@ -350,7 +350,7 @@ async def api_key_create(request: Request, success: bool = False):
             "request": request,
             "admin": MOCK_ADMIN,
             "success": True,
-            "full_key": "kb_live_abcdefghijklmnopqrstuvwxyz123456",
+            "created_key": "kb_live_abcdefghijklmnopqrstuvwxyz123456",
             "applicant": "测试用户",
             "scope": ["read"],
             "duration": "7天",

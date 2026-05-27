@@ -129,6 +129,17 @@
 | I2 | 模板中是否有大量内联 Python 逻辑？（应移到 helper.py 过滤器） | P2 |
 | I3 | 跨模块导入是否有循环依赖风险？ | P1 |
 
+### 5.3 模板与上下文一致性
+
+| # | 检查项 | 严重度 |
+|---|--------|--------|
+| N1 | **Settings 字段大小写**：模板中 `settings.xxx` 引用必须与 `config.py` 中 `Settings` 模型字段大小写完全一致。Pydantic 属性访问区分大小写，`settings.OLLAMA_MODEL` 和 `settings.ollama_model` 不等价。 | P1 |
+| N2 | **模板上下文完整性**：路由 render 时传递的 context dict 必须包含模板中所有引用的变量。特别注意条件分支（`{% if %}`）中使用的变量在对应分支未渲染时的行为。 | P1 |
+| N3 | **Mock 数据同步**：`preview_server.py` 的 Mock 数据（`MOCK_ADMIN`、`MOCK_SETTINGS` 等）必须与实际生产数据的**结构、字段名、类型和值格式**保持一致。常见错误：Mock 使用中文 role 值 `"管理员"` 但模板检查 `"admin"`。 | P1 |
+| N4 | **Mock 变量名**：预览服务器传递给模板的变量名必须与真实路由保持一致。同一模板在预览和生产环境的 context key 必须相同。 | P1 |
+| N5 | **Return type 变更**：当方法的返回类型发生变化时（如 `list[dict]` → `tuple[list[dict], int]`），必须更新所有调用方。使用 `grep` 确认无遗漏。 | P1 |
+| N6 | **跨平台路径**：ZIP 文件中条目名必须使用 `/`（正斜杠），禁止使用 `os.sep`（Windows 为 `\`），否则 Linux/macOS 解压异常。 | P1 |
+
 ### 5.4 前端一致性规范（Tailwind + 动态渲染）
 
 | # | 检查项 | 严重度 |
@@ -303,6 +314,12 @@ repos:
 | 6 | **P1** | 全局 | 缺少 CSRF 防护 | ✅ Origin 头校验 + HX-Request 双重防护 |
 | 7 | **P2** | 全局 | 测试覆盖率仅 ~5% | 📋 待后续迭代补充 |
 | 8 | **P2** | `routes_api.py` | HTMX 响应片段内联 | 📋 待后续重构为模板文件 |
+| 9 | **P1** | `routes_admin_misc.py` | 创建 API Key 时 `scope` 未传入模板上下文，页面始终显示"只读" | ✅ 2026-05-27 修复 |
+| 10 | **P1** | `preview_server.py` | MOCK_ADMIN.role 用中文 `"管理员"`，模板检查 `"admin"` | ✅ 2026-05-27 修复 |
+| 11 | **P1** | `preview_server.py` | MOCK_SETTINGS 字段名用全小写，与 Settings 模型大写字段不匹配 | ✅ 2026-05-27 修复 |
+| 12 | **P1** | `preview_server.py` | 变量名 `full_key` 应为 `created_key`，与模板不一致 | ✅ 2026-05-27 修复 |
+| 13 | **P2** | `tools_reader.py` | `list_documents` 返回的 `total` 为分页后长度而非匹配总数 | ✅ 2026-05-27 修复 |
+| 14 | **P2** | `routes_admin_misc.py` | ZIP 备份路径用 `os.sep`（Windows `\`），跨平台兼容性差 | ✅ 2026-05-27 修复 |
 
 > **注**: `CORS_ORIGINS` 保留为可配置项（通过环境变量/`.env`注入），生产环境应设置为具体域名而非 `*`。
 > `knowledge_base.py` 经确认主要公共函数已有返回类型标注。

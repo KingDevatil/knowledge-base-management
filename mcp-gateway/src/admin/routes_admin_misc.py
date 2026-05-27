@@ -97,7 +97,7 @@ async def api_key_create(
 
     return templates.TemplateResponse(request, "api_key_create.html", {
         "request": request, "admin": user, "created_key": api_key, "applicant": applicant,
-        "success": True,
+        "success": True, "scope": scope,
         "duration": "长期有效" if dur_value == "permanent" else
                     f"{dur_value[:-1]} 天" if dur_value.endswith("d") else
                     str(dur_value),
@@ -292,13 +292,12 @@ async def api_backup_export(
     kb = request.app.state.kb
     tools = request.app.state.tools
 
-    listing = await kb.list_documents(limit=10000, offset=0)
-    docs = listing.get("documents", [])
+    listing, _ = await kb.list_documents(limit=10000, offset=0)
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for doc in docs:
-            doc_id = doc.get("doc_id")
+        for doc in listing:
+            doc_id = doc.doc_id
             if not doc_id:
                 continue
             try:
@@ -312,7 +311,7 @@ async def api_backup_export(
 
             safe_name = _sanitize_filename(title)
             if doc_path:
-                arcname = f"{doc_path.replace('/', os.sep)}/{safe_name}.md"
+                arcname = f"{doc_path}/{safe_name}.md"
             else:
                 arcname = f"{safe_name}.md"
 

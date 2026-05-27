@@ -84,7 +84,7 @@ async def api_documents_by_path(
     request: Request, path: str = "", user: dict = Depends(require_admin),
 ):
     kb = request.app.state.kb
-    docs = await kb.list_documents(path=path, limit=1000, offset=0)
+    docs, _ = await kb.list_documents(path=path, limit=1000, offset=0)
     return JSONResponse([
         {"doc_id": d.doc_id, "title": d.title, "path": d.path, "updated_at": d.updated_at}
         for d in docs
@@ -105,8 +105,8 @@ async def document_list(
 
     # 权限过滤
     if is_admin_role(user["role"]):
-        docs = await kb.list_documents(tags=tags, path=path, limit=limit, offset=offset)
-        all_docs = await kb.list_documents(limit=10000, offset=0)
+        docs, _ = await kb.list_documents(tags=tags, path=path, limit=limit, offset=offset)
+        all_docs, _ = await kb.list_documents(limit=10000, offset=0)
     else:
         authorized = user.get("authorized_paths", [])
         if not authorized:
@@ -115,11 +115,11 @@ async def document_list(
         else:
             if path and not check_path_access(user, path):
                 raise HTTPException(status_code=403, detail="无权访问此目录")
-            docs = await kb.list_documents_by_paths(authorized, limit, offset)
+            docs, _ = await kb.list_documents_by_paths(authorized, limit, offset)
             # Filter by specific path if requested
             if path:
                 docs = [d for d in docs if d.path == path or d.path.startswith(path + "/")]
-            all_docs = await kb.list_documents_by_paths(authorized, limit=10000, offset=0)
+            all_docs, _ = await kb.list_documents_by_paths(authorized, limit=10000, offset=0)
 
     tree = DirectoryTree.build_from_metadata([{"path": d.path} for d in all_docs])
     tree = merge_into_tree(tree)

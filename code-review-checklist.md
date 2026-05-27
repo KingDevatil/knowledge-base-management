@@ -95,6 +95,30 @@
    grep -rn "| safe" src/admin/templates/
    ```
 - [ ] **I2-模板逻辑**: 模板中是否有超过 3 行的复杂 Jinja2 逻辑？（应移到 Python 层）
+- [ ] **T1-Settings 字段大小写**: 模板中 `settings.xxx` 是否与 `config.py` 中 `Settings` 模型的字段名**大小写完全一致**？Pydantic 属性访问区分大小写
+   ```bash
+   # 提取模板中 settings 引用，对比 Settings 模型字段
+   grep -oP 'settings\.\w+' src/admin/templates/settings.html | sort -u
+   grep '^    [A-Z_]\+:' src/config.py | sort -u
+   ```
+- [ ] **T2-模板上下文完整性**: 路由传递的模板上下文是否包含了模板中引用的所有变量？特别是条件渲染分支 (`{% if %}`) 中使用的变量
+   ```bash
+   # 检查模板中引用但未在上下文中传递的变量
+   grep -oP '\{\{[^}]*\}\}' src/admin/templates/*.html | grep -oP '\w+' | sort -u
+   ```
+
+## 模块七：预览/测试代码 (preview_server.py)
+
+- [ ] **P1-Mock 数据同步**: 预览服务器的 Mock 数据（`MOCK_ADMIN`、`MOCK_SETTINGS` 等）是否与实际生产数据**结构一致**（字段名、类型、值格式）？
+   ```bash
+   grep -n "^MOCK_" src/preview_server.py
+   ```
+- [ ] **P2-Mock 变量名**: 预览服务器传递给模板的变量名是否与真实路由**保持一致**？
+   ```bash
+   # 对比模板渲染时的 context dict
+   grep -n "return templates" src/admin/routes_pages.py src/admin/routes_admin_misc.py
+   grep -n "return templates" src/preview_server.py
+   ```
 
 ---
 

@@ -327,7 +327,7 @@ async def api_reindex_by_path(
     kb = request.app.state.kb
     tools = request.app.state.tools
 
-    docs = await kb.list_documents(path=path, limit=10000, offset=0)
+    docs, _ = await kb.list_documents(path=path, limit=10000, offset=0)
     results = []
     for doc in docs:
         try:

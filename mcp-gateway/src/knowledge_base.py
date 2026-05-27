@@ -212,8 +212,8 @@ class KnowledgeBase:
         path: str = "",
         limit: int = 20,
         offset: int = 0
-    ) -> List[DocumentInfo]:
-        """按条件列出文档 — 优先读 Redis 索引，支持分页"""
+    ) -> tuple[List[DocumentInfo], int]:
+        """按条件列出文档 — 优先读 Redis 索引，支持分页。返回 (文档列表, 匹配总数)。"""
         # 优先从 Redis 索引读取
         doc_list = await self._doc_index_all()
         if not doc_list:
@@ -236,16 +236,19 @@ class KnowledgeBase:
         # 排序
         doc_list.sort(key=lambda x: x.get("created_at", ""), reverse=True)
 
-        # 真正分页
-        return [DocumentInfo(**d) for d in doc_list[offset:offset + limit]]
+        # 总数（分页前）
+        total = len(doc_list)
+
+        # 分页
+        return [DocumentInfo(**d) for d in doc_list[offset:offset + limit]], total
 
     async def list_documents_by_paths(
         self,
         paths: List[str],
         limit: int = 20,
         offset: int = 0
-    ) -> List[DocumentInfo]:
-        """列出多个目录（含子目录前缀匹配）下的文档"""
+    ) -> tuple[List[DocumentInfo], int]:
+        """列出多个目录（含子目录前缀匹配）下的文档。返回 (文档列表, 匹配总数)。"""
         doc_list = await self._doc_index_all()
         if not doc_list:
             await self._doc_index_rebuild()
@@ -259,7 +262,8 @@ class KnowledgeBase:
             ]
 
         doc_list.sort(key=lambda x: x.get("created_at", ""), reverse=True)
-        return [DocumentInfo(**d) for d in doc_list[offset:offset + limit]]
+        total = len(doc_list)
+        return [DocumentInfo(**d) for d in doc_list[offset:offset + limit]], total
 
     async def get_document_chunks(self, doc_id: str) -> List[dict]:
         """获取某文档的所有切片"""

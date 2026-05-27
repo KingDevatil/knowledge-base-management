@@ -81,7 +81,7 @@ class KnowledgeToolsReader:
         offset: int = 0,
     ) -> dict:
         """List documents with pagination."""
-        results = await self.kb.list_documents(
+        results, total = await self.kb.list_documents(
             tags=tags,
             path=path,
             limit=limit,
@@ -100,14 +100,14 @@ class KnowledgeToolsReader:
                 }
                 for d in results
             ],
-            "total": len(results),
+            "total": total,
             "limit": limit,
             "offset": offset,
         }
 
     async def list_directories(self) -> dict:
         """List directory tree."""
-        docs = await self.kb.list_documents(limit=10000, offset=0)
+        docs, _ = await self.kb.list_documents(limit=10000, offset=0)
         metadatas = [{"path": d.path} for d in docs]
         tree = DirectoryTree.build_from_metadata(metadatas)
         return {"tree": tree}
