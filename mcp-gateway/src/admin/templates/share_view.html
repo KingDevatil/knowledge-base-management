@@ -66,12 +66,25 @@
         .dark .markdown-body td { border-color: #334155; }
         .markdown-body blockquote { border-left: 3px solid #6366f1; padding-left: 1rem; color: #64748b; margin: 0.75rem 0; }
         .dark .markdown-body blockquote { color: #94a3b8; }
+        .markdown-body ul { list-style-type: disc; }
+        .markdown-body ol { list-style-type: decimal; }
         .markdown-body ul, .markdown-body ol { margin: 0.5rem 0; padding-left: 1.5rem; }
         .markdown-body li { margin-bottom: 0.25rem; }
+        .markdown-body li > p { margin-bottom: 0; }
+        .markdown-body strong { color: #0f172a; }
+        .dark .markdown-body strong { color: #f1f5f9; }
+        .markdown-body em { color: #475569; }
+        .dark .markdown-body em { color: #94a3b8; }
+        .markdown-body img { max-width: 100%; border-radius: 0.75rem; margin: 1rem 0; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
         .markdown-body a { color: #6366f1; text-decoration: underline; }
         .dark .markdown-body a { color: #818cf8; }
         .markdown-body hr { border: none; border-top: 1px solid #e2e8f0; margin: 2rem 0; }
         .dark .markdown-body hr { border-top-color: #334155; }
+        .markdown-body .admonition { margin: 1rem 0; padding: 0.75rem 1rem; border-radius: 0.75rem; border-left: 4px solid; font-size: 0.875rem; }
+        .markdown-body .admonition.note { background: #eff6ff; border-left-color: #3b82f6; color: #1e40af; }
+        .dark .markdown-body .admonition.note { background: rgba(59,130,246,0.1); color: #93c5fd; }
+        .markdown-body .admonition.warning { background: #fefce8; border-left-color: #eab308; color: #92400e; }
+        .dark .markdown-body .admonition.warning { background: rgba(234,179,8,0.1); color: #fde047; }
 
         /* Native select dark mode */
         .dark select { color-scheme: dark; }
