@@ -64,7 +64,7 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
                         "doc_id": {"type": "string", "description": "文档 ID"},
                         "title": {"type": "string", "description": "新标题"},
                         "content": {"type": "string", "description": "新内容"},
-                        "path": {"type": "string", "default": "", "description": "新目录路径"},
+                        "path": {"type": "string", "default": "", "description": "新目录路径（留空则保留原路径）"},
                         "tags": {"type": "array", "items": {"type": "string"}, "default": [], "description": "新标签列表"},
                     },
                     "required": ["doc_id", "title", "content"],

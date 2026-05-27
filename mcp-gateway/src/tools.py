@@ -243,7 +243,6 @@ class KnowledgeTools(KnowledgeToolsReader):
             )
 
         tags = tags or []
-        new_path = DirectoryTree.validate_path(path)
         now = datetime.now(timezone.utc).isoformat()
         size_label = content_size_kb(content)
 
@@ -263,6 +262,9 @@ class KnowledgeTools(KnowledgeToolsReader):
             if isinstance(old_tags_raw, str) and old_tags_raw
             else (old_tags_raw if isinstance(old_tags_raw, list) else [])
         )
+
+        # 未传入新路径/标签时保留原值，避免 Agent 遗漏参数导致数据丢失
+        new_path = DirectoryTree.validate_path(path) if path else old_path
 
         # 变更检测
         changeless = False
