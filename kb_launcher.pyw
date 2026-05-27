@@ -452,6 +452,20 @@ class KBLauncher:
         for svc in SERVICES:
             self._add_service_row(svc)
 
+        # 底部选项
+        opt_frame = tk.Frame(tab, bg=self.COLOR_BG)
+        opt_frame.pack(fill=tk.X, padx=12, pady=(6, 4))
+        self.use_env_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            opt_frame, text="使用 .env 文件配置（未勾选则使用启动器默认值）",
+            variable=self.use_env_var,
+            font=("微软雅黑", 10),
+            bg=self.COLOR_BG, fg=self.COLOR_TEXT,
+            selectcolor=self.COLOR_PANEL,
+            activebackground=self.COLOR_BG,
+            activeforeground=self.COLOR_TEXT,
+        ).pack(side=tk.LEFT)
+
     def _add_service_row(self, svc: ServiceDef):
         """添加单个服务行"""
         row = tk.Frame(self.svc_frame, bg=self.COLOR_BG, pady=2)
@@ -1022,6 +1036,23 @@ class KBLauncher:
                 env["MINIO_BUCKET"] = "kb-sources"
                 env["MINIO_SECURE"] = "false"
                 env["DEBUG"] = "true"
+                # 勾选"使用 .env 文件"时，加载 .env 并覆盖默认值
+                if self.use_env_var.get():
+                    dotenv_path = PROJECT_ROOT / "mcp-gateway" / ".env"
+                    if not dotenv_path.is_file():
+                        dotenv_path = PROJECT_ROOT / ".env"
+                    if dotenv_path.is_file():
+                        self._log(f"[INFO] 加载 .env 文件: {dotenv_path}")
+                        for line in dotenv_path.read_text("utf-8").splitlines():
+                            line = line.strip()
+                            if not line or line.startswith("#") or "=" not in line:
+                                continue
+                            key, _, val = line.partition("=")
+                            key, val = key.strip(), val.strip().strip("\"'")
+                            if key:
+                                env[key] = val
+                    else:
+                        self._log("[INFO] 未找到 .env 文件，使用默认配置")
                 env["CORS_ORIGINS"] = "*"
                 env["ADMIN_ACCOUNTS_FILE"] = str(KBDATA_DIR / "config" / "admin_accounts.json")
                 env["API_KEY_FILE"] = str(KBDATA_DIR / "config" / "api_keys.json")
