@@ -102,7 +102,7 @@ graph TB
 ### 1. 克隆并进入项目
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/KingDevatil/knowledge-base-management.git
 cd knowledge-base-management
 ```
 
@@ -126,7 +126,7 @@ docker compose up -d
 默认管理员账号已内置在 `kbdata/config/admin_accounts.json`：
 
 - **用户名**: `admin`
-- **密码**: `admin123`
+- **密码**: `123456`
 
 > ⚠️ 生产环境务必修改密码！使用以下命令生成新密码哈希：
 > ```bash
