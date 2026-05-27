@@ -1,5 +1,6 @@
 """Admin page routes (GET - returns HTML or JSON for UI rendering)."""
 import markdown
+import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Request, HTTPException, Depends
@@ -165,6 +166,12 @@ async def document_view(request: Request, doc_id: str, user: dict = Depends(get_
     except Exception:
         content = ""
 
+    # 预处理：段落后的无序/有序列表前补空行（Python-Markdown 需要空行才能识别列表）
+    content = re.sub(
+        r'^(?![ \t]*[-*+]\s)([^#\n>\[].*)\n(?=\d+\.\s+|[-*+]\s+)',
+        r'\1\n\n',
+        content, flags=re.MULTILINE,
+    )
     html_content = markdown.markdown(content, extensions=[
         "extra", "codehilite", "sane_lists", "toc", "admonition",
     ])
