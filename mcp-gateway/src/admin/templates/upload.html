@@ -646,7 +646,7 @@
             if (item.kind !== 'file') continue;
             const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
             if (entry && entry.isDirectory) {
-                await traverseDirectory(entry, '', files);
+                await traverseDirectory(entry, entry.name + '/', files);
             } else {
                 const file = item.getAsFile();
                 if (file) files.push(file);

@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}仪表盘 - 企业中央知识库{% endblock %}
+{% block title %}仪表盘 - 中央知识库{% endblock %}
 
 {% block content %}
 <!-- 顶部栏 -->
@@ -103,39 +103,14 @@
                 <span class="text-xs text-slate-400">最后更新: 刚刚</span>
             </div>
 
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-4" hx-get="/health" hx-trigger="every 30s" hx-target="#health-status" hx-swap="innerHTML">
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4" hx-get="/admin/api/health-cards" hx-trigger="load every 30s" hx-target="#health-status" hx-swap="innerHTML">
                 <div id="health-status" class="contents">
                     <div class="relative p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700/50">
-                        <div class="flex items-center gap-2 mb-3">
-                            <span class="status-dot w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
-                            <span class="text-sm font-medium text-slate-700 dark:text-slate-300">ChromaDB</span>
+                        <div class="flex items-center gap-2 mb-1">
+                            <span class="w-2.5 h-2.5 rounded-full bg-slate-300 dark:bg-slate-600 animate-pulse"></span>
+                            <span class="text-sm font-medium text-slate-500 dark:text-slate-400">检测中...</span>
                         </div>
-                        <p class="text-xs text-slate-500 dark:text-slate-400 mb-1">向量数据库</p>
-                        <p class="text-lg font-bold text-slate-900 dark:text-white">99.9%</p>
-                    </div>
-                    <div class="relative p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700/50">
-                        <div class="flex items-center gap-2 mb-3">
-                            <span class="status-dot w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
-                            <span class="text-sm font-medium text-slate-700 dark:text-slate-300">Redis</span>
-                        </div>
-                        <p class="text-xs text-slate-500 dark:text-slate-400 mb-1">缓存服务</p>
-                        <p class="text-lg font-bold text-slate-900 dark:text-white">100%</p>
-                    </div>
-                    <div class="relative p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700/50">
-                        <div class="flex items-center gap-2 mb-3">
-                            <span class="status-dot w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
-                            <span class="text-sm font-medium text-slate-700 dark:text-slate-300">Ollama</span>
-                        </div>
-                        <p class="text-xs text-slate-500 dark:text-slate-400 mb-1">Embedding</p>
-                        <p class="text-lg font-bold text-slate-900 dark:text-white">正常</p>
-                    </div>
-                    <div class="relative p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700/50">
-                        <div class="flex items-center gap-2 mb-3">
-                            <span class="status-dot w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
-                            <span class="text-sm font-medium text-slate-700 dark:text-slate-300">MinIO</span>
-                        </div>
-                        <p class="text-xs text-slate-500 dark:text-slate-400 mb-1">对象存储</p>
-                        <p class="text-lg font-bold text-slate-900 dark:text-white">正常</p>
+                        <p class="text-xs text-slate-400">正在检查各服务连接状态</p>
                     </div>
                 </div>
             </div>

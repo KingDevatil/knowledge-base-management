@@ -103,7 +103,7 @@ MOCK_DOCS = [
     },
     {
         "doc_id": "doc-003",
-        "title": "新员工入职指引",
+        "title": "新用户使用指引",
         "path": "人事/入职",
         "tags": ["入职", "人事"],
         "updated_at": (datetime.now(timezone.utc) - timedelta(days=5)).isoformat(),

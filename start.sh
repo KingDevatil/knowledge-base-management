@@ -1,10 +1,10 @@
 #!/bin/sh
-# 企业中央知识库 + MCP Gateway 自动启动脚本
+# 中央知识库 + MCP Gateway 自动启动脚本
 # 自动检测 GPU，有独立显卡则启用加速，无则用 CPU
 
 set -e
 
-echo "=== 企业知识库 MCP Gateway ==="
+echo "=== 中央知识库 MCP Gateway ==="
 
 # GPU 自动检测
 COMPOSE_FILES="-f docker-compose.yml"

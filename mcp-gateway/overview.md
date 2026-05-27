@@ -120,7 +120,7 @@
 |---|---|
 | `README.md` | `cd` 命令、metrics `app` 名称、MCP server key |
 | `mcp-gateway/src/config.py` | `APP_NAME`、`CHROMA_COLLECTION` |
-| `员工接入指南.md` | 配置名称、MCP server key |
+| `用户接入指南.md` | 配置名称、MCP server key |
 | `implementation-plan.md` | `APP_NAME`、`CHROMA_COLLECTION`、备份脚本中的 Docker volume 前缀和部署路径 |
 | `plan.md` | 目录结构示例名、MCP server key |
 

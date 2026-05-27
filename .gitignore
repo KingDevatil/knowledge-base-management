@@ -4,6 +4,7 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+.pytest_cache/
 
 # Environment
 .env
@@ -18,8 +19,11 @@ Thumbs.db
 .vscode/
 .idea/
 
-# WorkBuddy
+# Tooling metadata (auto-generated)
 .workbuddy/
+.claude/
+CLAUDE.md
+AGENTS.md
 
 # Data (运行时数据与源码隔离)
 kbdata/*
