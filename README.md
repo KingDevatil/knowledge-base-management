@@ -1,6 +1,6 @@
-# 企业中央知识库 + MCP Gateway
+# 中央知识库 + MCP Gateway
 
-基于 FastAPI + Chroma + Ollama 构建的企业级中央知识库系统，通过 MCP (Model Context Protocol) Gateway 向 AI Agent 暴露检索与写入能力，配套 Web 管理后台供管理员维护知识库内容。
+基于 FastAPI + Chroma + Ollama 构建的中央知识库系统，通过 MCP (Model Context Protocol) Gateway 向 AI Agent 暴露检索与写入能力，配套 Web 管理后台供管理员维护知识库内容。
 
 ---
 
@@ -22,9 +22,9 @@
 ## 架构
 
 ```
-                                  员工端
+                                  用户端
     ┌─────────────────┐     ┌─────────────────┐
-    │   员工A Agent    │     │   员工B Agent    │
+    │   用户A Agent    │     │   用户B Agent    │
     │  (Cursor/Claude) │     │  (Cursor/Claude) │
     └────────┬────────┘     └────────┬────────┘
              │                       │
@@ -124,23 +124,23 @@ docker compose up -d
 | `APP_NAME` | `Knowledge Base Management` | 否 | 服务名称，影响页面标题和指标标签 |
 | `DEBUG` | `false` | 否 | 调试模式，开启后输出详细日志 |
 
-#### 域名与网络（企业部署关键）
+#### 域名与网络
 
 | 变量 | 默认值 | 必填 | 说明 |
 |------|--------|------|------|
 | `EXTERNAL_DOMAIN` | `kb.company.com` | 是 | **外网域名**。用于 Nginx HTTPS 的 server_name 和 SSL 证书路径；所有 Agent 通过此域名连接 SSE 端点 |
-| `INTERNAL_DOMAIN` | `kb.internal.company.com` | 否 | **内网域名**。用于企业内部 HTTP 访问，可不配，直接用 IP |
+| `INTERNAL_DOMAIN` | `kb.internal.company.com` | 否 | **内网域名**。用于内部 HTTP 访问，可不配，直接用 IP |
 | `EXTERNAL_IP` | `0.0.0.0` | 否 | 外网 HTTPS 监听 IP。`0.0.0.0` 监听所有网卡，可指定具体 IP |
 | `INTERNAL_IP` | `0.0.0.0` | 否 | 内网 HTTP 监听 IP |
 
 **配置示例：**
 
 ```bash
-# 企业有外网域名
+# 有外网域名
 EXTERNAL_DOMAIN=wiki.yourcompany.com
 INTERNAL_DOMAIN=wiki.internal.company.com
 
-# 企业无外网域名，纯内网使用
+# 无外网域名，纯内网使用
 EXTERNAL_DOMAIN=
 INTERNAL_DOMAIN=192.168.1.100
 ```
@@ -197,7 +197,7 @@ CORS_ORIGINS=https://wiki.yourcompany.com,http://192.168.1.100
 
 #### 场景一：外网 + 内网双模式（推荐，需 SSL 证书）
 
-企业有公网域名和 SSL 证书，外网员工通过 HTTPS 访问，内网员工通过 HTTP 直连。
+有公网域名和 SSL 证书，外网用户通过 HTTPS 访问，内网用户通过 HTTP 直连。
 
 ```bash
 # 1. 配置域名
@@ -221,7 +221,7 @@ docker compose up -d
 
 #### 场景二：纯内网部署（免 SSL）
 
-企业内部局域网使用，无需域名和证书。
+内部局域网使用，无需域名和证书。
 
 ```bash
 # 1. 配置
@@ -399,11 +399,11 @@ AI Agent 通过 MCP 协议可调用以下工具：
 }
 ```
 
-> **注意**: 如果使用的客户端不支持 StreamableHTTP（如 Claude Desktop），可使用 SSE 兼容端点 `/sse` 或 `mcp-proxy` 中转，详见 [员工接入指南](员工接入指南.md)。
+> **注意**: 如果使用的客户端不支持 StreamableHTTP（如 Claude Desktop），可使用 SSE 兼容端点 `/sse` 或 `mcp-proxy` 中转，详见 [用户接入指南](用户接入指南.md)。
 
 ### 内网 MCP 配置
 
-企业内网部署时（无外网域名或 HTTPS），Agent 直接通过 HTTP 连接内网地址：
+内网部署时（无外网域名或 HTTPS），Agent 直接通过 HTTP 连接内网地址：
 
 ```json
 {
@@ -512,7 +512,7 @@ Set-Service fdrespub -StartupType Automatic
 2. 进入 "API Key 管理 → 新建"
 3. 填写申请人、备注、权限(read/write)、有效期
 4. 生成后页面展示完整 Key（仅一次，务必复制保存）
-5. 将 Key 分发给员工，员工配置到各自 Agent 中
+5. 将 Key 分发给用户，用户配置到各自 Agent 中
 
 ### Key 有效期
 
@@ -589,7 +589,7 @@ Agent/Web → Markdown 内容 → MinIO 保存源文件 → 切片 → Embedding
 │               ├── api_key_create.html / settings.html / account.html
 ├── plan.md / overview.md           # 设计文档
 ├── start-dev.bat / stop-dev.bat    # Windows 快捷启动/停止
-└── 员工接入指南.md                  # 面向员工的 MCP 配置文档
+└── 用户接入指南.md                  # 面向用户的 MCP 配置文档
 ```
 
 ---
