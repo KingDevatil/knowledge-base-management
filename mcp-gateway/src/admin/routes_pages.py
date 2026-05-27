@@ -9,9 +9,13 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from directory_tree import DirectoryTree
 from directory_store import merge_into_tree
 
+from logger import get_logger
+
 from .helpers import (templates, settings, get_current_user, require_admin,
                       get_current_admin, format_datetime, format_relative_time,
                       check_path_access)  # noqa: F401
+
+logger = get_logger()
 
 from admin_auth import is_admin_role
 
@@ -55,10 +59,22 @@ async def dashboard(request: Request, user: dict = Depends(require_admin)):
         and (datetime.fromisoformat(k["expires_at"].replace("Z", "+00:00")) - datetime.now(timezone.utc)).total_seconds() < 86400
     ]
 
+    # 读取今日检索次数
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today_search_count = 0
+    redis = getattr(request.app.state, "redis", None)
+    if redis:
+        try:
+            val = await redis.get(f"stats:search:{today}")
+            today_search_count = int(val) if val else 0
+        except Exception as e:
+            logger.warning(f"Failed to read today's search count from Redis: {e}")
+
     return templates.TemplateResponse(request, "dashboard.html", {
         "request": request, "admin": user,
         "doc_count": doc_count, "active_key_count": len(active_keys),
         "expired_soon_count": len(expired_soon), "total_key_count": len(api_keys),
+        "today_search_count": today_search_count,
     })
 
 
@@ -104,23 +120,40 @@ async def document_list(
     offset = (page - 1) * limit
     tags = [t.strip() for t in tag.split(",") if t.strip()] if tag else None
 
-    # 权限过滤
+    # 获取所有文档（目录树需要全量，搜索过滤在 Python 层完成）
     if is_admin_role(user["role"]):
-        docs, _ = await kb.list_documents(tags=tags, path=path, limit=limit, offset=offset)
         all_docs, _ = await kb.list_documents(limit=10000, offset=0)
     else:
         authorized = user.get("authorized_paths", [])
         if not authorized:
-            docs = []
             all_docs = []
         else:
-            if path and not check_path_access(user, path):
-                raise HTTPException(status_code=403, detail="无权访问此目录")
-            docs, _ = await kb.list_documents_by_paths(authorized, limit, offset)
-            # Filter by specific path if requested
-            if path:
-                docs = [d for d in docs if d.path == path or d.path.startswith(path + "/")]
             all_docs, _ = await kb.list_documents_by_paths(authorized, limit=10000, offset=0)
+
+    docs = list(all_docs)
+
+    # 路径过滤
+    if path:
+        if not is_admin_role(user["role"]) and not check_path_access(user, path):
+            raise HTTPException(status_code=403, detail="无权访问此目录")
+        docs = [d for d in docs if d.path == path or d.path.startswith(path + "/")]
+
+    # 标签过滤
+    if tags:
+        docs = [d for d in docs if any(t in d.tags for t in tags)]
+
+    # 搜索过滤：按标题、路径、标签匹配
+    if q:
+        q_lower = q.strip().lower()
+        docs = [
+            d for d in docs
+            if q_lower in d.title.lower()
+            or q_lower in d.path.lower()
+            or any(q_lower in t.lower() for t in d.tags)
+        ]
+
+    total = len(docs)
+    docs = docs[offset:offset + limit]
 
     tree = DirectoryTree.build_from_metadata([{"path": d.path} for d in all_docs])
     tree = merge_into_tree(tree)
@@ -130,6 +163,7 @@ async def document_list(
         "request": request, "admin": user,
         "documents": docs, "tree": tree, "current_path": path,
         "breadcrumbs": breadcrumbs, "q": q, "tag": tag, "page": page,
+        "total": total, "limit": limit,
     })
 
 

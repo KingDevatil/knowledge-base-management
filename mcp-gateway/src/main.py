@@ -80,6 +80,7 @@ async def lifespan(app: FastAPI):
         embedder=app.state.embedder,
         write_lock=app.state.write_lock,
         api_key_auth=app.state.api_key_auth,
+        redis_client=app.state.redis,
     )
     app.state.mcp_server = create_mcp_server(app.state.tools)
     app.state.sse_transport = SseServerTransport("/sse/messages/")

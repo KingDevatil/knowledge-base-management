@@ -1,5 +1,6 @@
 """Shared helpers for admin routes: auth guards, template filters, formatting."""
 import os
+from urllib.parse import quote
 from datetime import datetime, timezone
 
 from fastapi import Request, HTTPException
@@ -81,3 +82,11 @@ def format_relative_time(dt_str: str) -> str:
 
 templates.env.filters["datetime"] = format_datetime
 templates.env.filters["relative_time"] = format_relative_time
+
+
+def urlencode_filter(s: str) -> str:
+    """Jinja2 filter: URL-encode a string for safe use in query parameters."""
+    return quote(s or "", safe="")
+
+
+templates.env.filters["urlencode"] = urlencode_filter

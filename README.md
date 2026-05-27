@@ -62,7 +62,7 @@ graph TB
 
     subgraph 数据层[" "]
         D1[("🧠 Chroma<br/>向量数据库")]:::data
-        D2[("⚡ Redis<br/>锁 + 缓存")]:::data
+        D2[("⚡ Redis<br/>锁 + 缓存 + 搜索统计")]:::data
         D3[("🤖 Ollama + bge-m3<br/>Embedding 服务")]:::data
         D4[("🗄️ MinIO<br/>对象存储")]:::data
         D5[("📁 本地文件系统<br/>降级存储")]:::data
@@ -83,6 +83,7 @@ graph TB
     S2 --- S3
     S3 --> D1 & D3
     S5 --> D2
+    S1 -. "搜索统计" .-> D2
     S6 --> D4
     S6 -..-> D5
     S7 --> C1

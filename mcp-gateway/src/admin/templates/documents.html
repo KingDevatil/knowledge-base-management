@@ -12,19 +12,19 @@
         </div>
         <div class="flex items-center gap-3">
             {% if admin.role in ('super_admin', 'admin') %}
-            <a href="/admin/documents/upload{% if current_path %}?path={{ current_path }}{% endif %}"
+            <a href="/admin/documents/upload{% if current_path %}?path={{ current_path | urlencode }}{% endif %}"
                class="flex items-center gap-2 px-4 py-2.5 bg-brand-600 hover:bg-brand-700 text-white text-sm font-semibold rounded-xl shadow-lg shadow-brand-500/25 hover:shadow-brand-500/40 transition-all duration-200 hover:-translate-y-0.5">
                 <i data-lucide="upload-cloud" class="w-4 h-4"></i>
                 <span>上传文档</span>
             </a>
-            <a href="/admin/documents/new/edit{% if current_path %}?path={{ current_path }}{% endif %}"
+            <a href="/admin/documents/new/edit{% if current_path %}?path={{ current_path | urlencode }}{% endif %}"
                class="flex items-center gap-2 px-4 py-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-sm font-semibold rounded-xl hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-all">
                 <i data-lucide="file-plus" class="w-4 h-4"></i>
                 <span>新建</span>
             </a>
             <div id="reindex-all-container">
                 <button hx-post="/admin/api/reindex-by-path"
-                        hx-vals='{"path": "{{ current_path }}"}'
+                        hx-vals='{"path": "{{ current_path | urlencode }}"}'
                         hx-confirm="确定重新切片当前目录下所有文档吗？&#10;&#10;此操作将重新读取源文件、重新切片并重新向量化，可能需要一些时间。"
                         hx-target="#reindex-all-container"
                         hx-swap="innerHTML"
@@ -45,11 +45,11 @@
             <a href="/admin/documents" class="text-slate-500 hover:text-brand-600 dark:hover:text-brand-400 transition-colors">全部文档</a>
             {% for crumb in breadcrumbs %}
             <i data-lucide="chevron-right" class="w-4 h-4 text-slate-300"></i>
-            <a href="/admin/documents?path={{ crumb.path }}" class="text-slate-500 hover:text-brand-600 dark:hover:text-brand-400 transition-colors">{{ crumb.name }}</a>
+            <a href="/admin/documents?path={{ crumb.path | urlencode }}" class="text-slate-500 hover:text-brand-600 dark:hover:text-brand-400 transition-colors">{{ crumb.name }}</a>
             {% endfor %}
         </nav>
         <div class="flex items-center gap-4 text-sm text-slate-500">
-            <span>共 <strong class="text-slate-900 dark:text-white">{{ doc_count or documents | length }}</strong> 个文档</span>
+            <span>共 <strong class="text-slate-900 dark:text-white">{{ total }}</strong> 个文档</span>
         </div>
     </div>
 
@@ -64,7 +64,7 @@
                     {% macro render_tree(node, level=0) %}
                         {% if node.name != 'root' or node.children %}
                         {% if node.name != 'root' %}
-                        <a href="/admin/documents?path={{ node.path }}"
+                        <a href="/admin/documents?path={{ node.path | urlencode }}"
                            class="folder-item flex items-center gap-2 px-3 py-2 text-sm rounded-xl {% if current_path == node.path %}bg-brand-50 dark:bg-brand-500/10 text-brand-700 dark:text-brand-400 font-medium{% else %}text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50{% endif %}">
                             {% if level > 0 %}<span class="w-4 text-center text-slate-300 text-xs">└</span>{% else %}<span class="w-4"></span>{% endif %}
                             <i data-lucide="{% if current_path == node.path %}folder-open{% else %}folder{% endif %}"
@@ -87,12 +87,20 @@
             <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
                 <!-- 工具栏 -->
                 <div class="px-5 py-3.5 border-b border-slate-100 dark:border-slate-800 flex items-center gap-3">
-                    <div class="relative flex-1 max-w-md">
+                    <form method="get" action="/admin/documents" class="relative flex-1 max-w-md">
+                        <input type="hidden" name="path" value="{{ current_path }}">
+                        {% if tag %}<input type="hidden" name="tag" value="{{ tag }}">{% endif %}
                         <i data-lucide="search" class="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2"></i>
                         <input type="text" name="q" value="{{ q }}"
-                            class="search-input w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:border-brand-500 transition-all"
+                            class="w-full pl-10 pr-10 py-2.5 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:border-brand-500 transition-all"
                             placeholder="搜索文档标题、标签或内容...">
-                    </div>
+                        {% if q %}
+                        <a href="/admin/documents?path={{ current_path | urlencode }}{% if tag %}&tag={{ tag | urlencode }}{% endif %}"
+                           class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors">
+                            <i data-lucide="x" class="w-4 h-4"></i>
+                        </a>
+                        {% endif %}
+                    </form>
                     <div class="flex items-center gap-2">
                         <select class="px-3 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-700 dark:text-slate-300 focus:outline-none focus:border-brand-500">
                             <option>最近更新</option>
@@ -179,7 +187,7 @@
                                 </div>
                                 <p class="text-slate-500 dark:text-slate-400 text-sm mb-2">暂无文档</p>
                                 {% if admin.role in ('super_admin', 'admin') %}
-                                <a href="/admin/documents/new/edit{% if current_path %}?path={{ current_path }}{% endif %}" class="text-brand-600 dark:text-brand-400 hover:underline text-sm">创建第一个文档</a>
+                                <a href="/admin/documents/new/edit{% if current_path %}?path={{ current_path | urlencode }}{% endif %}" class="text-brand-600 dark:text-brand-400 hover:underline text-sm">创建第一个文档</a>
                                 {% endif %}
                             </td>
                         </tr>
@@ -191,11 +199,15 @@
                 {% if documents %}
                 <div class="px-5 py-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
                     <div class="flex items-center gap-3">
-                        <span class="text-sm text-slate-500">显示 <span class="font-medium text-slate-900 dark:text-white">1-{{ documents | length }}</span> 条</span>
+                        <span class="text-sm text-slate-500">
+                            {% set start = (page - 1) * limit + 1 %}
+                            {% set end = [page * limit, total] | min %}
+                            显示 <span class="font-medium text-slate-900 dark:text-white">{{ start }}-{{ end }}</span> 条，共 <span class="font-medium text-slate-900 dark:text-white">{{ total }}</span> 条
+                        </span>
                     </div>
                     <div class="flex items-center gap-1.5">
                         {% if page > 1 %}
-                        <a href="/admin/documents?path={{ current_path }}&q={{ q }}&tag={{ tag }}&page={{ page - 1 }}" class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
+                        <a href="/admin/documents?path={{ current_path | urlencode }}&q={{ q | urlencode }}&tag={{ tag | urlencode }}&page={{ page - 1 }}" class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
                             <i data-lucide="chevron-left" class="w-4 h-4"></i>
                         </a>
                         {% else %}
@@ -204,8 +216,8 @@
                         </button>
                         {% endif %}
                         <span class="px-3.5 py-2 rounded-xl bg-brand-600 text-white text-sm font-medium">{{ page }}</span>
-                        {% if documents | length >= 20 %}
-                        <a href="/admin/documents?path={{ current_path }}&q={{ q }}&tag={{ tag }}&page={{ page + 1 }}" class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
+                        {% if end < total %}
+                        <a href="/admin/documents?path={{ current_path | urlencode }}&q={{ q | urlencode }}&tag={{ tag | urlencode }}&page={{ page + 1 }}" class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
                             <i data-lucide="chevron-right" class="w-4 h-4"></i>
                         </a>
                         {% else %}

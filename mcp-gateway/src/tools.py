@@ -31,8 +31,9 @@ class KnowledgeTools(KnowledgeToolsReader):
         embedder: OllamaEmbedder,
         write_lock: WriteLock,
         api_key_auth: APIKeyAuth,
+        redis_client=None,
     ):
-        super().__init__(kb, embedder, source_store)
+        super().__init__(kb, embedder, source_store, redis_client)
         self.write_lock = write_lock
         self.api_key_auth = api_key_auth
         self.settings = get_settings()

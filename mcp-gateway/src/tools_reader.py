@@ -1,4 +1,5 @@
 """Read-only KnowledgeTools — search, list, get document operations (no write lock needed)."""
+from datetime import datetime, timezone
 
 from fastapi import HTTPException
 
@@ -19,10 +20,12 @@ class KnowledgeToolsReader:
         kb: KnowledgeBase,
         embedder: OllamaEmbedder,
         source_store: SourceStore,
+        redis_client=None,
     ):
         self.kb = kb
         self.embedder = embedder
         self.source_store = source_store
+        self.redis = redis_client
 
     async def search_knowledge(
         self,
@@ -54,6 +57,17 @@ class KnowledgeToolsReader:
             filter_tags=filter_tags,
             filter_path=filter_path,
         )
+
+        # 异步记录检索次数（REST API 和 MCP 共享此计数）
+        if self.redis:
+            try:
+                today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                key = f"stats:search:{today}"
+                count = await self.redis.incr(key)
+                if count == 1:
+                    await self.redis.expire(key, 86400 * 90)
+            except Exception as e:
+                logger.warning(f"Failed to record search stats in Redis: {e}")
 
         return {
             "query": query,
