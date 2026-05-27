@@ -1063,17 +1063,28 @@ class KBLauncher:
                 env["MINIO_ROOT_USER"] = "minioadmin"
                 env["MINIO_ROOT_PASSWORD"] = "minioadmin"
 
+            # 构建起始命令（支持通过 .env 的 BIND_HOST 覆盖监听地址）
+            cmd = svc.start_cmd
+            if svc.name == "MCP Gateway":
+                bind_host = env.get("BIND_HOST", "127.0.0.1")
+                if bind_host != "127.0.0.1":
+                    cmd = list(svc.start_cmd)
+                    if "--host" in cmd:
+                        idx = cmd.index("--host")
+                        if idx + 1 < len(cmd):
+                            cmd[idx + 1] = bind_host
+
             if svc.name == "MCP Gateway":
                 cwd = str(PROJECT_ROOT / "mcp-gateway")
             else:
                 cwd = str(PROJECT_ROOT)
 
-            self._log(f"[CMD] {' '.join(svc.start_cmd)}")
+            self._log(f"[CMD] {' '.join(cmd)}")
             # Gateway logs: capture to file for debugging
             if svc.name == "MCP Gateway":
                 log_file = open(str(LOGS_DIR / "gateway.log"), "w", encoding="utf-8")
                 svc.process = subprocess.Popen(
-                    svc.start_cmd,
+                    cmd,
                     stdout=log_file,
                     stderr=subprocess.STDOUT,
                     env=env,
@@ -1085,7 +1096,7 @@ class KBLauncher:
                 self._start_log_reader(str(LOGS_DIR / "gateway.log"))
             else:
                 svc.process = subprocess.Popen(
-                    svc.start_cmd,
+                    cmd,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     env=env,

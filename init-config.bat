@@ -8,33 +8,39 @@ echo.
 echo 正在生成随机 SESSION_SECRET...
 echo.
 
-:: 生成 32 位随机密钥
-for /f "delims=" %%i in ('powershell -NoProfile -Command "-join ((48..57)+(65..90)+(97..122) | Get-Random -Count 32 | %% {[char]$_})"') do set KEY=%%i
+:: 生成 32 位随机密钥（纯 batch，避免 for /f + %% + | 的 cmd 解析问题）
+setlocal enabledelayedexpansion
+set CHARS=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789
+set KEY=
+for /l %%i in (1,1,32) do (
+    set /a R=!RANDOM! * 62 / 32768
+    for %%r in (!R!) do set KEY=!KEY!!CHARS:~%%r,1!
+)
+endlocal & set KEY=%KEY%
 
 echo 生成的密钥: %KEY%
 echo.
 
 :: 检查 .env 是否存在
-if exist ".env" (
-    echo 检测到 .env 文件已存在。
-    choice /c YN /M "是否覆盖 SESSION_SECRET？"
-    if errorlevel 2 goto :SKIP
+if exist ".env" goto :PROMPT_USER
+if exist ".env.example" (
+    copy .env.example .env >nul
+    echo 已从 .env.example 创建 .env 文件
+) else (
+    echo [错误] 找不到 .env.example 模板文件
+    pause
+    exit /b 1
 )
+goto :REPLACE
 
-:: 如果 .env 不存在，从模板创建
-if not exist ".env" (
-    if exist ".env.example" (
-        copy .env.example .env >nul
-        echo 已从 .env.example 创建 .env 文件
-    ) else (
-        echo [错误] 找不到 .env.example 模板文件
-        pause
-        exit /b 1
-    )
-)
+:PROMPT_USER
+echo 检测到 .env 文件已存在。
+set CONFIRM=
+set /p CONFIRM="是否覆盖 SESSION_SECRET？(Y/N): "
+if /i not "%CONFIRM%"=="Y" goto :SKIP
 
-:: 替换 SESSION_SECRET
-powershell -NoProfile -Command "(Get-Content .env -Encoding UTF8) -replace 'SESSION_SECRET=.*', 'SESSION_SECRET=%KEY%' | Set-Content .env -Encoding UTF8"
+:: 替换 SESSION_SECRET（无管道写法，避免 cmd 误解析 |）
+powershell -NoProfile -Command "$c=Get-Content .env -Encoding UTF8; $c=$c -replace 'SESSION_SECRET=.*', 'SESSION_SECRET=%KEY%'; Set-Content .env -Encoding UTF8 -Value $c"
 echo ✅ SESSION_SECRET 已更新
 echo.
 
