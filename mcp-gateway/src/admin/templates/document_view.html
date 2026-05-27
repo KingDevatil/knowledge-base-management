@@ -274,8 +274,10 @@
     </div>
 </div>
 
-<!-- Share Panel -->
-<div id="share-panel" class="hidden border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-6 py-4">
+<!-- Share backdrop -->
+<div id="share-backdrop" class="hidden fixed inset-0 z-40 bg-black/20 backdrop-blur-sm" onclick="toggleSharePanel()"></div>
+<!-- Share Panel (fixed overlay) -->
+<div id="share-panel" class="hidden fixed top-20 right-6 z-50 w-160 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl px-6 py-4" style="max-width:640px;">
     <div class="flex items-center justify-between mb-3">
         <h3 class="text-sm font-semibold text-slate-900 dark:text-white flex items-center gap-2">
             <i data-lucide="share-2" class="w-4 h-4 text-indigo-500"></i>
@@ -309,7 +311,9 @@
 <script>
 function toggleSharePanel() {
     const panel = document.getElementById('share-panel');
+    const backdrop = document.getElementById('share-backdrop');
     panel.classList.toggle('hidden');
+    backdrop.classList.toggle('hidden');
     if (!panel.classList.contains('hidden')) {
         loadShares();
     }
