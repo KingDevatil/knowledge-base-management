@@ -65,6 +65,12 @@ async def share_view(request: Request, token: str):
     except Exception:
         content = ""
 
+    # 预处理：段落后的列表前补空行（同 document_view）
+    content = re.sub(
+        r'^(?![ \t]*[-*+]\s)([^#\n>\[].*)\n(?=\d+\.\s+|[-*+]\s+)',
+        r'\1\n\n',
+        content, flags=re.MULTILINE,
+    )
     html_content = markdown.markdown(content, extensions=[
         "extra", "codehilite", "sane_lists", "toc", "admonition",
     ]) if content else ""
