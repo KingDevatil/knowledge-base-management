@@ -21,37 +21,72 @@
 
 ## 架构
 
-```
-                                  用户端
-    ┌─────────────────┐     ┌─────────────────┐
-    │   用户A Agent    │     │   用户B Agent    │
-    │  (Cursor/Claude) │     │  (Cursor/Claude) │
-    └────────┬────────┘     └────────┬────────┘
-             │                       │
-             │   MCP SSE + X-API-Key  │
-             ▼                       ▼
-    ┌──────────────────────────────────────────────────────────────────┐
-    │                    公司服务器                                      │
-    │  ┌───────────────────────────────────────────────────────────┐  │
-    │  │  Nginx (自动替换域名)                                       │  │
-    │  │  外网 HTTPS → 443 | 内网 HTTP → 80                        │  │
-    │  └──────────────────────┬────────────────────────────────────┘  │
-    │                         │                                       │
-    │  ┌──────────────────────┴────────────────────────────────────┐  │
-    │  │  MCP Gateway (FastAPI + mcp SDK)                          │  │
-    │  │  CORS 白名单: 外网域名 + 内网 IP 自动匹配                    │  │
-    │  └──────────────────────┬────────────────────────────────────┘  │
-    │                         │                                       │
-    │  ┌──────────────────────┴────────────────────────────────────┐  │
-    │  │  中央知识库引擎                                             │  │
-    │  │  Chroma (向量数据库) — 单 collection，全公司共享             │  │
-    │  └──────────────────────┬────────────────────────────────────┘  │
-    │                         │                                       │
-    │  ┌──────────────────────┴────────────────────────────────────┐  │
-    │  │  基础设施层                                                 │  │
-    │  │  Redis (锁 + 缓存) | Ollama + bge-m3 | MinIO (对象存储)     │  │
-    │  └────────────────────────────────────────────────────────────┘  │
-    └──────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TB
+    %% 样式定义
+    classDef client fill:#dbeafe,stroke:#3b82f6,stroke-width:2px
+    classDef proxy fill:#fef3c7,stroke:#f59e0b,stroke-width:2px
+    classDef gateway fill:#d1fae5,stroke:#10b981,stroke-width:2px
+    classDef service fill:#ede9fe,stroke:#8b5cf6,stroke-width:2px
+    classDef data fill:#fce7f3,stroke:#ec4899,stroke-width:2px
+    classDef deprecated stroke-dasharray: 5 5
+
+    subgraph 用户端[" "]
+        A1[AI Agent<br/>Cursor / Claude / Kimi Code]:::client
+        A2[管理员浏览器]:::client
+    end
+
+    subgraph 接入层[" "]
+        N1["Nginx<br/>HTTPS 443 / HTTP 80"]:::proxy
+    end
+
+    subgraph 网关层["FastAPI + MCP SDK"]
+        direction TB
+        G1["📡 /mcp<br/>StreamableHTTP"]:::gateway
+        G2["📡 /sse<br/>SSE 兼容"]:::gateway
+        G3["🔌 /api/*<br/>REST API"]:::gateway
+        G4["🖥️ /admin/*<br/>Web 管理后台"]:::gateway
+        MW["中间件层<br/>CORS · Session · RateLimit · 认证"]:::gateway
+    end
+
+    subgraph 服务层[" "]
+        S1["🔧 MCP 工具集<br/>server.py / tools.py / tools_reader.py"]:::service
+        S2["📖 知识库引擎<br/>knowledge_base.py"]:::service
+        S3["📄 文档处理<br/>chunker.py · embedding.py"]:::service
+        S4["🔐 双因子认证<br/>auth.py · admin_auth.py"]:::service
+        S5["🔒 分布式锁<br/>lock.py · Redis Lua"]:::service
+        S6["💾 存储服务<br/>source_store.py · local_store.py"]:::service
+        S7["📂 目录管理<br/>directory_store.py · directory_tree.py"]:::service
+        S8["📦 备份导出<br/>backup_sources.py"]:::service
+    end
+
+    subgraph 数据层[" "]
+        D1[("🧠 Chroma<br/>向量数据库")]:::data
+        D2[("⚡ Redis<br/>锁 + 缓存")]:::data
+        D3[("🤖 Ollama + bge-m3<br/>Embedding 服务")]:::data
+        D4[("🗄️ MinIO<br/>对象存储")]:::data
+        D5[("📁 本地文件系统<br/>降级存储")]:::data
+    end
+
+    subgraph 配置与数据[" "]
+        C1["📋 kbdata/config/<br/>api_keys.json<br/>admin_accounts.json<br/>directories.json"]
+    end
+
+    %% 连接
+    A1 -- "MCP (SSE / StreamableHTTP)<br/>X-API-Key 认证" --> N1
+    A2 -- "HTTPS Session 登录" --> N1
+    N1 --> G1 & G2 & G3 & G4
+    G1 & G2 & G3 --> MW
+    G4 --> MW
+    MW --> S1 & S2 & S3 & S4 & S5 & S6 & S7 & S8
+    S1 --> S2
+    S2 --- S3
+    S3 --> D1 & D3
+    S5 --> D2
+    S6 --> D4
+    S6 -..-> D5
+    S7 --> C1
+    S4 --> C1
 ```
 
 ---
@@ -530,14 +565,52 @@ Set-Service fdrespub -StartupType Automatic
 
 ### 检索流（高并发，无锁）
 
-```
-Agent → MCP Gateway → Embedding (Ollama) → Chroma 向量检索 → 返回结果
+```mermaid
+sequenceDiagram
+    participant Agent as AI Agent
+    participant GW as MCP Gateway
+    participant Auth as 认证层
+    participant Embed as Ollama Embedding
+    participant Vec as Chroma 向量库
+
+    Agent->>GW: search_knowledge(query, top_k, tags)
+    GW->>Auth: 校验 X-API-Key
+    Auth-->>GW: scope=read ✓
+    GW->>Embed: 计算查询向量
+    Embed-->>GW: query_vector
+    GW->>Vec: 向量相似度检索
+    Vec-->>GW: top_k 结果片段
+    GW-->>Agent: 结构化响应
 ```
 
 ### 写入流（分布式锁保护）
 
-```
-Agent/Web → Markdown 内容 → MinIO 保存源文件 → 切片 → Embedding → 获取 Redis 写锁 → Chroma 写入 → 释放锁
+```mermaid
+sequenceDiagram
+    participant Agent as Agent / Web
+    participant GW as MCP Gateway
+    participant Auth as 认证层
+    participant Store as MinIO 存储
+    participant Chunker as 切片引擎
+    participant Embed as Ollama Embedding
+    participant Lock as Redis 锁
+    participant Vec as Chroma 向量库
+
+    Agent->>GW: add_document(title, content, path)
+    GW->>Auth: 校验 X-API-Key
+    Auth-->>GW: scope=write ✓
+    GW->>Store: 保存 Markdown 源文件
+    Store-->>GW: source_path
+    GW->>Chunker: 切分文档
+    Chunker-->>GW: chunks[]
+    GW->>Embed: 批量计算向量
+    Embed-->>GW: vectors[]
+    GW->>Lock: 获取写入锁 (Redis Lua)
+    Lock-->>GW: lock_acquired ✓
+    GW->>Vec: 批量写入 (含文档标题)
+    Vec-->>GW: doc_id
+    GW->>Lock: 释放写入锁
+    GW-->>Agent: { doc_id, status: "ok" }
 ```
 
 ---
