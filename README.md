@@ -191,6 +191,12 @@ INTERNAL_DOMAIN=192.168.1.100
 CORS_ORIGINS=https://wiki.yourcompany.com,http://192.168.1.100
 ```
 
+#### 服务监听
+
+| 变量 | 默认值 | 必填 | 说明 |
+|------|--------|------|------|
+| `BIND_HOST` | `127.0.0.1` | 否 | Gateway 监听地址。`127.0.0.1` 仅本机访问；`0.0.0.0` 允许局域网其他设备访问（需配合防火墙）。Windows 本地开发可在 `.env` 中设为 `0.0.0.0` 以启用 mDNS 访问 |
+
 #### 后端服务
 
 | 变量 | 默认值 | 必填 | 说明 |
@@ -207,7 +213,8 @@ CORS_ORIGINS=https://wiki.yourcompany.com,http://192.168.1.100
 | 变量 | 默认值 | 必填 | 说明 |
 |------|--------|------|------|
 | `MINIO_ENDPOINT` | `minio:9000` | 否 | MinIO 服务地址 |
-| `MINIO_ROOT_USER` | `minioadmin` | 否 | MinIO 管理员用户名 |
+| `MINIO_ROOT_USER` | `minioadmin` | 否 | MinIO 容器管理员用户名（Docker compose 下自动映射，非 Docker 时用下方的 `MINIO_ACCESS_KEY`）|
+| `MINIO_ACCESS_KEY` | `minioadmin` | 否 | Gateway 连接 MinIO 的 Access Key（非 Docker 部署时直接生效） |
 | `MINIO_SECRET_KEY` | `minioadmin` | **是** | **MinIO 管理员密码。生产环境必须修改！** |
 | `MINIO_BUCKET` | `kb-sources` | 否 | 存储桶名称。源文件存放在此桶中 |
 | `MINIO_SECURE` | `false` | 否 | MinIO TLS 开关 |
@@ -305,12 +312,19 @@ minio --version                 # 确认已安装
 **启动服务：**
 
 ```powershell
-# 仅启动服务（前提：启动前确保 Memurai 服务已运行）
-.\start-dev.ps1
+# 1. 初始化配置（生成随机的 SESSION_SECRET）
+.\init-config.bat
 
-# 停止所有服务
-.\start-dev.ps1 -Stop
+# 2. 使用启动器一键启动
+.\kb_launcher.pyw
+
+# 或使用 PowerShell 脚本启动
+.\start-dev.ps1
 ```
+
+> **关于 .env 文件**：
+> - 本地开发建议复制 `.env.example.local` 为 `.env`（配置已预设 localhost 地址、DEBUG 模式、BIND_HOST=0.0.0.0 等）
+> - 首次运行 `init-config.bat` 会自动从模板创建 `.env` 并生成随机 `SESSION_SECRET`
 
 > **常见问题**：
 > - Memurai 安装后需重启终端（或刷新环境变量）才能被 `redis-cli` 识别
@@ -620,7 +634,9 @@ sequenceDiagram
 ```
 .
 ├── docker-compose.yml              # Docker 编排（服务 + 网络）
-├── .env.example                    # 环境变量模板（含完整注释）
+├── .env.example                    # 环境变量模板（Docker 部署用）
+├── .env.example.local              # 环境变量模板（本地开发用）
+├── init-config.bat                 # 初始化配置脚本（生成 SESSION_SECRET）
 ├── .env                            # 实际配置（由运维人员创建，不提交 git）
 ├── nginx/
 │   ├── nginx.conf.template         # Nginx 配置模板（envsubst 替换变量）
