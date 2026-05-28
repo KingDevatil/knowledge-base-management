@@ -158,6 +158,9 @@
                                     <a href="/admin/documents/{{ doc.doc_id }}/edit" class="action-btn p-2 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-50 dark:hover:bg-brand-500/10 transition-all" title="编辑">
                                         <i data-lucide="pencil" class="w-4 h-4"></i>
                                     </a>
+                                    <a href="/admin/documents/{{ doc.doc_id }}/download" class="action-btn p-2 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-50 dark:hover:bg-brand-500/10 transition-all" title="下载">
+                                        <i data-lucide="download" class="w-4 h-4"></i>
+                                    </a>
                                     <button hx-post="/admin/documents/{{ doc.doc_id }}/reindex"
                                             hx-confirm="确定重新切片文档「{{ doc.title }}」吗？"
                                             hx-target="closest tr"

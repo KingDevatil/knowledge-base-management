@@ -2,7 +2,7 @@
 import json
 import markdown
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Request, HTTPException, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
@@ -78,6 +78,26 @@ async def dashboard(request: Request, user: dict = Depends(require_admin)):
         "expired_soon_count": len(expired_soon), "total_key_count": len(api_keys),
         "today_search_count": today_search_count,
     })
+
+
+@page_router.get("/api/search-trend")
+async def api_search_trend(request: Request, user: dict = Depends(require_admin)):
+    """返回最近 24 小时的检索趋势数据（用于仪表盘图表）。"""
+    redis = getattr(request.app.state, "redis", None)
+    if not redis:
+        return JSONResponse({"hours": [], "counts": []})
+
+    now = datetime.now(timezone.utc)
+    hours = []
+    counts = []
+    for i in range(23, -1, -1):
+        dt = now - timedelta(hours=i)
+        key = f"stats:search:hourly:{dt.strftime('%Y-%m-%d:%H')}"
+        val = await redis.get(key)
+        hours.append(dt.strftime('%H:00'))
+        counts.append(int(val) if val else 0)
+
+    return JSONResponse({"hours": hours, "counts": counts})
 
 
 # ---------- 目录管理 (admin only) ----------

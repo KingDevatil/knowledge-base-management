@@ -4,13 +4,14 @@ import tempfile
 import zipfile
 import tarfile
 import shutil
+from urllib.parse import quote
 
 from fastapi import APIRouter, Request, Form, UploadFile, File, HTTPException, Depends
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, StreamingResponse
 
 from lock import WriteLockError
 from models import ReindexByPathRequest
-from .helpers import require_admin
+from .helpers import require_admin, get_current_user, check_path_access
 
 documents_router = APIRouter()
 
@@ -365,3 +366,56 @@ async def api_reindex_by_path(
         "success": True, "total": len(docs),
         "success_count": success_count, "results": results,
     })
+
+
+# ---------- 文档下载 (all authenticated users, path-filtered) ----------
+
+@documents_router.get("/documents/{doc_id}/download")
+async def document_download(
+    request: Request, doc_id: str, user: dict = Depends(get_current_user),
+):
+    """下载文档为 .md 文件。"""
+    import traceback
+    try:
+        kb = request.app.state.kb
+        source_store = request.app.state.source_store
+
+        chunks = await kb.get_document_chunks(doc_id)
+        if not chunks:
+            raise HTTPException(status_code=404, detail="文档不存在")
+
+        meta = chunks[0]["metadata"]
+        doc_path = meta.get("path", "")
+
+        # 路径权限检查
+        if not check_path_access(user, doc_path):
+            raise HTTPException(status_code=403, detail="无权访问此文档")
+
+        source_path = meta.get("source_path", "")
+        try:
+            if source_path:
+                content = source_store.get_source_by_full_path(source_path)
+            else:
+                content = source_store.get_source(doc_id, doc_path)
+        except Exception:
+            content = "\n\n".join(chunk.get("content", "") for chunk in chunks)
+
+        title = meta.get("title", doc_id)
+        filename = f"{title}.md"
+
+        return StreamingResponse(
+            iter([content]),
+            media_type="text/markdown; charset=utf-8",
+            headers={
+                "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}",
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        from logger import get_logger
+        get_logger().exception(f"Document download failed for {doc_id}")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"下载失败: {type(e).__name__}: {e}"},
+        )

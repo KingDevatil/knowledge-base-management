@@ -108,9 +108,13 @@
             <div class="mt-6 pt-6 border-t border-slate-100 dark:border-slate-800">
                 <div class="flex items-center justify-between mb-4">
                     <h3 class="text-sm font-medium text-slate-700 dark:text-slate-300">API 请求趋势（24h）</h3>
+                    <div id="trend-summary" class="text-xs text-slate-400"></div>
                 </div>
-                <div class="flex items-center justify-center h-24 text-sm text-slate-400 dark:text-slate-500 bg-slate-50 dark:bg-slate-800/30 rounded-xl">
-                    暂无数据，上传文档后即可查看
+                <div class="relative">
+                    <canvas id="trend-chart" class="w-full h-32"></canvas>
+                    <div id="trend-empty" class="absolute inset-0 flex items-center justify-center text-sm text-slate-400 dark:text-slate-500 bg-slate-50/80 dark:bg-slate-800/30 rounded-xl pointer-events-none hidden">
+                        暂无检索数据
+                    </div>
                 </div>
             </div>
         </div>
@@ -155,4 +159,104 @@
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<style>
+    #trend-chart-container { height: 140px; }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let trendChartInstance = null;
+
+function loadTrendChart() {
+    fetch('/admin/api/search-trend')
+        .then(r => r.json())
+        .then(data => {
+            const isEmpty = !data.counts || data.counts.every(c => c === 0);
+            document.getElementById('trend-empty').classList.toggle('hidden', !isEmpty);
+            document.getElementById('trend-summary').textContent = '';
+
+            if (isEmpty) return;
+            if (typeof Chart === 'undefined') return;
+
+            const total = data.counts.reduce((a, b) => a + b, 0);
+            const maxVal = Math.max(...data.counts);
+            document.getElementById('trend-summary').textContent = `24h 共 ${total} 次 · 峰值 ${maxVal} 次`;
+
+            if (trendChartInstance) {
+                trendChartInstance.destroy();
+                trendChartInstance = null;
+            }
+
+            const isDark = document.documentElement.classList.contains('dark');
+            const gridColor = isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.06)';
+            const tickColor = isDark ? '#94a3b8' : '#64748b';
+
+            const ctx = document.getElementById('trend-chart').getContext('2d');
+            const gradient = ctx.createLinearGradient(0, 0, 0, 140);
+            gradient.addColorStop(0, 'rgba(99, 102, 241, 0.5)');
+            gradient.addColorStop(1, 'rgba(99, 102, 241, 0.05)');
+
+            trendChartInstance = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: data.hours,
+                    datasets: [{
+                        label: '请求数',
+                        data: data.counts,
+                        backgroundColor: gradient,
+                        borderColor: '#818cf8',
+                        borderWidth: 1,
+                        borderRadius: 3,
+                        borderSkipped: false,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: { duration: 600 },
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: {
+                            grid: { display: false },
+                            ticks: {
+                                color: tickColor,
+                                maxTicksLimit: 8,
+                                font: { size: 10 }
+                            }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            grid: { color: gridColor },
+                            ticks: {
+                                color: tickColor,
+                                font: { size: 10 },
+                                precision: 0
+                            }
+                        }
+                    }
+                }
+            });
+        })
+        .catch(() => {
+            document.getElementById('trend-empty').classList.remove('hidden');
+            document.getElementById('trend-empty').textContent = '加载失败';
+        });
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    setTimeout(loadTrendChart, 100);
+});
+
+// 主题切换时重建图表
+const _origToggle = window.toggleTheme;
+window.toggleTheme = function() {
+    _origToggle();
+    setTimeout(loadTrendChart, 200);
+};
+</script>
 {% endblock %}

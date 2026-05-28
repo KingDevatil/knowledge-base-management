@@ -61,11 +61,18 @@ class KnowledgeToolsReader:
         # 异步记录检索次数（REST API 和 MCP 共享此计数）
         if self.redis:
             try:
-                today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                now = datetime.now(timezone.utc)
+                today = now.strftime("%Y-%m-%d")
                 key = f"stats:search:{today}"
                 count = await self.redis.incr(key)
                 if count == 1:
                     await self.redis.expire(key, 86400 * 90)
+
+                # 小时级统计（用于趋势图）
+                hourly_key = f"stats:search:hourly:{now.strftime('%Y-%m-%d:%H')}"
+                hourly_count = await self.redis.incr(hourly_key)
+                if hourly_count == 1:
+                    await self.redis.expire(hourly_key, 86400 * 8)
             except Exception as e:
                 logger.warning(f"Failed to record search stats in Redis: {e}")
 
