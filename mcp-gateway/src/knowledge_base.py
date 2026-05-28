@@ -229,7 +229,7 @@ class KnowledgeBase:
             doc_list = [
                 d for d in doc_list
                 if tag_set & set(
-                    d.get("tags", "").split(",") if isinstance(d.get("tags"), str) else []
+                    d.get("tags", "").replace("，", ",").split(",") if isinstance(d.get("tags"), str) else []
                 )
             ]
 

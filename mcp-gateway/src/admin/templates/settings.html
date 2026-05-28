@@ -79,6 +79,63 @@
             </div>
         </div>
 
+        <!-- 知识图谱配置 -->
+        <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden p-5">
+            <h2 class="text-base font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
+                <div class="w-8 h-8 rounded-lg bg-fuchsia-100 dark:bg-fuchsia-500/10 flex items-center justify-center">
+                    <i data-lucide="network" class="w-4 h-4 text-fuchsia-600 dark:text-fuchsia-400"></i>
+                </div>
+                知识图谱配置
+            </h2>
+            <div class="space-y-4">
+                <p class="text-sm text-slate-500 dark:text-slate-400">控制知识图谱构建时的语义相似度阈值，关闭后仅基于标签和目录结构建图。</p>
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                        语义相似度阈值：<span id="threshold-value" class="text-brand-600 dark:text-brand-400 font-bold">{{ graph_semantic_threshold }}</span>
+                    </label>
+                    <input type="range" id="semantic-threshold" name="semantic_threshold"
+                        min="0.0" max="0.9" step="0.05"
+                        value="{{ graph_semantic_threshold }}"
+                        oninput="document.getElementById('threshold-value').textContent = parseFloat(this.value).toFixed(2)"
+                        class="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-brand-600">
+                    <div class="relative text-xs text-slate-400 mt-1 h-4">
+                        <span style="position:absolute;left:0">关闭 (0.0)</span>
+                        <span style="position:absolute;left:55.6%;transform:translateX(-50%)">推荐 (0.50)</span>
+                        <span style="position:absolute;right:0">严格 (0.90)</span>
+                    </div>
+                </div>
+                <button type="button" onclick="saveGraphSettings()"
+                    class="px-4 py-2 bg-brand-600 hover:bg-brand-700 disabled:bg-brand-400 text-white text-sm font-medium rounded-xl transition-all cursor-pointer disabled:cursor-not-allowed">
+                    保存设置
+                </button>
+                <span id="graph-settings-msg" class="text-sm ml-2"></span>
+            </div>
+        </div>
+
+        <script>
+        async function saveGraphSettings() {
+            const btn = event.currentTarget;
+            const msg = document.getElementById('graph-settings-msg');
+            btn.disabled = true;
+            const threshold = document.getElementById('semantic-threshold').value;
+            try {
+                const resp = await fetch('/admin/api/save-graph-settings', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({semantic_threshold: parseFloat(threshold)}),
+                });
+                const result = await resp.json();
+                msg.textContent = result.success ? '已保存 ✓' : '保存失败: ' + (result.error || '');
+                msg.className = result.success ? 'text-sm text-emerald-600 ml-2' : 'text-sm text-red-600 ml-2';
+            } catch (err) {
+                msg.textContent = '请求失败';
+                msg.className = 'text-sm text-red-600 ml-2';
+            }
+            setTimeout(() => { msg.textContent = ''; }, 3000);
+            btn.disabled = false;
+        }
+        </script>
+
         <!-- 备份与导出 -->
         <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden p-5">
             <h2 class="text-base font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">

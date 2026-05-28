@@ -1,0 +1,428 @@
+{% extends "base.html" %}
+
+{% block title %}知识图谱 - 中央知识库{% endblock %}
+
+{% block content %}
+<header class="glass-header sticky top-0 z-20 border-b border-slate-200/80 dark:border-slate-800/80 px-8 py-4">
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-xl font-bold text-slate-900 dark:text-white">知识图谱</h1>
+            <p class="text-sm text-slate-500 dark:text-slate-400 mt-0.5">文档关系可视化图谱</p>
+        </div>
+        <div class="flex items-center gap-3">
+            {% if admin.role in ('super_admin', 'admin') %}
+            <button id="rebuild-btn" onclick="rebuildGraph()"
+                    class="inline-flex items-center gap-2 px-4 py-2 bg-brand-600 hover:bg-brand-700 disabled:bg-brand-400 text-white text-sm font-medium rounded-xl transition-all cursor-pointer disabled:cursor-not-allowed">
+                <i data-lucide="refresh-cw" class="w-4 h-4" id="rebuild-icon"></i>
+                <span id="rebuild-text">重建图谱</span>
+            </button>
+            {% endif %}
+        </div>
+    </div>
+</header>
+
+<div class="px-8 py-6 space-y-6">
+    <!-- 统计卡片 -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4" id="graph-stats">
+        <div class="stat-card bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-4">
+            <div class="flex items-center gap-3">
+                <div class="w-9 h-9 rounded-xl bg-brand-50 dark:bg-brand-500/10 flex items-center justify-center">
+                    <i data-lucide="circle" class="w-4 h-4 text-brand-600 dark:text-brand-400"></i>
+                </div>
+                <div>
+                    <p class="text-xs text-slate-500 dark:text-slate-400">文档节点</p>
+                    <p class="text-2xl font-bold text-slate-900 dark:text-white" id="stat-nodes">
+                        {{ graph_stats.nodes if graph_stats else '-' }}
+                    </p>
+                </div>
+            </div>
+        </div>
+        <div class="stat-card bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-4">
+            <div class="flex items-center gap-3">
+                <div class="w-9 h-9 rounded-xl bg-cyan-50 dark:bg-cyan-500/10 flex items-center justify-center">
+                    <i data-lucide="git-branch" class="w-4 h-4 text-cyan-600 dark:text-cyan-400"></i>
+                </div>
+                <div>
+                    <p class="text-xs text-slate-500 dark:text-slate-400">关联边</p>
+                    <p class="text-2xl font-bold text-slate-900 dark:text-white" id="stat-edges">
+                        {{ graph_stats.edges if graph_stats else '-' }}
+                    </p>
+                </div>
+            </div>
+        </div>
+        <div class="stat-card bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-4">
+            <div class="flex items-center gap-3">
+                <div class="w-9 h-9 rounded-xl bg-purple-50 dark:bg-purple-500/10 flex items-center justify-center">
+                    <i data-lucide="layers" class="w-4 h-4 text-purple-600 dark:text-purple-400"></i>
+                </div>
+                <div>
+                    <p class="text-xs text-slate-500 dark:text-slate-400">语义阈值</p>
+                    <p class="text-2xl font-bold text-slate-900 dark:text-white">{{ "%.2f"|format(semantic_threshold) }}</p>
+                </div>
+            </div>
+        </div>
+        <div class="stat-card bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-4">
+            <div class="flex items-center gap-3">
+                <div class="w-9 h-9 rounded-xl {% if graph_exists %}bg-emerald-50 dark:bg-emerald-500/10{% else %}bg-slate-50 dark:bg-slate-800{% endif %} flex items-center justify-center">
+                    <i data-lucide="activity" class="w-4 h-4 {% if graph_exists %}text-emerald-600 dark:text-emerald-400{% else %}text-slate-400{% endif %}"></i>
+                </div>
+                <div>
+                    <p class="text-xs text-slate-500 dark:text-slate-400">状态</p>
+                    <p id="stat-status" class="text-2xl font-bold {% if graph_exists %}text-emerald-600{% else %}text-slate-400{% endif %}">
+                        {{ '已构建' if graph_exists else '未构建' }}
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% if graph_exists and graph_data %}
+    <!-- 分组图例 + 筛选复选框 -->
+    <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-4">
+        <div class="flex items-center justify-between mb-3">
+            <h2 class="text-sm font-semibold text-slate-700 dark:text-slate-300">文档分组</h2>
+            <div class="flex gap-2">
+                <button onclick="selectAllGroups(true)" class="text-xs text-brand-600 dark:text-brand-400 hover:underline">全选</button>
+                <span class="text-xs text-slate-300 dark:text-slate-600">|</span>
+                <button onclick="selectAllGroups(false)" class="text-xs text-slate-500 hover:underline">取消全选</button>
+            </div>
+        </div>
+        <div class="flex flex-wrap gap-3" id="group-checkboxes"></div>
+    </div>
+
+    <!-- 图谱画布 -->
+    <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden relative">
+        <div id="graph-toolbar" class="flex flex-wrap items-center gap-3 px-4 py-3 border-b border-slate-100 dark:border-slate-800">
+            <div class="relative flex-1 max-w-xs">
+                <i data-lucide="search" class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"></i>
+                <input type="text" id="node-search" placeholder="搜索文档..."
+                    class="w-full pl-9 pr-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:border-brand-400 dark:focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10 outline-none transition-all">
+            </div>
+            <button onclick="resetView()"
+                class="px-3 py-2 text-sm text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all">
+                重置视图
+            </button>
+        </div>
+        <div id="graph-canvas" class="w-full h-[600px] md:h-[700px] bg-slate-50/50 dark:bg-slate-950/50"></div>
+
+        <!-- 节点详情弹窗 -->
+        <div id="node-detail" class="hidden absolute top-20 right-4 w-80 max-h-[500px] overflow-y-auto bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-xl text-sm" style="z-index:100">
+            <div class="flex justify-between items-start p-4 pb-2 border-b border-slate-100 dark:border-slate-700 sticky top-0 bg-white dark:bg-slate-800 rounded-t-2xl">
+                <div class="min-w-0 flex-1">
+                    <h3 id="detail-title" class="font-semibold text-slate-900 dark:text-white text-base truncate"></h3>
+                    <p id="detail-subtitle" class="text-xs text-slate-400 mt-0.5 truncate"></p>
+                </div>
+                <button onclick="closeDetail()" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 p-1 ml-2 flex-shrink-0">
+                    <i data-lucide="x" class="w-4 h-4"></i>
+                </button>
+            </div>
+            <div class="p-4 space-y-3">
+                <div class="flex flex-wrap gap-2" id="detail-tags"></div>
+                <div class="flex items-center gap-2 text-xs">
+                    <span id="detail-community-badge" class="px-2 py-0.5 rounded-full text-white font-medium"></span>
+                    <span id="detail-degree" class="text-slate-400"></span>
+                </div>
+
+                <div class="border-t border-slate-100 dark:border-slate-700 pt-3">
+                    <p class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">关联文档</p>
+                    <div id="detail-relations" class="space-y-1.5 max-h-60 overflow-y-auto"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% else %}
+    <!-- 空状态 -->
+    <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 flex items-center justify-center h-64">
+        <div class="text-center">
+            <i data-lucide="network" class="w-16 h-16 mx-auto mb-4 text-slate-300 dark:text-slate-600"></i>
+            <p class="text-lg font-medium text-slate-500 dark:text-slate-400">尚未构建知识图谱</p>
+            {% if admin.role in ('super_admin', 'admin') %}
+            <p class="text-sm text-slate-400 dark:text-slate-500 mt-1">点击右上角"重建图谱"按钮开始构建</p>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Toast -->
+<div id="build-toast" class="fixed bottom-4 right-4 z-50 hidden">
+    <div class="px-4 py-3 rounded-xl shadow-lg border border-slate-200 dark:border-slate-700
+                bg-white dark:bg-slate-800 text-sm text-slate-700 dark:text-slate-300
+                flex items-center gap-3 backdrop-blur-sm">
+        <div class="w-4 h-4 border-2 border-brand-600 border-t-transparent rounded-full animate-spin"></div>
+        <span id="build-message">正在构建图谱...</span>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_head %}
+{% if graph_exists and graph_data %}
+<script src="https://unpkg.com/vis-network@9.1.6/standalone/umd/vis-network.min.js"></script>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+{% if graph_exists and graph_data %}
+<script>
+// ── 颜色系统 ──
+const GROUP_COLORS = [
+    '#6366f1', '#06b6d4', '#10b981', '#f59e0b', '#ef4444',
+    '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#84cc16'
+];
+const RELATION_LABELS = {
+    'co_tag': '共享标签',
+    'semantically_similar': '语义相似',
+};
+const RELATION_ICONS = {
+    'co_tag': '🏷️',
+    'semantically_similar': '🔗',
+};
+
+// ── 数据 ──
+const GRAPH_DATA = {{ graph_data|tojson }};
+const nodeMap = {};       // id → node data
+const nodeLabels = {};    // id → label
+const groupInfo = {};     // group_id → {label, color, nodes: [id]}
+const edgeIndex = {};     // node_id → [{target, relation, confidence}]
+
+// 构建索引
+GRAPH_DATA.nodes.forEach(n => {
+    nodeMap[n.id] = n;
+    nodeLabels[n.id] = n.label;
+    const cid = n.community;
+    if (cid !== undefined && cid >= 0) {
+        const label = n.community_label || ('Group ' + cid);
+        if (!groupInfo[cid]) groupInfo[cid] = {label, color: GROUP_COLORS[cid % GROUP_COLORS.length], nodes: []};
+        groupInfo[cid].nodes.push(n.id);
+    }
+});
+
+// 边索引
+const linkList = GRAPH_DATA.links || GRAPH_DATA.edges || [];
+linkList.forEach(l => {
+    const src = l.source, tgt = l.target, rel = l.relation, conf = l.confidence;
+    if (!edgeIndex[src]) edgeIndex[src] = [];
+    if (!edgeIndex[tgt]) edgeIndex[tgt] = [];
+    edgeIndex[src].push({target: tgt, relation: rel, confidence: conf, direction: 'out'});
+    edgeIndex[tgt].push({target: src, relation: rel, confidence: conf, direction: 'in'});
+});
+
+// 节点度数
+const degree = {};
+linkList.forEach(l => {
+    degree[l.source] = (degree[l.source] || 0) + 1;
+    degree[l.target] = (degree[l.target] || 0) + 1;
+});
+
+// ── vis-network ──
+const visNodes = GRAPH_DATA.nodes.map(n => {
+    const cid = n.community;
+    const deg = degree[n.id] || 0;
+    const maxDeg = Math.max(...Object.values(degree), 1);
+    const size = 18 + 22 * (deg / maxDeg);
+    const color = GROUP_COLORS[cid % GROUP_COLORS.length] || '#94a3b8';
+    return {
+        id: n.id,
+        label: n.label,
+        size: Math.max(size, 20),
+        color: { background: color, border: color, highlight: { background: color, border: '#ffffff' } },
+        borderWidth: 2, borderWidthSelected: 3,
+        font: { color: '#1e293b', size: 13, face: 'Inter, Noto Sans SC, sans-serif' },
+        shape: 'dot', group: cid,
+    };
+});
+const visEdges = linkList.map(l => ({
+    from: l.source, to: l.target,
+    color: { color: l.confidence === 'EXTRACTED' ? '#94a3b8' : '#cbd5e1', highlight: '#6366f1', opacity: l.confidence === 'EXTRACTED' ? 0.6 : 0.35 },
+    dashes: l.confidence !== 'EXTRACTED',
+    width: l.confidence === 'EXTRACTED' ? 1.5 : 1,
+    title: RELATION_LABELS[l.relation] || l.relation,
+}));
+
+const container = document.getElementById('graph-canvas');
+const dataset = {
+    nodes: new vis.DataSet(visNodes),
+    edges: new vis.DataSet(visEdges)
+};
+const network = new vis.Network(container, dataset, {
+    nodes: { borderWidth: 2 },
+    edges: { smooth: { type: 'continuous' } },
+    physics: {
+        solver: 'forceAtlas2Based',
+        forceAtlas2Based: { gravitationalConstant: -80, centralGravity: 0.01, springLength: 200, springConstant: 0.02, damping: 0.4 },
+        stabilization: { iterations: 200 }
+    },
+    interaction: { hover: true, tooltipDelay: 200, keyboard: true },
+});
+
+// ── 深色模式 ──
+function applyTheme() {
+    const isDark = document.documentElement.classList.contains('dark');
+    const fontColor = isDark ? '#e2e8f0' : '#1e293b';
+    container.style.background = isDark ? '#0f172a' : 'rgba(248,250,252,0.5)';
+    visNodes.forEach(n => { n.font.color = fontColor; });
+    dataset.nodes.update(visNodes);
+}
+applyTheme();
+new MutationObserver(applyTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+
+// ── 分组复选框筛选 ──
+const groupCheckboxes = {};
+const checkboxContainer = document.getElementById('group-checkboxes');
+
+Object.entries(groupInfo).forEach(([gid, info]) => {
+    const idx = parseInt(gid) % GROUP_COLORS.length;
+    const label = document.createElement('label');
+    label.className = 'flex items-center gap-2 px-3 py-1.5 rounded-xl text-sm cursor-pointer transition-all hover:bg-slate-50 dark:hover:bg-slate-800 select-none';
+    label.innerHTML = `<input type="checkbox" checked data-group="${gid}"
+        class="w-4 h-4 rounded border-slate-300 dark:border-slate-600 text-brand-600 focus:ring-brand-500 cursor-pointer">
+        <span class="w-2.5 h-2.5 rounded-full" style="background:${GROUP_COLORS[idx]}"></span>
+        <span class="text-slate-700 dark:text-slate-300">${info.label}</span>
+        <span class="text-xs text-slate-400">${info.nodes.length}篇</span>`;
+    const cb = label.querySelector('input');
+    cb.addEventListener('change', applyGroupFilter);
+    groupCheckboxes[gid] = cb;
+    checkboxContainer.appendChild(label);
+});
+
+function applyGroupFilter() {
+    const selected = new Set(Object.entries(groupCheckboxes).filter(([_, cb]) => cb.checked).map(([gid]) => gid));
+    GRAPH_DATA.nodes.forEach(n => {
+        const visible = selected.has(String(n.community));
+        const existing = dataset.nodes.get(n.id);
+        if (existing) dataset.nodes.update({...existing, opacity: visible ? 1.0 : 0.08});
+    });
+}
+
+function selectAllGroups(select) {
+    Object.values(groupCheckboxes).forEach(cb => { cb.checked = select; });
+    applyGroupFilter();
+}
+
+// ── 搜索过滤 ──
+document.getElementById('node-search').addEventListener('input', function() {
+    const q = this.value.trim().toLowerCase();
+    GRAPH_DATA.nodes.forEach(n => {
+        const match = !q || n.label.toLowerCase().includes(q) || (n.tags && n.tags.toLowerCase().includes(q));
+        const existing = dataset.nodes.get(n.id);
+        if (existing) dataset.nodes.update({...existing, opacity: match ? 1.0 : 0.08});
+    });
+});
+
+// ── 节点详情 ──
+network.on('click', function(params) {
+    if (params.nodes.length !== 1) { closeDetail(); return; }
+    const nid = params.nodes[0];
+    const n = nodeMap[nid];
+    if (!n) return;
+
+    const cid = n.community;
+    const gLabel = groupInfo[cid] ? groupInfo[cid].label : '其他';
+    const color = GROUP_COLORS[cid % GROUP_COLORS.length] || '#94a3b8';
+
+    document.getElementById('detail-title').textContent = n.label;
+    document.getElementById('detail-subtitle').textContent = n.source_file || '';
+    document.getElementById('detail-tags').innerHTML = (n.tags || '').split(',').filter(Boolean).map(t =>
+        `<span class="px-2 py-0.5 rounded-full text-xs bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300">${t.trim()}</span>`
+    ).join('') || '<span class="text-slate-400 text-xs">无标签</span>';
+    document.getElementById('detail-community-badge').textContent = gLabel;
+    document.getElementById('detail-community-badge').style.background = color;
+    document.getElementById('detail-degree').textContent = (degree[nid] || 0) + ' 条连接';
+
+    // 关联文档列表
+    const rels = edgeIndex[nid] || [];
+    const relContainer = document.getElementById('detail-relations');
+    relContainer.innerHTML = '';
+
+    if (rels.length === 0) {
+        relContainer.innerHTML = '<p class="text-xs text-slate-400">无关联文档</p>';
+    } else {
+        // 按关系类型分组
+        const byRel = {};
+        rels.forEach(r => {
+            const key = r.relation;
+            if (!byRel[key]) byRel[key] = [];
+            byRel[key].push(r.target);
+        });
+
+        Object.entries(byRel).forEach(([rel, targets]) => {
+            const icon = RELATION_ICONS[rel] || '•';
+            const label = RELATION_LABELS[rel] || rel;
+            const section = document.createElement('div');
+            section.innerHTML = `<p class="text-xs text-slate-400 mb-1 mt-2 first:mt-0">${icon} ${label}（${targets.length}）</p>`;
+
+            targets.forEach(tid => {
+                const tNode = nodeMap[tid];
+                const tColor = GROUP_COLORS[(tNode ? tNode.community : 0) % GROUP_COLORS.length] || '#94a3b8';
+                const item = document.createElement('div');
+                item.className = 'flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700/50 cursor-pointer transition-all';
+                item.innerHTML = `<span class="w-2 h-2 rounded-full flex-shrink-0" style="background:${tColor}"></span>
+                    <span class="text-sm text-slate-700 dark:text-slate-300 truncate">${nodeLabels[tid] || tid}</span>`;
+                item.onclick = (e) => {
+                    e.stopPropagation();
+                    network.selectNodes([tid]);
+                    network.focus(tid, { scale: 1.5, animation: true });
+                    // Trigger detail update via network click simulation
+                    setTimeout(() => {
+                        const pos = network.getPositions([tid]);
+                        if (pos[tid]) network.emit('click', { nodes: [tid], pointer: { canvas: pos[tid] } });
+                    }, 400);
+                };
+                section.appendChild(item);
+            });
+            relContainer.appendChild(section);
+        });
+    }
+
+    document.getElementById('node-detail').classList.remove('hidden');
+});
+
+function closeDetail() {
+    document.getElementById('node-detail').classList.add('hidden');
+}
+// ── 重置视图 ──
+function resetView() {
+    network.fit({ animation: true });
+    document.getElementById('node-search').value = '';
+    selectAllGroups(true);
+    closeDetail();
+}
+
+// ── 重建图谱 ──
+async function rebuildGraph() {
+    const btn = document.getElementById('rebuild-btn');
+    const icon = document.getElementById('rebuild-icon');
+    const text = document.getElementById('rebuild-text');
+    const toast = document.getElementById('build-toast');
+    const msg = document.getElementById('build-message');
+
+    btn.disabled = true;
+    icon.classList.add('animate-spin');
+    text.textContent = '构建中…';
+    toast.classList.remove('hidden');
+
+    try {
+        const resp = await fetch('/admin/api/rebuild-graph', { method: 'POST' });
+        const result = await resp.json();
+        if (result.success) {
+            msg.textContent = result.message || '构建完成！';
+            showToast('图谱构建完成', 'success');
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            msg.textContent = '构建失败';
+            showToast('构建失败: ' + (result.error || '未知错误'), 'error');
+        }
+    } catch (err) {
+        msg.textContent = '请求失败';
+        showToast('请求失败: ' + err.message, 'error');
+    } finally {
+        setTimeout(() => { toast.classList.add('hidden'); }, 3000);
+        btn.disabled = false;
+        icon.classList.remove('animate-spin');
+        text.textContent = '重建图谱';
+    }
+}
+</script>
+{% endif %}
+{% endblock %}

@@ -28,7 +28,7 @@ async def api_search(
     api_key_auth = get_api_key_auth(request)
     await api_key_auth.authenticate(request, required_scope="read")
     tools = get_tools(request)
-    tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+    tag_list = [t.strip() for t in tags.replace("，", ",").split(",") if t.strip()] if tags else []
     result = await tools.search_knowledge(q, top_k, filter_tags=tag_list, filter_path=path)
     return JSONResponse(result)
 
@@ -77,7 +77,7 @@ async def api_list_documents(
     api_key_auth = get_api_key_auth(request)
     await api_key_auth.authenticate(request, required_scope="read")
     tools = get_tools(request)
-    tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+    tag_list = [t.strip() for t in tags.replace("，", ",").split(",") if t.strip()] if tags else []
     result = await tools.list_documents(tags=tag_list, path=path, limit=limit, offset=offset)
     return JSONResponse(result)
 

@@ -5,6 +5,7 @@ from mcp.server import Server
 from mcp.types import TextContent, Tool
 
 from config import get_settings
+from kb_graph import KnowledgeGraphBuilder
 from tools import KnowledgeTools
 
 
@@ -136,6 +137,20 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
                     "required": ["doc_id"],
                 },
             ),
+            Tool(
+                name="build_knowledge_graph",
+                description="构建知识图谱：分析文档关系（标签共享、目录结构、语义相似），生成交互式可视化图谱",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "semantic_threshold": {
+                            "type": "number",
+                            "default": 0.0,
+                            "description": "语义相似度阈值（0.0=关闭，0.7=推荐开启值）。开启后对所有文档计算向量相似度，超过阈值的文档对之间添加边。文档数较多时耗时较长。",
+                        },
+                    },
+                },
+            ),
         ]
 
     def _make_result(result: dict) -> list[TextContent]:
@@ -166,6 +181,9 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
         ),
         "delete_directory": lambda a, t: t.delete_directory(path=a.get("path", "")),
         "reindex_document": lambda a, t: t.reindex_document(doc_id=a.get("doc_id", "")),
+        "build_knowledge_graph": lambda a, t: KnowledgeGraphBuilder(
+            kb=t.kb, embedder=getattr(t, "embedder", None)
+        ).build(semantic_threshold=float(a.get("semantic_threshold", 0.0))),
     }
 
     @server.call_tool()

@@ -26,7 +26,7 @@ async def api_batch_upload(
     user: dict = Depends(require_admin),
 ):
     tools = request.app.state.tools
-    tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+    tag_list = [t.strip() for t in tags.replace("，", ",").split(",") if t.strip()]
     results = []
 
     for file in files:
@@ -101,7 +101,7 @@ async def api_upload_archive(
             return JSONResponse({"error": "压缩包内没有 .md 文件"}, status_code=400)
 
         tools = request.app.state.tools
-        tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+        tag_list = [t.strip() for t in tags.replace("，", ",").split(",") if t.strip()]
         results = []
         success = 0
 
@@ -215,7 +215,7 @@ async def upload_submit(
     user: dict = Depends(require_admin),
 ):
     tools = request.app.state.tools
-    tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+    tag_list = [t.strip() for t in tags.replace("，", ",").split(",") if t.strip()]
     target_path = path or existing_path
     results = []
 
@@ -252,7 +252,7 @@ async def document_save(
     user: dict = Depends(require_admin),
 ):
     tools = request.app.state.tools
-    tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+    tag_list = [t.strip() for t in tags.replace("，", ",").split(",") if t.strip()]
 
     if doc_id and doc_id != "new":
         try:

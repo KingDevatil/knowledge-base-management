@@ -174,7 +174,7 @@ class KnowledgeToolsReader:
 
         tags_raw = doc_info.get("tags", "")
         if isinstance(tags_raw, str) and tags_raw:
-            tags = [t.strip() for t in tags_raw.split(",") if t.strip()]
+            tags = [t.strip() for t in tags_raw.replace("，", ",").split(",") if t.strip()]
         elif isinstance(tags_raw, list):
             tags = tags_raw
         else:

@@ -1,4 +1,5 @@
 """Admin page routes (GET - returns HTML or JSON for UI rendering)."""
+import json
 import markdown
 import re
 from datetime import datetime, timezone
@@ -18,6 +19,7 @@ from .helpers import (templates, settings, get_current_user, require_admin,
 logger = get_logger()
 
 from admin_auth import is_admin_role
+from kb_graph import KnowledgeGraphBuilder
 
 page_router = APIRouter()
 
@@ -118,7 +120,7 @@ async def document_list(
     kb = request.app.state.kb
     limit = 20
     offset = (page - 1) * limit
-    tags = [t.strip() for t in tag.split(",") if t.strip()] if tag else None
+    tags = [t.strip() for t in tag.replace("，", ",").split(",") if t.strip()] if tag else None
 
     # 获取所有文档（目录树需要全量，搜索过滤在 Python 层完成）
     if is_admin_role(user["role"]):
@@ -215,7 +217,7 @@ async def document_view(request: Request, doc_id: str, user: dict = Depends(get_
     return templates.TemplateResponse(request, "document_view.html", {
         "request": request, "admin": user, "doc_id": doc_id,
         "title": meta.get("title", ""), "path": doc_path,
-        "tags": meta.get("tags", "").split(",") if isinstance(meta.get("tags"), str) else meta.get("tags", []),
+        "tags": meta.get("tags", "").replace("，", ",").split(",") if isinstance(meta.get("tags"), str) else meta.get("tags", []),
         "content": content, "html_content": html_content,
         "source_path": source_path, "chunk_count": len(chunks),
         "created_at": meta.get("created_at", ""), "updated_at": meta.get("updated_at", ""),
@@ -286,9 +288,132 @@ async def api_key_create_page(request: Request, user: dict = Depends(require_adm
 
 @page_router.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request, user: dict = Depends(require_admin)):
+    graph_semantic_threshold = 0.0
+    redis = getattr(request.app.state, "redis", None)
+    if redis:
+        try:
+            val = await redis.get("kb:config:graph:semantic_threshold")
+            if val is not None:
+                graph_semantic_threshold = float(val)
+        except Exception:
+            pass
     return templates.TemplateResponse(request, "settings.html", {
         "request": request, "admin": user, "settings": settings,
+        "graph_semantic_threshold": graph_semantic_threshold,
     })
+
+
+@page_router.post("/api/save-graph-settings")
+async def save_graph_settings(request: Request, user: dict = Depends(require_admin)):
+    """保存图谱设置到 Redis"""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"success": False, "error": "无效的 JSON"}, status_code=400)
+
+    redis = getattr(request.app.state, "redis", None)
+    if not redis:
+        return JSONResponse({"success": False, "error": "Redis 不可用"}, status_code=503)
+
+    threshold = body.get("semantic_threshold")
+    if threshold is not None:
+        try:
+            threshold = float(threshold)
+        except (ValueError, TypeError):
+            return JSONResponse({"success": False, "error": "无效的阈值，请输入数字"}, status_code=400)
+        threshold = max(0.0, min(1.0, threshold))
+        try:
+            await redis.set("kb:config:graph:semantic_threshold", str(threshold))
+        except Exception as e:
+            return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+
+    return JSONResponse({"success": True, "semantic_threshold": threshold})
+
+
+# ---------- 知识图谱 (all logged-in users) ----------
+
+@page_router.get("/graph", response_class=HTMLResponse)
+async def graph_page(request: Request, user: dict = Depends(get_current_user)):
+    """知识图谱可视化页面"""
+    kb = request.app.state.kb
+    embedder = getattr(request.app.state, "embedder", None)
+    builder = KnowledgeGraphBuilder(kb, embedder)
+
+    graph_exists = builder.graph_json_path.exists()
+    graph_data = None
+    graph_stats = None
+
+    if graph_exists:
+        try:
+            raw = json.loads(builder.graph_json_path.read_text(encoding="utf-8"))
+            nodes = raw.get("nodes", [])
+            links = raw.get("links", raw.get("edges", []))
+            graph_stats = {"nodes": len(nodes), "edges": len(links)}
+
+            # 合并社区标签
+            community_labels = {}
+            if builder.labels_path.exists():
+                try:
+                    community_labels = json.loads(builder.labels_path.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+            for n in nodes:
+                cid = str(n.get("community", ""))
+                if cid in community_labels:
+                    n["community_label"] = community_labels[cid]
+                else:
+                    n["community_label"] = f"分组 {cid}"
+
+            graph_data = raw
+        except Exception:
+            graph_exists = False
+
+    # 从 Redis 读取阈值
+    semantic_threshold = 0.0
+    redis = getattr(request.app.state, "redis", None)
+    if redis:
+        try:
+            val = await redis.get("kb:config:graph:semantic_threshold")
+            if val is not None:
+                semantic_threshold = float(val)
+        except Exception:
+            pass
+
+    return templates.TemplateResponse(request, "graph.html", {
+        "request": request, "admin": user,
+        "graph_exists": graph_exists,
+        "graph_stats": graph_stats,
+        "graph_data": graph_data,
+        "semantic_threshold": semantic_threshold,
+    })
+
+
+@page_router.post("/api/rebuild-graph")
+async def api_rebuild_graph(request: Request, user: dict = Depends(require_admin)):
+    """手动触发图谱重建（读取 Redis 中的阈值设置）"""
+    kb = request.app.state.kb
+    embedder = getattr(request.app.state, "embedder", None)
+    builder = KnowledgeGraphBuilder(kb, embedder)
+
+    # 从 Redis 读取阈值，支持 Query 参数覆盖
+    threshold = request.query_params.get("semantic_threshold")
+    if threshold is None:
+        redis = getattr(request.app.state, "redis", None)
+        if redis:
+            try:
+                val = await redis.get("kb:config:graph:semantic_threshold")
+                if val is not None:
+                    threshold = float(val)
+            except Exception:
+                pass
+    threshold = float(threshold) if threshold else 0.0
+
+    try:
+        result = await builder.build(semantic_threshold=threshold)
+        return JSONResponse(result)
+    except Exception as e:
+        logger.exception("Graph rebuild failed")
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
 
 
 # ---------- 账户管理 (all roles) ----------

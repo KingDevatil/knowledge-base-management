@@ -1,5 +1,6 @@
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import chromadb
 import redis.asyncio as redis
@@ -177,6 +178,11 @@ app.middleware("http")(csrf_middleware)
 static_dir = os.path.join(os.path.dirname(__file__), "admin", "static")
 if os.path.exists(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+# 知识图谱输出目录
+graph_dir = Path(settings.KBDATA_DIR or "kbdata") / "graph"
+graph_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/graph-assets", StaticFiles(directory=str(graph_dir)), name="graph-assets")
 
 
 # ---------- 依赖注入辅助 ----------

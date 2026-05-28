@@ -258,7 +258,7 @@ class KnowledgeTools(KnowledgeToolsReader):
         old_title = old_meta.get("title", "")
         old_tags_raw = old_meta.get("tags", "")
         old_tags = (
-            [t.strip() for t in old_tags_raw.split(",") if t.strip()]
+            [t.strip() for t in old_tags_raw.replace("，", ",").split(",") if t.strip()]
             if isinstance(old_tags_raw, str) and old_tags_raw
             else (old_tags_raw if isinstance(old_tags_raw, list) else [])
         )
@@ -387,7 +387,7 @@ class KnowledgeTools(KnowledgeToolsReader):
         path = meta.get("path", "")
         source_path = meta.get("source_path", "")
         tags = (
-            meta.get("tags", "").split(",")
+            meta.get("tags", "").replace("，", ",").split(",")
             if isinstance(meta.get("tags"), str)
             else (meta.get("tags") or [])
         )
