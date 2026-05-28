@@ -434,7 +434,33 @@ class KBLauncher:
                 width=width, anchor=tk.W,
             ).pack(side=tk.LEFT, padx=5, pady=6)
 
-        # Service rows (scrollable)
+        # 底部选项栏（先 pack，固定底部，不遮挡访问地址）
+        bottom_bar = tk.Frame(tab, bg=self.COLOR_BG)
+        bottom_bar.pack(side=tk.BOTTOM, fill=tk.X, padx=12, pady=(6, 4))
+        self.use_env_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            bottom_bar, text="使用 .env 文件配置（未勾选则使用启动器默认值）",
+            variable=self.use_env_var,
+            font=("微软雅黑", 10),
+            bg=self.COLOR_BG, fg=self.COLOR_TEXT,
+            selectcolor=self.COLOR_PANEL,
+            activebackground=self.COLOR_BG,
+            activeforeground=self.COLOR_TEXT,
+        ).pack(side=tk.LEFT)
+        # Gateway 专属：清除缓存并重启
+        self._restart_btn = tk.Button(
+            bottom_bar, text="清除缓存并重启",
+            font=("微软雅黑", 9),
+            bg="#e67e22", fg="white",
+            activebackground="#d35400",
+            relief=tk.FLAT, padx=8, pady=1,
+            command=lambda: self._restart_gateway_with_cache_clear(
+                next((s for s in SERVICES if s.name == "MCP Gateway"), None)
+            ),
+        )
+        self._restart_btn.pack(side=tk.LEFT, padx=(12, 2))
+
+        # Service rows (scrollable) — 占满剩余中上空间
         self.svc_canvas = tk.Canvas(tab, bg=self.COLOR_BG, highlightthickness=0)
         scrollbar = tk.Scrollbar(tab, orient=tk.VERTICAL, command=self.svc_canvas.yview)
         self.svc_frame = tk.Frame(self.svc_canvas, bg=self.COLOR_BG)
@@ -451,20 +477,6 @@ class KBLauncher:
         # Populate service rows
         for svc in SERVICES:
             self._add_service_row(svc)
-
-        # 底部选项
-        opt_frame = tk.Frame(tab, bg=self.COLOR_BG)
-        opt_frame.pack(fill=tk.X, padx=12, pady=(6, 4))
-        self.use_env_var = tk.BooleanVar(value=False)
-        tk.Checkbutton(
-            opt_frame, text="使用 .env 文件配置（未勾选则使用启动器默认值）",
-            variable=self.use_env_var,
-            font=("微软雅黑", 10),
-            bg=self.COLOR_BG, fg=self.COLOR_TEXT,
-            selectcolor=self.COLOR_PANEL,
-            activebackground=self.COLOR_BG,
-            activeforeground=self.COLOR_TEXT,
-        ).pack(side=tk.LEFT)
 
     def _add_service_row(self, svc: ServiceDef):
         """添加单个服务行"""
@@ -520,19 +532,6 @@ class KBLauncher:
         )
         stop_btn.pack(side=tk.LEFT, padx=2)
 
-        # Gateway 专属：清除缓存并重启
-        restart_btn = None
-        if svc.name == "MCP Gateway":
-            restart_btn = tk.Button(
-                action_frame, text="清除缓存并重启",
-                font=("微软雅黑", 9),
-                bg="#e67e22", fg="white",
-                activebackground="#d35400",
-                relief=tk.FLAT, padx=8, pady=1,
-                command=lambda s=svc: self._restart_gateway_with_cache_clear(s),
-            )
-            restart_btn.pack(side=tk.LEFT, padx=2)
-
         # Access URLs
         url_text = "\n".join(svc.access_urls) if svc.access_urls else "-"
         url_label = tk.Label(
@@ -548,7 +547,6 @@ class KBLauncher:
             "url": url_label,
             "start_btn": start_btn,
             "stop_btn": stop_btn,
-            "restart_btn": restart_btn,
         }
 
     def _build_access_tab(self):
