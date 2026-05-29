@@ -10,7 +10,7 @@
             <p class="text-sm text-slate-500 dark:text-slate-400 mt-0.5">文档关系可视化图谱</p>
         </div>
         <div class="flex items-center gap-3">
-            {% if admin.role in ('super_admin', 'admin') %}
+            {% if admin.role in ('super_admin', 'admin', 'user') %}
             <button id="rebuild-btn" onclick="rebuildGraph()"
                     class="inline-flex items-center gap-2 px-4 py-2 bg-brand-600 hover:bg-brand-700 disabled:bg-brand-400 text-white text-sm font-medium rounded-xl transition-all cursor-pointer disabled:cursor-not-allowed">
                 <i data-lucide="refresh-cw" class="w-4 h-4" id="rebuild-icon"></i>
@@ -136,7 +136,7 @@
         <div class="text-center">
             <i data-lucide="network" class="w-16 h-16 mx-auto mb-4 text-slate-300 dark:text-slate-600"></i>
             <p class="text-lg font-medium text-slate-500 dark:text-slate-400">尚未构建知识图谱</p>
-            {% if admin.role in ('super_admin', 'admin') %}
+            {% if admin.role in ('super_admin', 'admin', 'user') %}
             <p class="text-sm text-slate-400 dark:text-slate-500 mt-1">点击右上角"重建图谱"按钮开始构建</p>
             {% endif %}
         </div>

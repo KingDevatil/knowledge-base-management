@@ -13,8 +13,8 @@ from directory_store import merge_into_tree
 from logger import get_logger
 
 from .helpers import (templates, settings, get_current_user, require_admin,
-                      get_current_admin, format_datetime, format_relative_time,
-                      check_path_access)  # noqa: F401
+                      require_editor, get_current_admin, format_datetime,
+                      format_relative_time, check_path_access)  # noqa: F401
 
 logger = get_logger()
 
@@ -90,11 +90,14 @@ async def api_search_trend(request: Request, user: dict = Depends(require_admin)
     now = datetime.now(timezone.utc)
     hours = []
     counts = []
+    local_offset = timedelta(hours=8)  # UTC → 北京时间
     for i in range(23, -1, -1):
         dt = now - timedelta(hours=i)
         key = f"stats:search:hourly:{dt.strftime('%Y-%m-%d:%H')}"
         val = await redis.get(key)
-        hours.append(dt.strftime('%H:00'))
+        # 标签转为北京时间
+        local_dt = dt + local_offset
+        hours.append(local_dt.strftime('%H:00'))
         counts.append(int(val) if val else 0)
 
     return JSONResponse({"hours": hours, "counts": counts})
@@ -246,7 +249,7 @@ async def document_view(request: Request, doc_id: str, user: dict = Depends(get_
 
 
 @page_router.get("/documents/{doc_id}/edit", response_class=HTMLResponse)
-async def document_edit_page(request: Request, doc_id: str, user: dict = Depends(require_admin)):
+async def document_edit_page(request: Request, doc_id: str, user: dict = Depends(require_editor)):
     kb = request.app.state.kb
     source_store = request.app.state.source_store
 
@@ -263,6 +266,10 @@ async def document_edit_page(request: Request, doc_id: str, user: dict = Depends
         raise HTTPException(status_code=404, detail="文档不存在")
 
     meta = chunks[0]["metadata"]
+    doc_path = meta.get("path", "")
+    if not check_path_access(user, doc_path):
+        raise HTTPException(status_code=403, detail="无权访问此文档")
+
     source_path = meta.get("source_path", "")
 
     try:
@@ -409,7 +416,7 @@ async def graph_page(request: Request, user: dict = Depends(get_current_user)):
 
 
 @page_router.post("/api/rebuild-graph")
-async def api_rebuild_graph(request: Request, user: dict = Depends(require_admin)):
+async def api_rebuild_graph(request: Request, user: dict = Depends(require_editor)):
     """手动触发图谱重建（读取 Redis 中的阈值设置）"""
     kb = request.app.state.kb
     embedder = getattr(request.app.state, "embedder", None)

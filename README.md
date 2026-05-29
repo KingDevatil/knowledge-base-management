@@ -114,6 +114,14 @@ cp .env.example .env
 # 编辑 .env，详见下方《配置指南》章节
 ```
 
+> **国内部署镜像加速**：如需加速 Docker 镜像拉取和 pip 安装，在 `.env` 中添加：
+> ```bash
+> MIRROR_PREFIX=docker.m.daocloud.io/
+> PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+> PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn
+> ```
+> 所有公共镜像和 Python 依赖将走国内源，详见下方《配置指南》-《国内镜像加速》。
+
 ### 3. 启动服务
 
 ```bash
@@ -226,6 +234,23 @@ CORS_ORIGINS=https://wiki.yourcompany.com,http://192.168.1.100
 |------|--------|------|------|
 | `SESSION_SECRET` | - | **是** | **Session 加密密钥。生产环境必须设置！** 建议 `openssl rand -hex 32` 生成 |
 | `SESSION_MAX_AGE` | `86400` | 否 | Session 过期时间（秒），默认 24 小时 |
+
+#### 国内镜像加速（国内部署可选）
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `MIRROR_PREFIX` | `(空)` | Docker Hub 镜像前缀。设为 `docker.m.daocloud.io/` 可加速拉取 nginx/redis/chroma/minio/ollama/python 等镜像 |
+| `PIP_INDEX_URL` | `https://pypi.org/simple` | pip 镜像源地址。国内常用 `https://pypi.tuna.tsinghua.edu.cn/simple` |
+| `PIP_TRUSTED_HOST` | `pypi.org` | pip 信任主机，需与 `PIP_INDEX_URL` 的域名一致 |
+| `APT_MIRROR` | `deb.debian.org` | apt 镜像源域名。国内常用 `mirrors.tuna.tsinghua.edu.cn` |
+
+**配置示例：**
+```bash
+MIRROR_PREFIX=docker.m.daocloud.io/
+PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn
+APT_MIRROR=mirrors.tuna.tsinghua.edu.cn
+```
 
 #### 切片参数
 
@@ -649,7 +674,6 @@ sequenceDiagram
 │   │   └── directories.json
 │   ├── minio/                      # MinIO 对象存储（原始文档）
 │   └── chroma/                     # Chroma 向量数据库
-├── config/                         # 配置模板（空目录，对应 Docker 挂载）
 ├── mcp-gateway/
 │   ├── Dockerfile
 │   ├── requirements.txt

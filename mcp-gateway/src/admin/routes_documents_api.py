@@ -11,7 +11,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Stre
 
 from lock import WriteLockError
 from models import ReindexByPathRequest
-from .helpers import require_admin, get_current_user, check_path_access
+from .helpers import require_admin, require_editor, get_current_user, check_path_access
 
 documents_router = APIRouter()
 
@@ -250,12 +250,19 @@ async def document_save(
     content: str = Form(""),
     path: str = Form(""),
     tags: str = Form(""),
-    user: dict = Depends(require_admin),
+    user: dict = Depends(require_editor),
 ):
     tools = request.app.state.tools
     tag_list = [t.strip() for t in tags.replace("，", ",").split(",") if t.strip()]
 
     if doc_id and doc_id != "new":
+        # 检查权限：user 角色只能编辑授权路径下的文档
+        kb = request.app.state.kb
+        chunks = await kb.get_document_chunks(doc_id)
+        if chunks:
+            doc_path = chunks[0]["metadata"].get("path", "")
+            if not check_path_access(user, doc_path):
+                raise HTTPException(status_code=403, detail="无权编辑此文档")
         try:
             await tools.update_document(
                 doc_id=doc_id, title=title, content=content,
@@ -304,9 +311,16 @@ async def document_delete(
 
 @documents_router.post("/documents/{doc_id}/reindex")
 async def document_reindex(
-    request: Request, doc_id: str, user: dict = Depends(require_admin),
+    request: Request, doc_id: str, user: dict = Depends(require_editor),
 ):
     tools = request.app.state.tools
+    # user 角色只能重索引授权路径下的文档
+    kb = request.app.state.kb
+    chunks = await kb.get_document_chunks(doc_id)
+    if chunks:
+        doc_path = chunks[0]["metadata"].get("path", "")
+        if not check_path_access(user, doc_path):
+            raise HTTPException(status_code=403, detail="无权重索引此文档")
     try:
         result = await tools.reindex_document(doc_id)
     except WriteLockError:

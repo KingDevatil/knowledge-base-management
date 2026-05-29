@@ -9,6 +9,11 @@ from fastapi.templating import Jinja2Templates
 from config import get_settings
 from admin_auth import is_admin_role
 
+
+def is_editor_role(role: str) -> bool:
+    """检查角色是否具有编辑权限（super_admin / admin / user）"""
+    return role in ("super_admin", "admin", "user")
+
 # Templates
 templates_dir = os.path.join(os.path.dirname(__file__), "templates")
 templates = Jinja2Templates(directory=templates_dir)
@@ -29,6 +34,15 @@ async def require_admin(request: Request) -> dict:
     user = await admin_auth.verify_session(request)
     if not is_admin_role(user["role"]):
         raise HTTPException(status_code=403, detail="需要管理员权限")
+    return user
+
+
+async def require_editor(request: Request) -> dict:
+    """获取当前登录用户（仅限有编辑权限的角色：super_admin / admin / user）"""
+    admin_auth = request.app.state.admin_auth
+    user = await admin_auth.verify_session(request)
+    if not is_editor_role(user["role"]):
+        raise HTTPException(status_code=403, detail="需要编辑权限")
     return user
 
 

@@ -160,7 +160,7 @@ class AdminAuth:
             return False, "用户名至少 2 个字符"
         if not password or len(password) < 6:
             return False, "密码至少 6 个字符"
-        if role not in ("super_admin", "admin", "viewer"):
+        if role not in ("super_admin", "admin", "user", "viewer"):
             return False, "无效的角色"
 
         accounts = self._load_accounts()
@@ -186,7 +186,7 @@ class AdminAuth:
             return False, "用户不存在"
 
         if role is not None:
-            if role not in ("super_admin", "admin", "viewer"):
+            if role not in ("super_admin", "admin", "user", "viewer"):
                 return False, "无效的角色"
             # 不允许将最后一个 super_admin 降级
             if account.get("role") == "super_admin" and role != "super_admin":
