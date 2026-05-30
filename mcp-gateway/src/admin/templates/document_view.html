@@ -199,6 +199,112 @@
     background: rgba(234,179,8,0.1);
     color: #fde047;
 }
+
+/* ---------- TOC Sidebar ---------- */
+.toc-sidebar {
+    font-size: 0.8125rem;
+    line-height: 1.6;
+}
+.toc-sidebar .toc-title {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #94a3b8;
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid #e2e8f0;
+}
+.dark .toc-sidebar .toc-title {
+    color: #64748b;
+    border-bottom-color: #1e293b;
+}
+.toc-sidebar ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+.toc-sidebar li {
+    margin: 0;
+}
+.toc-sidebar a {
+    display: block;
+    padding: 0.3rem 0.5rem;
+    border-radius: 0.375rem;
+    color: #64748b;
+    text-decoration: none;
+    transition: all 0.15s ease;
+    border-left: 2px solid transparent;
+}
+.dark .toc-sidebar a {
+    color: #94a3b8;
+}
+.toc-sidebar a:hover {
+    color: #4f46e5;
+    background: #f1f5f9;
+    border-left-color: #6366f1;
+}
+.dark .toc-sidebar a:hover {
+    color: #818cf8;
+    background: #1e293b;
+    border-left-color: #818cf8;
+}
+.toc-sidebar a.active {
+    color: #4f46e5;
+    background: #eef2ff;
+    border-left-color: #6366f1;
+    font-weight: 500;
+}
+.dark .toc-sidebar a.active {
+    color: #a5b4fc;
+    background: rgba(99,102,241,0.1);
+    border-left-color: #818cf8;
+}
+/* Nested list indentation */
+.toc-sidebar ul ul a { padding-left: 1.25rem; }
+.toc-sidebar ul ul ul a { padding-left: 2rem; }
+/* Hide the outer toc div border */
+.toc-sidebar .toc {
+    border: none;
+    padding: 0;
+    margin: 0;
+    background: transparent;
+}
+/* Mobile collapsible toggle */
+.toc-toggle {
+    display: none;
+}
+@media (max-width: 1023px) {
+    .toc-mobile-toggle {
+        display: flex;
+        align-items: center;
+        gap: 0.375rem;
+        padding: 0.5rem 0.75rem;
+        margin-bottom: 0.75rem;
+        font-size: 0.8125rem;
+        color: #64748b;
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 0.5rem;
+        cursor: pointer;
+        transition: all 0.15s;
+    }
+    .dark .toc-mobile-toggle {
+        color: #94a3b8;
+        background: #1e293b;
+        border-color: #334155;
+    }
+    .toc-mobile-toggle:hover {
+        color: #4f46e5;
+        border-color: #6366f1;
+    }
+    .toc-mobile-content {
+        display: none;
+    }
+    .toc-mobile-content.open {
+        display: block;
+    }
+}
 {% endblock %}
 
 {% block content %}
@@ -373,6 +479,29 @@ async function revokeShare(token, row) {
     }
 }
 
+// ── TOC Scroll Spy ──
+const tocLinks = document.querySelectorAll('.toc-sidebar a[href^="#"]');
+const headings = [];
+tocLinks.forEach(a => {
+    const id = a.getAttribute('href').slice(1);
+    const el = document.getElementById(id);
+    if (el) headings.push({el, link: a});
+});
+function updateTocActive() {
+    let current = headings[0];
+    const scrollTop = window.scrollY + 160;
+    for (const h of headings) {
+        if (h.el.offsetTop <= scrollTop) current = h;
+    }
+    tocLinks.forEach(a => a.classList.remove('active'));
+    if (current) current.link.classList.add('active');
+}
+if (headings.length) {
+    window.addEventListener('scroll', updateTocActive, {passive: true});
+    window.addEventListener('resize', updateTocActive);
+    updateTocActive();
+}
+
 async function loadShares() {
     const container = document.getElementById('existing-shares');
     try {
@@ -402,7 +531,28 @@ async function loadShares() {
 </script>
 
 <!-- Reading Panel -->
-<div class="flex">
+<div class="flex max-w-[110ch] mx-auto">
+    {% if toc_html %}
+    <!-- TOC Sidebar -->
+    <div class="w-52 flex-shrink-0 hidden lg:block">
+        <div class="sticky top-[140px] max-h-[calc(100vh-160px)] overflow-y-auto py-6 pr-4">
+            <nav class="toc-sidebar">
+                <h3 class="toc-title">目录</h3>
+                {{ toc_html | safe }}
+            </nav>
+        </div>
+    </div>
+    <div class="toc-mobile-toggle lg:hidden" onclick="this.nextElementSibling.classList.toggle('open')">
+        <i data-lucide="list" class="w-4 h-4"></i>
+        <span>目录</span>
+    </div>
+    <div class="toc-mobile-content lg:hidden w-full">
+        <nav class="toc-sidebar px-1 mb-4">
+            <h3 class="toc-title">目录</h3>
+            {{ toc_html | safe }}
+        </nav>
+    </div>
+    {% endif %}
     <div class="flex-1 min-w-0">
         <div class="reading-panel">
             {% if html_content %}

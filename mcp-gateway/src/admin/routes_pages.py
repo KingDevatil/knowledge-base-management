@@ -231,9 +231,14 @@ async def document_view(request: Request, doc_id: str, user: dict = Depends(get_
         r'\1\n\n',
         content, flags=re.MULTILINE,
     )
-    html_content = markdown.markdown(content, extensions=[
+    md = markdown.Markdown(extensions=[
         "extra", "codehilite", "sane_lists", "toc", "admonition",
-    ])
+    ], extension_configs={
+        "toc": {"toc_depth": "2-4"},
+    })
+    html_content = md.convert(content)
+    toc_html = md.toc
+    md.reset()
 
     breadcrumbs = DirectoryTree.get_breadcrumbs(doc_path)
 
@@ -242,6 +247,7 @@ async def document_view(request: Request, doc_id: str, user: dict = Depends(get_
         "title": meta.get("title", ""), "path": doc_path,
         "tags": meta.get("tags", "").replace("，", ",").split(",") if isinstance(meta.get("tags"), str) else meta.get("tags", []),
         "content": content, "html_content": html_content,
+        "toc_html": toc_html,
         "source_path": source_path, "chunk_count": len(chunks),
         "created_at": meta.get("created_at", ""), "updated_at": meta.get("updated_at", ""),
         "breadcrumbs": breadcrumbs,
