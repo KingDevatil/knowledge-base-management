@@ -30,6 +30,12 @@ from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 settings = get_settings()
 logger = setup_logger()
 
+# Windows 系统代理会导致 httpx 走代理连接本地 ChromaDB 被拒
+import os as _os
+_no_proxy = _os.environ.get("NO_PROXY", "")
+if "localhost" not in _no_proxy:
+    _os.environ["NO_PROXY"] = ",".join(filter(None, [_no_proxy, "localhost,127.0.0.1"]))
+
 # ---------- Lifespan 管理 ----------
 
 @asynccontextmanager

@@ -27,6 +27,7 @@ if sys.platform == "win32":
         pass
 
 # ---- tkinter ----
+import json
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox, font as tkfont
 
@@ -49,6 +50,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 PYTHON_EXE = sys.executable
 KBDATA_DIR = PROJECT_ROOT / "kbdata"
 LOGS_DIR = KBDATA_DIR / "logs"
+LAUNCHER_CONFIG = KBDATA_DIR / "config" / "launcher.json"
 
 # Ensure kbdata directories exist
 (KBDATA_DIR / "config").mkdir(parents=True, exist_ok=True)
@@ -334,10 +336,35 @@ class KBLauncher:
         self._tray_icon: Optional[pystray.Icon] = None
         self._service_labels: dict[str, dict] = {}  # name -> {status_label, url_label}
 
+        self._load_settings()
         self._build_ui()
         self._center_window()
         # 延迟启动轮询，避免阻塞窗口首次渲染
         self.root.after(500, self._start_initial_poll)
+
+    # ------------------------------------------------------------------
+    # Settings persistence
+    # ------------------------------------------------------------------
+    def _load_settings(self):
+        """从 launcher.json 恢复启动器设置"""
+        try:
+            if LAUNCHER_CONFIG.is_file():
+                data = json.loads(LAUNCHER_CONFIG.read_text("utf-8"))
+                self._use_env_file = data.get("use_env_file", False)
+            else:
+                self._use_env_file = False
+        except Exception:
+            self._use_env_file = False
+
+    def _save_settings(self):
+        """保存启动器设置到 launcher.json"""
+        try:
+            data = {"use_env_file": self._use_env_file}
+            LAUNCHER_CONFIG.write_text(
+                json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # UI Construction
@@ -437,7 +464,11 @@ class KBLauncher:
         # 底部选项栏（先 pack，固定底部，不遮挡访问地址）
         bottom_bar = tk.Frame(tab, bg=self.COLOR_BG)
         bottom_bar.pack(side=tk.BOTTOM, fill=tk.X, padx=12, pady=(6, 4))
-        self.use_env_var = tk.BooleanVar(value=False)
+        self.use_env_var = tk.BooleanVar(value=self._use_env_file)
+        def _on_env_toggle(*_):
+            self._use_env_file = self.use_env_var.get()
+            self._save_settings()
+        self.use_env_var.trace_add("write", _on_env_toggle)
         tk.Checkbutton(
             bottom_bar, text="使用 .env 文件配置（未勾选则使用启动器默认值）",
             variable=self.use_env_var,
