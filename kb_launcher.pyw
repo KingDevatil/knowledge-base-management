@@ -890,11 +890,15 @@ class KBLauncher:
         """关闭窗口 → 最小化到托盘"""
         if TRAY_AVAILABLE:
             self.root.withdraw()
-            self._create_tray()
-            self._log("窗口已最小化到系统托盘，右键图标退出")
-        else:
-            if messagebox.askokcancel("退出", "关闭窗口将停止所有服务\n确定退出吗？"):
-                self._shutdown()
+            try:
+                self._create_tray()
+                self._log("窗口已最小化到系统托盘，右键图标退出")
+                return
+            except Exception as e:
+                self._log(f"[WARN] 托盘创建失败: {e}，回退到退出确认")
+                self.root.deiconify()  # 恢复窗口再提示
+        if messagebox.askokcancel("退出", "关闭窗口将停止所有服务\n确定退出吗？"):
+            self._shutdown()
 
     # ------------------------------------------------------------------
     # System Tray
@@ -923,7 +927,12 @@ class KBLauncher:
         self._tray_icon = pystray.Icon(
             "kb_launcher", image, "KB Launcher", menu,
         )
-        threading.Thread(target=self._tray_icon.run, daemon=True).start()
+        def _run_tray():
+            try:
+                self._tray_icon.run()
+            except Exception as e:
+                self._log(f"[ERROR] 托盘图标运行失败: {e}")
+        threading.Thread(target=_run_tray, daemon=True).start()
 
     def _restore_window(self, icon=None, item=None):
         """从托盘恢复窗口"""
