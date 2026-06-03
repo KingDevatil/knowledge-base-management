@@ -231,6 +231,10 @@
         showStep1();
     }
 
+    function clearReviewState() {
+        try { sessionStorage.removeItem('kb-upload-review'); } catch(e) {}
+    }
+
     function resetAll() {
         resetToStep1();
     }
@@ -493,6 +497,7 @@
 
                 if (data.failed === 0) {
                     statusText.textContent = `✅ 全部完成！${data.success} 个文档导入成功`;
+                    clearReviewState();
                 } else {
                     statusText.textContent = `⚠️ 完成 ${data.success} 个，${data.failed} 个失败`;
                 }
@@ -570,6 +575,7 @@
 
         if (failed === 0) {
             statusText.textContent = `✅ 全部完成！${completed} 个文档导入成功`;
+            clearReviewState();
             statusDetail.textContent = '';
         } else {
             statusText.textContent = `⚠️ 完成 ${completed} 个，${failed} 个失败`;
