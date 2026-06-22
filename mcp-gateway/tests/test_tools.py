@@ -89,6 +89,7 @@ class MockSourceStore:
     def __init__(self):
         self._store = {}       # doc_id -> content
         self._source_paths = {}  # doc_id -> source_path
+        self.fail_delete_source_path = False
 
     def save_source(self, doc_id, content, path=""):
         self._store[doc_id] = content
@@ -110,6 +111,9 @@ class MockSourceStore:
         self._source_paths.pop(doc_id, None)
 
     def delete_source_by_path(self, source_path: str):
+        if self.fail_delete_source_path:
+            self.fail_delete_source_path = False
+            raise RuntimeError("simulated source cleanup failure")
         for doc_id, sp in list(self._source_paths.items()):
             if sp == source_path:
                 self._store.pop(doc_id, None)
@@ -130,17 +134,28 @@ class MockChromaCollection:
     """Mock Chroma collection for testing."""
     def __init__(self):
         self._docs = {}  # id -> {metadata, document}
+        self.fail_next_add = False
 
     def add(self, ids, documents, metadatas, embeddings=None):
+        if self.fail_next_add:
+            self.fail_next_add = False
+            raise RuntimeError("simulated staging add failure")
         for i, doc_id in enumerate(ids):
             self._docs[doc_id] = {
+                "id": doc_id,
                 "metadata": metadatas[i] if metadatas else {},
                 "document": documents[i] if documents else "",
+                "embedding": embeddings[i] if embeddings else None,
             }
 
     def get(self, ids=None, where=None, limit=None):
         if ids:
             results = [self._docs.get(i, {}) for i in ids if i in self._docs]
+        elif where:
+            results = [
+                value for value in self._docs.values()
+                if all(value.get("metadata", {}).get(key) == expected for key, expected in where.items())
+            ]
         else:
             results = list(self._docs.values())
         if limit:
@@ -194,6 +209,7 @@ class MockKnowledgeBase:
         self.collection = MockChromaCollection()
         self._redis = MockRedis()
         self._doc_index = {}
+        self.fail_next_add_chunks = False
 
     def set_redis(self, redis_client):
         self._redis = redis_client
@@ -214,8 +230,9 @@ class MockKnowledgeBase:
             items = [d for d in items if d.get("path", "") == path or d.get("path", "").startswith(path + "/")]
         if tags:
             items = [d for d in items if any(t in d.get("tags", []) for t in tags)]
+        total = len(items)
         items = items[offset:offset + limit]
-        return [DocumentInfo(**item) for item in items]
+        return [DocumentInfo(**item) for item in items], total
 
     async def search(self, query_embedding, top_k=5, filter_tags=None, filter_path=""):
         from models import SearchResult
@@ -236,14 +253,29 @@ class MockKnowledgeBase:
         if doc_id not in self.collection._docs:
             return []
         doc = self.collection._docs[doc_id]
-        return [{"id": doc_id, "metadata": dict(doc["metadata"]), "content": doc["document"]}]
+        return [{
+            "id": doc_id,
+            "metadata": dict(doc["metadata"]),
+            "content": doc["document"],
+            "embedding": doc.get("embedding", [0.1] * 128),
+        }]
 
     async def add_document_chunks(self, doc_id, title, chunks, embeddings, metadata):
+        if self.fail_next_add_chunks:
+            self.fail_next_add_chunks = False
+            raise RuntimeError("simulated Chroma add failure")
         full_content = "\n\n".join(chunks)
+        chunk_metadata = {
+            **metadata,
+            "doc_id": doc_id,
+            "title": title,
+            "chunk_index": 0,
+            "total_chunks": len(chunks),
+        }
         self.collection.add(
             ids=[doc_id],
             documents=[full_content],
-            metadatas=[metadata],
+            metadatas=[chunk_metadata],
             embeddings=[embeddings[0]] if embeddings else None,
         )
         self._doc_index[doc_id] = {
@@ -339,6 +371,8 @@ class TestKnowledgeToolsReader:
         result = await reader.search_knowledge("test", top_k=5)
         assert result["total"] > 0
         assert any("Test Doc" in r["title"] for r in result["results"])
+        assert "retrieval_errors" in result
+        assert {"channel", "raw_score", "final_score", "postprocess_reason"} <= set(result["results"][0])
 
     @pytest.mark.asyncio
     async def test_search_knowledge_empty(self, reader):
@@ -418,6 +452,7 @@ class TestKnowledgeToolsAdd:
         )
         assert result["success"] is True
         assert result["doc_id"] is not None
+        assert result["task_id"] in tools.ingestion_tasks
         # Verify document exists in KB
         doc = await tools.get_document(result["doc_id"])
         assert doc["title"] == "New Doc"
@@ -465,6 +500,38 @@ class TestKnowledgeToolsAdd:
         doc = await tools.get_document(result["doc_id"])
         assert doc["title"] == "Imported"
         assert doc["path"] == "imported"
+
+    @pytest.mark.asyncio
+    async def test_retry_failed_ingestion_task(self):
+        tools, kb, store = _make_tools(fail_embedder=True)
+
+        with pytest.raises(Exception):
+            await tools.add_document(title="Retry Me", content="# Retry", path="retry")
+
+        failed_task_id = next(
+            task_id for task_id, task in tools.ingestion_tasks.items()
+            if task["status"] == "failed"
+        )
+        failed_doc_id = tools.ingestion_tasks[failed_task_id]["doc_id"]
+
+        tools.embedder.fail = False
+        retry = await tools.retry_ingestion_task(failed_task_id, retried_by="admin")
+
+        assert retry["success"] is True
+        assert retry["retried_from"] == failed_task_id
+        assert retry["doc_id"] == failed_doc_id
+        assert tools.ingestion_tasks[failed_task_id]["retry_task_id"] == retry["task_id"]
+        assert tools.ingestion_tasks[retry["task_id"]]["status"] == "succeeded"
+        doc = await tools.get_document(retry["doc_id"])
+        assert doc["title"] == "Retry Me"
+
+    @pytest.mark.asyncio
+    async def test_retry_rejects_non_failed_task(self):
+        tools, kb, store = _make_tools()
+        result = await tools.add_document(title="Done", content="# Done")
+
+        with pytest.raises(Exception, match="只能重试失败任务"):
+            await tools.retry_ingestion_task(result["task_id"])
 
 
 class TestKnowledgeToolsUpdate:
@@ -518,6 +585,75 @@ class TestKnowledgeToolsUpdate:
         with pytest.raises(Exception, match="文档 ID 不能为空"):
             await tools.update_document(doc_id="", title="X", content="X")
 
+    @pytest.mark.asyncio
+    async def test_update_document_restores_old_chunks_when_rewrite_fails(self):
+        tools, kb, store = _make_tools()
+        added = await tools.add_document(
+            title="Original", content="# Original", path="test", tags=["old"],
+        )
+        doc_id = added["doc_id"]
+
+        kb.fail_next_add_chunks = True
+        with pytest.raises(RuntimeError, match="simulated Chroma add failure"):
+            await tools.update_document(
+                doc_id=doc_id,
+                title="Updated",
+                content="# Updated",
+                path="test",
+                tags=["new"],
+            )
+
+        restored = await tools.get_document(doc_id)
+        assert restored["title"] == "Original"
+        assert "# Original" in restored["content"]
+        assert "old" in restored["tags"]
+
+    @pytest.mark.asyncio
+    async def test_update_document_keeps_active_when_staging_fails(self):
+        tools, kb, store = _make_tools()
+        added = await tools.add_document(
+            title="Original", content="# Original", path="test", tags=["old"],
+        )
+        doc_id = added["doc_id"]
+
+        kb.collection.fail_next_add = True
+        with pytest.raises(RuntimeError, match="simulated staging add failure"):
+            await tools.update_document(
+                doc_id=doc_id,
+                title="Updated",
+                content="# Updated",
+                path="test",
+                tags=["new"],
+            )
+
+        restored = await tools.get_document(doc_id)
+        assert restored["title"] == "Original"
+        assert "# Original" in restored["content"]
+        assert all("__staging__" not in key for key in kb.collection._docs)
+
+    @pytest.mark.asyncio
+    async def test_update_document_records_cleanup_task_when_staging_source_cleanup_fails(self):
+        tools, kb, store = _make_tools()
+        added = await tools.add_document(
+            title="Original", content="# Original", path="test", tags=["old"],
+        )
+        doc_id = added["doc_id"]
+
+        store.fail_delete_source_path = True
+        result = await tools.update_document(
+            doc_id=doc_id,
+            title="Updated",
+            content="# Updated",
+            path="test",
+            tags=["new"],
+        )
+
+        assert result["success"] is True
+        cleanup_task_id = next(iter(tools.cleanup_tasks))
+        cleanup_result = tools.retry_cleanup_task(cleanup_task_id)
+        assert cleanup_result["success"] is True
+        assert tools.cleanup_tasks[cleanup_task_id]["status"] == "succeeded"
+
 
 class TestKnowledgeToolsDelete:
     """Tests for delete_document."""
@@ -569,6 +705,41 @@ class TestKnowledgeToolsReindex:
         tools, kb, store = _make_tools()
         with pytest.raises(Exception, match="不存在"):
             await tools.reindex_document("nonexistent")
+
+    @pytest.mark.asyncio
+    async def test_reindex_document_restores_old_chunks_when_rewrite_fails(self):
+        tools, kb, store = _make_tools()
+        added = await tools.add_document(
+            title="To Reindex", content="# Original Content\n\nMore text here.",
+            path="test",
+        )
+        doc_id = added["doc_id"]
+
+        kb.fail_next_add_chunks = True
+        with pytest.raises(RuntimeError, match="simulated Chroma add failure"):
+            await tools.reindex_document(doc_id)
+
+        restored = await tools.get_document(doc_id)
+        assert restored["title"] == "To Reindex"
+        assert "# Original Content" in restored["content"]
+
+    @pytest.mark.asyncio
+    async def test_reindex_document_keeps_active_when_staging_fails(self):
+        tools, kb, store = _make_tools()
+        added = await tools.add_document(
+            title="To Reindex", content="# Original Content\n\nMore text here.",
+            path="test",
+        )
+        doc_id = added["doc_id"]
+
+        kb.collection.fail_next_add = True
+        with pytest.raises(RuntimeError, match="simulated staging add failure"):
+            await tools.reindex_document(doc_id)
+
+        restored = await tools.get_document(doc_id)
+        assert restored["title"] == "To Reindex"
+        assert "# Original Content" in restored["content"]
+        assert all("__staging__" not in key for key in kb.collection._docs)
 
 
 class TestKnowledgeToolsDirectory:

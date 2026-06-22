@@ -7,7 +7,7 @@ from auth import APIKeyAuth
 from admin_auth import AdminAuth
 from knowledge_base import KnowledgeBase
 from source_store import SourceStore
-from embedding import OllamaEmbedder
+from embedding import EmbeddingProvider
 from lock import WriteLock
 
 
@@ -31,7 +31,7 @@ def get_source_store(request: Request) -> SourceStore:
     return request.app.state.source_store
 
 
-def get_embedder(request: Request) -> OllamaEmbedder:
+def get_embedder(request: Request) -> EmbeddingProvider:
     return request.app.state.embedder
 
 

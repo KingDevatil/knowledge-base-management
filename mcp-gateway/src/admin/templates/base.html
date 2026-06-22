@@ -142,6 +142,10 @@
                     <span>知识图谱</span>
                 </a>
                 {% if admin.role in ('super_admin', 'admin') %}
+                <a href="/admin/maintenance" class="sidebar-item flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-xl {% if request.url.path == '/admin/maintenance' %}bg-brand-50 dark:bg-brand-500/10 text-brand-700 dark:text-brand-400{% else %}text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-slate-200{% endif %}">
+                    <i data-lucide="wrench" class="w-[18px] h-[18px]"></i>
+                    <span>维护诊断</span>
+                </a>
                 <a href="/admin/settings" class="sidebar-item flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-xl {% if request.url.path == '/admin/settings' %}bg-brand-50 dark:bg-brand-500/10 text-brand-700 dark:text-brand-400{% else %}text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-slate-200{% endif %}">
                     <i data-lucide="settings" class="w-[18px] h-[18px]"></i>
                     <span>系统设置</span>

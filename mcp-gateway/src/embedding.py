@@ -1,5 +1,7 @@
 import httpx
-from typing import List, Union
+from dataclasses import dataclass
+from time import monotonic
+from typing import List, Protocol, Union
 
 from logger import get_logger
 
@@ -33,6 +35,7 @@ class OllamaEmbedder:
     def __init__(self, base_url: str, model: str = "bge-m3"):
         self.base_url = base_url.rstrip("/")
         self.model = model
+        self.name = f"ollama:{self.base_url}:{self.model}"
         self.client = httpx.AsyncClient(
             timeout=120.0,
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=5),
@@ -142,3 +145,186 @@ class OllamaEmbedder:
 
     async def close(self):
         await self.client.aclose()
+
+
+class EmbeddingProvider(Protocol):
+    name: str
+
+    async def embed(self, texts: Union[str, List[str]]) -> List[List[float]]:
+        ...
+
+    async def embed_single(self, text: str) -> List[float]:
+        ...
+
+    async def health_check(self) -> bool:
+        ...
+
+    async def close(self) -> None:
+        ...
+
+
+@dataclass
+class ProviderCircuitState:
+    failures: int = 0
+    opened_at: float = 0.0
+    health_checked_at: float = 0.0
+    cached_health: bool | None = None
+
+
+class ResilientEmbeddingProvider:
+    """Embedding provider router with health cache and simple circuit breaker."""
+
+    def __init__(
+        self,
+        providers: list[EmbeddingProvider],
+        health_cache_ttl: int = 30,
+        failure_threshold: int = 3,
+        circuit_cooldown: int = 30,
+    ):
+        if not providers:
+            raise ValueError("At least one embedding provider is required")
+        self.providers = providers
+        self.health_cache_ttl = max(0, health_cache_ttl)
+        self.failure_threshold = max(1, failure_threshold)
+        self.circuit_cooldown = max(1, circuit_cooldown)
+        self._states = {provider.name: ProviderCircuitState() for provider in providers}
+
+    async def embed(self, texts: Union[str, List[str]]) -> List[List[float]]:
+        return await self._call("embed", texts)
+
+    async def embed_single(self, text: str) -> List[float]:
+        result = await self.embed(text)
+        return result[0] if result else []
+
+    async def health_check(self) -> bool:
+        checks = [await self._cached_health_check(provider) for provider in self.providers]
+        return any(checks)
+
+    async def close(self) -> None:
+        for provider in self.providers:
+            await provider.close()
+
+    def status(self) -> list[dict]:
+        now = monotonic()
+        result = []
+        for provider in self.providers:
+            state = self._states[provider.name]
+            result.append({
+                "name": provider.name,
+                "failures": state.failures,
+                "circuit_open": self._is_open(state, now),
+                "cached_health": state.cached_health,
+            })
+        return result
+
+    async def _call(self, method: str, *args):
+        errors: list[str] = []
+        for provider in self.providers:
+            state = self._states[provider.name]
+            if self._is_open(state):
+                errors.append(f"{provider.name}: circuit open")
+                continue
+
+            try:
+                value = await getattr(provider, method)(*args)
+                self._record_success(state)
+                return value
+            except EmbeddingError as e:
+                self._record_failure(state)
+                errors.append(f"{provider.name}: {e}")
+            except Exception as e:
+                self._record_failure(state)
+                errors.append(f"{provider.name}: {e}")
+
+        raise EmbeddingError(
+            "All embedding providers failed or are in cooldown. "
+            + " | ".join(errors)
+        )
+
+    async def _cached_health_check(self, provider: EmbeddingProvider) -> bool:
+        state = self._states[provider.name]
+        now = monotonic()
+        if (
+            state.cached_health is not None
+            and self.health_cache_ttl > 0
+            and now - state.health_checked_at < self.health_cache_ttl
+        ):
+            return state.cached_health
+
+        if self._is_open(state, now):
+            state.cached_health = False
+            state.health_checked_at = now
+            return False
+
+        try:
+            ok = await provider.health_check()
+        except Exception:
+            ok = False
+        state.cached_health = ok
+        state.health_checked_at = now
+        if ok:
+            self._record_success(state)
+        else:
+            self._record_failure(state)
+        return ok
+
+    def _record_success(self, state: ProviderCircuitState) -> None:
+        state.failures = 0
+        state.opened_at = 0.0
+        state.cached_health = True
+        state.health_checked_at = monotonic()
+
+    def _record_failure(self, state: ProviderCircuitState) -> None:
+        state.failures += 1
+        state.cached_health = False
+        state.health_checked_at = monotonic()
+        if state.failures >= self.failure_threshold:
+            state.opened_at = monotonic()
+
+    def _is_open(self, state: ProviderCircuitState, now: float | None = None) -> bool:
+        if state.opened_at <= 0:
+            return False
+        now = now if now is not None else monotonic()
+        if now - state.opened_at >= self.circuit_cooldown:
+            state.opened_at = 0.0
+            return False
+        return True
+
+
+def build_embedding_provider(
+    primary_url: str,
+    primary_model: str,
+    fallback_specs: str = "",
+    health_cache_ttl: int = 30,
+    failure_threshold: int = 3,
+    circuit_cooldown: int = 30,
+) -> ResilientEmbeddingProvider:
+    providers: list[EmbeddingProvider] = [
+        OllamaEmbedder(primary_url, primary_model)
+    ]
+    for spec in parse_embedding_fallbacks(fallback_specs):
+        providers.append(OllamaEmbedder(spec["url"], spec["model"]))
+    return ResilientEmbeddingProvider(
+        providers=providers,
+        health_cache_ttl=health_cache_ttl,
+        failure_threshold=failure_threshold,
+        circuit_cooldown=circuit_cooldown,
+    )
+
+
+def parse_embedding_fallbacks(raw: str) -> list[dict[str, str]]:
+    """Parse fallback specs: url|model,url|model. Model is optional."""
+    fallbacks: list[dict[str, str]] = []
+    for item in (raw or "").split(","):
+        item = item.strip()
+        if not item:
+            continue
+        if "|" in item:
+            url, model = item.split("|", 1)
+        else:
+            url, model = item, ""
+        url = url.strip()
+        model = model.strip() or "bge-m3"
+        if url:
+            fallbacks.append({"url": url, "model": model})
+    return fallbacks

@@ -20,6 +20,7 @@ logger = get_logger()
 
 from admin_auth import is_admin_role
 from kb_graph import KnowledgeGraphBuilder
+from consistency import KnowledgeBaseConsistencyChecker
 
 page_router = APIRouter()
 
@@ -333,6 +334,43 @@ async def settings_page(request: Request, user: dict = Depends(require_admin)):
     return templates.TemplateResponse(request, "settings.html", {
         "request": request, "admin": user, "settings": settings,
         "graph_semantic_threshold": graph_semantic_threshold,
+    })
+
+
+@page_router.get("/maintenance", response_class=HTMLResponse)
+async def maintenance_page(request: Request, user: dict = Depends(require_admin)):
+    tools = request.app.state.tools
+    checker = KnowledgeBaseConsistencyChecker(
+        request.app.state.kb,
+        request.app.state.source_store,
+    )
+    try:
+        consistency = await checker.check()
+    except Exception as e:
+        consistency = {
+            "success": False,
+            "issue_count": 1,
+            "issues": [{
+                "code": "diagnostic_failed",
+                "severity": "error",
+                "message": str(e),
+                "doc_id": "",
+                "details": {},
+            }],
+            "stats": {"errors": 1, "warnings": 0},
+        }
+
+    ingestion_tasks = list(getattr(tools, "ingestion_tasks", {}).values())
+    ingestion_tasks.sort(key=lambda item: item.get("started_at", ""), reverse=True)
+    cleanup_tasks = list(getattr(tools, "cleanup_tasks", {}).values())
+    cleanup_tasks.sort(key=lambda item: item.get("created_at", ""), reverse=True)
+
+    return templates.TemplateResponse(request, "maintenance.html", {
+        "request": request,
+        "admin": user,
+        "consistency": consistency,
+        "ingestion_tasks": ingestion_tasks[:50],
+        "cleanup_tasks": cleanup_tasks[:50],
     })
 
 

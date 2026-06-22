@@ -1,0 +1,19 @@
+# Top-level dependency lock for mcp-gateway.
+# Keep this file synchronized with requirements.txt via scripts/check_deps_sync.py.
+fastapi==0.135.3
+uvicorn[standard]==0.44.0
+python-multipart==0.0.26
+jinja2==3.1.6
+httpx==0.28.1
+redis==7.4.0
+chromadb==1.5.9
+bcrypt==5.0.0
+python-jose[cryptography]==3.5.0
+pydantic==2.12.5
+pydantic-core==2.41.5
+pydantic-settings==2.12.0
+minio==7.2.20
+Markdown==3.10.2
+mcp==1.16.0
+starlette==1.0.0
+graphifyy>=0.8.22

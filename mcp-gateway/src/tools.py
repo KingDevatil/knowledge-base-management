@@ -17,6 +17,7 @@ from auth import APIKeyAuth
 from helpers import content_hash, content_size_kb
 from tools_reader import KnowledgeToolsReader
 from logger import get_logger
+from ingestion import DocumentIngestionPipeline, IngestionResult
 
 logger = get_logger()
 
@@ -37,6 +38,9 @@ class KnowledgeTools(KnowledgeToolsReader):
         self.write_lock = write_lock
         self.api_key_auth = api_key_auth
         self.settings = get_settings()
+        self.ingestion_tasks: dict[str, dict] = {}
+        self.ingestion_task_payloads: dict[str, dict] = {}
+        self.cleanup_tasks: dict[str, dict] = {}
 
     # ---------- 目录管理（需写锁）----------
 
@@ -126,79 +130,64 @@ class KnowledgeTools(KnowledgeToolsReader):
         tags: list[str],
         created_by: str = "system",
         doc_id: str | None = None,
-    ) -> str:
-        """内部方法：导入文档（生成embedding、切片、写Chroma）"""
-        content = content.replace("\r\n", "\n").replace("\r", "\n")
-        if not title or not title.strip():
-            raise HTTPException(status_code=400, detail="文档标题不能为空，请提供有效的标题")
-        if not content or not content.strip():
-            raise HTTPException(
-                status_code=400,
-                detail=f"文档「{title}」内容不能为空，请提供有效的 Markdown 内容",
-            )
-
-        doc_id = doc_id or str(uuid.uuid4())
-        path = DirectoryTree.validate_path(path)
-        now = datetime.now(timezone.utc).isoformat()
-        size_label = content_size_kb(content)
-
-        source_path = self.source_store.save_source(doc_id, content, path)
-
-        chunks = chunk_markdown(content, self.settings.CHUNK_SIZE, self.settings.CHUNK_OVERLAP)
-        if not chunks:
-            raise HTTPException(
-                status_code=400,
-                detail=f"文档「{title}」(doc_id={doc_id}) 内容无法切片。"
-                f"内容大小: {size_label}，可能全部为空白字符，请检查内容",
-            )
-
+    ) -> IngestionResult:
+        """内部方法：通过入库 Pipeline 导入文档。"""
+        payload = {
+            "title": title,
+            "content": content,
+            "path": path,
+            "tags": list(tags or []),
+            "created_by": created_by,
+            "doc_id": doc_id,
+        }
+        pipeline = DocumentIngestionPipeline(
+            kb=self.kb,
+            source_store=self.source_store,
+            embedder=self.embedder,
+            write_lock=self.write_lock,
+            chunk_size=self.settings.CHUNK_SIZE,
+            chunk_overlap=self.settings.CHUNK_OVERLAP,
+        )
         try:
-            embeddings = await self.embedder.embed(chunks)
-        except EmbeddingError as e:
-            raise HTTPException(
-                status_code=503,
-                detail=f"文档「{title}」(doc_id={doc_id}) Embedding 生成失败。"
-                f"切片数: {len(chunks)}，内容大小: {size_label}。\n{e}",
+            result = await pipeline.import_document(
+                title=title,
+                content=content,
+                path=path,
+                tags=tags,
+                created_by=created_by,
+                doc_id=doc_id,
             )
-        if not embeddings or len(embeddings) != len(chunks):
-            raise HTTPException(
-                status_code=503,
-                detail=f"文档「{title}」(doc_id={doc_id}) Embedding 生成失败。"
-                f"期望 {len(chunks)} 个向量，实际收到 {len(embeddings) if embeddings else 0} 个。",
-            )
-
-        c_hash = content_hash(content)
-
-        try:
-            async with self.write_lock:
-                metadata = {
-                    "path": path,
-                    "tags": tags,
-                    "source_path": source_path,
-                    "source_format": "markdown",
-                    "created_at": now,
-                    "updated_at": now,
-                    "created_by": created_by,
-                    "updated_by": created_by,
-                }
-                await self.kb.add_document_chunks(
-                    doc_id=doc_id, title=title,
-                    chunks=chunks, embeddings=embeddings,
-                    metadata=metadata,
-                )
-                await self.kb.set_doc_content_hash(doc_id, c_hash)
-                logger.info(
-                    f"Document imported: doc_id={doc_id}, title={title}, "
-                    f"path={path}, chunks={len(chunks)}, size={size_label}"
-                )
         except WriteLockError:
-            logger.warning(f"Write lock busy when importing: title={title}, size={size_label}")
+            if pipeline.latest_task:
+                self.ingestion_tasks[pipeline.latest_task.task_id] = pipeline.latest_task.to_dict()
+                self.ingestion_task_payloads[pipeline.latest_task.task_id] = {
+                    **payload,
+                    "doc_id": pipeline.latest_task.doc_id,
+                }
+            logger.warning(f"Write lock busy when importing: title={title}, size={content_size_kb(content)}")
             raise HTTPException(
                 status_code=423,
                 detail=f"知识库写入锁被占用，文档「{title}」暂时无法导入，请稍后重试",
             )
+        except Exception:
+            if pipeline.latest_task:
+                self.ingestion_tasks[pipeline.latest_task.task_id] = pipeline.latest_task.to_dict()
+                self.ingestion_task_payloads[pipeline.latest_task.task_id] = {
+                    **payload,
+                    "doc_id": pipeline.latest_task.doc_id,
+                }
+            raise
 
-        return doc_id
+        self.ingestion_tasks[result.task.task_id] = result.task.to_dict()
+        self.ingestion_task_payloads[result.task.task_id] = {
+            **payload,
+            "doc_id": result.doc_id,
+        }
+        logger.info(
+            f"Document imported: doc_id={result.doc_id}, title={title}, "
+            f"path={path}, chunks={result.chunks}, task_id={result.task.task_id}"
+        )
+        return result
 
     async def add_document(
         self,
@@ -210,8 +199,13 @@ class KnowledgeTools(KnowledgeToolsReader):
     ) -> dict:
         """添加新文档"""
         tags = tags or []
-        doc_id = await self._import_document(title, content, path, tags, created_by)
-        return {"success": True, "doc_id": doc_id, "message": "文档添加成功"}
+        result = await self._import_document(title, content, path, tags, created_by)
+        return {
+            "success": True,
+            "doc_id": result.doc_id,
+            "task_id": result.task.task_id,
+            "message": "文档添加成功",
+        }
 
     async def import_markdown(
         self,
@@ -223,6 +217,179 @@ class KnowledgeTools(KnowledgeToolsReader):
     ) -> dict:
         """导入 Markdown 内容（委托给 add_document）"""
         return await self.add_document(title, markdown_content, path, tags, created_by)
+
+    async def retry_ingestion_task(self, task_id: str, retried_by: str = "system") -> dict:
+        """Retry a failed ingestion task using the original import payload."""
+        task = self.ingestion_tasks.get(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail=f"入库任务不存在: {task_id}")
+        if task.get("status") != "failed":
+            raise HTTPException(status_code=400, detail=f"只能重试失败任务: {task_id}")
+
+        payload = self.ingestion_task_payloads.get(task_id)
+        if not payload:
+            raise HTTPException(status_code=409, detail=f"入库任务缺少可重试载荷: {task_id}")
+
+        result = await self._import_document(
+            title=payload["title"],
+            content=payload["content"],
+            path=payload.get("path", ""),
+            tags=payload.get("tags", []),
+            created_by=retried_by or payload.get("created_by", "system"),
+            doc_id=payload.get("doc_id"),
+        )
+        retry_task = result.task.to_dict()
+        retry_task["retried_from"] = task_id
+        self.ingestion_tasks[result.task.task_id] = retry_task
+        task["retry_task_id"] = result.task.task_id
+
+        return {
+            "success": True,
+            "doc_id": result.doc_id,
+            "task_id": result.task.task_id,
+            "retried_from": task_id,
+            "message": "入库任务重试成功",
+        }
+
+    async def _restore_document_chunks(
+        self,
+        doc_id: str,
+        title: str,
+        old_chunks: list[dict],
+        content_hash_value: str | None = None,
+    ) -> None:
+        """Restore previously deleted chunks after a failed replacement write."""
+        if not old_chunks:
+            return
+
+        old_embeddings = [ch.get("embedding") for ch in old_chunks]
+        if any(emb is None for emb in old_embeddings):
+            logger.error(f"Cannot restore document without old embeddings: doc_id={doc_id}")
+            return
+
+        old_metadata = dict(old_chunks[0].get("metadata", {}))
+        await self.kb.add_document_chunks(
+            doc_id=doc_id,
+            title=title or old_metadata.get("title", ""),
+            chunks=[ch.get("content", "") for ch in old_chunks],
+            embeddings=old_embeddings,
+            metadata={
+                "path": old_metadata.get("path", ""),
+                "tags": old_metadata.get("tags", ""),
+                "source_path": old_metadata.get("source_path", ""),
+                "source_format": old_metadata.get("source_format", "markdown"),
+                "created_at": old_metadata.get("created_at", ""),
+                "updated_at": old_metadata.get("updated_at", ""),
+                "created_by": old_metadata.get("created_by", "system"),
+                "updated_by": old_metadata.get("updated_by", "system"),
+            },
+        )
+        if content_hash_value:
+            await self.kb.set_doc_content_hash(doc_id, content_hash_value)
+
+    def _add_staging_chunks(
+        self,
+        staging_doc_id: str,
+        target_doc_id: str,
+        title: str,
+        chunks: list[str],
+        embeddings: list[list[float]],
+        metadata: dict,
+    ) -> None:
+        """Write staging chunks directly to Chroma without exposing them in Redis doc index."""
+        ids = [f"{staging_doc_id}#chunk-{i}" for i in range(len(chunks))]
+        metadatas = []
+        for i in range(len(chunks)):
+            item = {
+                **metadata,
+                "doc_id": staging_doc_id,
+                "target_doc_id": target_doc_id,
+                "title": title,
+                "chunk_index": i,
+                "total_chunks": len(chunks),
+                "__write_status": "staging",
+            }
+            if "tags" in item and isinstance(item["tags"], list):
+                item["tags"] = ",".join(item["tags"])
+            metadatas.append(item)
+
+        self.kb.collection.add(
+            ids=ids,
+            documents=chunks,
+            embeddings=embeddings,
+            metadatas=metadatas,
+        )
+
+    def _delete_staging_chunks(self, staging_doc_id: str) -> None:
+        try:
+            results = self.kb.collection.get(where={"doc_id": staging_doc_id})
+            ids = results.get("ids", []) if isinstance(results, dict) else []
+            if ids:
+                self.kb.collection.delete(ids=ids)
+        except Exception:
+            logger.warning(f"Failed to cleanup staging chunks: staging_doc_id={staging_doc_id}")
+            self._record_cleanup_task(
+                cleanup_type="staging_chunks",
+                target=staging_doc_id,
+                payload={"staging_doc_id": staging_doc_id},
+            )
+
+    def _cleanup_staging_source(self, source_path: str) -> None:
+        try:
+            self.source_store.delete_source_by_path(source_path)
+        except Exception as exc:
+            logger.warning(f"Failed to cleanup staging source: {source_path}")
+            self._record_cleanup_task(
+                cleanup_type="staging_source",
+                target=source_path,
+                payload={"source_path": source_path},
+                error=str(exc),
+            )
+
+    def _record_cleanup_task(
+        self,
+        cleanup_type: str,
+        target: str,
+        payload: dict,
+        error: str = "",
+    ) -> str:
+        task_id = f"cleanup-{uuid.uuid4().hex}"
+        self.cleanup_tasks[task_id] = {
+            "task_id": task_id,
+            "type": cleanup_type,
+            "target": target,
+            "payload": payload,
+            "status": "pending",
+            "error": error,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        return task_id
+
+    def retry_cleanup_task(self, task_id: str) -> dict:
+        task = self.cleanup_tasks.get(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail=f"清理任务不存在: {task_id}")
+        try:
+            if task["type"] == "staging_chunks":
+                staging_doc_id = task["payload"]["staging_doc_id"]
+                results = self.kb.collection.get(where={"doc_id": staging_doc_id})
+                ids = results.get("ids", []) if isinstance(results, dict) else []
+                if ids:
+                    self.kb.collection.delete(ids=ids)
+            elif task["type"] == "staging_source":
+                self.source_store.delete_source_by_path(task["payload"]["source_path"])
+            else:
+                raise HTTPException(status_code=400, detail=f"未知清理任务类型: {task['type']}")
+        except Exception as exc:
+            task["status"] = "failed"
+            task["error"] = str(exc)
+            task["updated_at"] = datetime.now(timezone.utc).isoformat()
+            raise
+        task["status"] = "succeeded"
+        task["error"] = ""
+        task["updated_at"] = datetime.now(timezone.utc).isoformat()
+        return {"success": True, "task_id": task_id, "status": task["status"]}
 
     async def update_document(
         self,
@@ -293,10 +460,15 @@ class KnowledgeTools(KnowledgeToolsReader):
                 "skipped": True, "chunks": len(old_chunks),
             }
 
-        # 保存新源文件
-        if old_path and old_path != new_path:
-            self.source_store.move_source(doc_id, old_path, new_path)
-        source_path = self.source_store.save_source(doc_id, content, new_path)
+        old_source_path = old_meta.get("source_path", "")
+        old_source_content = ""
+        try:
+            if old_source_path:
+                old_source_content = self.source_store.get_source_by_full_path(old_source_path) or ""
+            else:
+                old_source_content = self.source_store.get_source(doc_id, old_path) or ""
+        except Exception:
+            old_source_content = ""
 
         chunks = chunk_markdown(content, self.settings.CHUNK_SIZE, self.settings.CHUNK_OVERLAP)
         if not chunks:
@@ -315,25 +487,69 @@ class KnowledgeTools(KnowledgeToolsReader):
             )
 
         new_c_hash = content_hash(content)
+        restore_hash = await self.kb.get_doc_content_hash(doc_id)
+        source_path = ""
+        staging_doc_id = f"{doc_id}__staging__{uuid.uuid4().hex}"
+        staging_source_path = ""
+        deleted_old = False
 
         try:
-            async with self.write_lock:
-                await self.kb.mark_doc_updating(doc_id)
-                await self.kb.delete_document(doc_id)
-                metadata = {
-                    "path": new_path, "tags": tags, "source_path": source_path,
+            staging_source_path = self.source_store.save_source(staging_doc_id, content, new_path)
+            self._add_staging_chunks(
+                staging_doc_id=staging_doc_id,
+                target_doc_id=doc_id,
+                title=title,
+                chunks=chunks,
+                embeddings=embeddings,
+                metadata={
+                    "path": new_path,
+                    "tags": tags,
+                    "source_path": staging_source_path,
                     "source_format": "markdown",
                     "created_at": old_meta.get("created_at", now),
                     "updated_at": now,
                     "created_by": old_meta.get("created_by", updated_by),
                     "updated_by": updated_by,
-                }
-                await self.kb.add_document_chunks(
-                    doc_id=doc_id, title=title,
-                    chunks=chunks, embeddings=embeddings,
-                    metadata=metadata,
-                )
-                await self.kb.set_doc_content_hash(doc_id, new_c_hash)
+                },
+            )
+
+            async with self.write_lock:
+                try:
+                    if old_path and old_path != new_path:
+                        self.source_store.move_source(doc_id, old_path, new_path)
+                    source_path = self.source_store.save_source(doc_id, content, new_path)
+                    await self.kb.mark_doc_updating(doc_id)
+                    await self.kb.delete_document(doc_id)
+                    deleted_old = True
+                    metadata = {
+                        "path": new_path, "tags": tags, "source_path": source_path,
+                        "source_format": "markdown",
+                        "created_at": old_meta.get("created_at", now),
+                        "updated_at": now,
+                        "created_by": old_meta.get("created_by", updated_by),
+                        "updated_by": updated_by,
+                    }
+                    await self.kb.add_document_chunks(
+                        doc_id=doc_id, title=title,
+                        chunks=chunks, embeddings=embeddings,
+                        metadata=metadata,
+                    )
+                    await self.kb.set_doc_content_hash(doc_id, new_c_hash)
+                except Exception:
+                    logger.exception(f"Document update write failed, restoring previous chunks: doc_id={doc_id}")
+                    try:
+                        if old_source_content:
+                            self.source_store.save_source(doc_id, old_source_content, old_path)
+                        if old_path != new_path and source_path:
+                            try:
+                                self.source_store.delete_source_by_path(source_path)
+                            except Exception:
+                                logger.warning(f"Failed to delete failed update source copy: {source_path}")
+                        if deleted_old:
+                            await self._restore_document_chunks(doc_id, old_title, old_chunks, restore_hash)
+                    except Exception:
+                        logger.exception(f"Document restore failed after update write failure: doc_id={doc_id}")
+                    raise
                 logger.info(
                     f"Document updated: doc_id={doc_id}, title={title}, "
                     f"path={new_path}, chunks={len(chunks)} (was {len(old_chunks)})"
@@ -343,6 +559,10 @@ class KnowledgeTools(KnowledgeToolsReader):
                 status_code=423,
                 detail=f"写入锁被占用，文档「{title}」暂时无法更新，请稍后重试",
             )
+        finally:
+            self._delete_staging_chunks(staging_doc_id)
+            if staging_source_path:
+                self._cleanup_staging_source(staging_source_path)
 
         return {"success": True, "doc_id": doc_id, "message": "文档更新成功"}
 
@@ -419,28 +639,51 @@ class KnowledgeTools(KnowledgeToolsReader):
             raise HTTPException(status_code=503, detail=f"重建索引 Embedding 失败。\n{e}")
 
         new_c_hash = content_hash(content)
+        restore_hash = await self.kb.get_doc_content_hash(doc_id)
+        staging_doc_id = f"{doc_id}__staging__{uuid.uuid4().hex}"
+        deleted_old = False
 
         try:
+            now = datetime.now(timezone.utc).isoformat()
+            staging_metadata = {
+                "path": path, "tags": tags, "source_path": source_path,
+                "source_format": "markdown",
+                "created_at": meta.get("created_at", now),
+                "updated_at": now,
+                "created_by": meta.get("created_by", "system"),
+                "updated_by": "reindex",
+            }
+            self._add_staging_chunks(
+                staging_doc_id=staging_doc_id,
+                target_doc_id=doc_id,
+                title=title,
+                chunks=new_chunks,
+                embeddings=embeddings,
+                metadata=staging_metadata,
+            )
             async with self.write_lock:
                 await self.kb.mark_doc_updating(doc_id)
                 await self.kb.delete_document(doc_id)
-                now = datetime.now(timezone.utc).isoformat()
-                metadata = {
-                    "path": path, "tags": tags, "source_path": source_path,
-                    "source_format": "markdown",
-                    "created_at": meta.get("created_at", now),
-                    "updated_at": now,
-                    "created_by": meta.get("created_by", "system"),
-                    "updated_by": "reindex",
-                }
-                await self.kb.add_document_chunks(
-                    doc_id=doc_id, title=title,
-                    chunks=new_chunks, embeddings=embeddings,
-                    metadata=metadata,
-                )
-                await self.kb.set_doc_content_hash(doc_id, new_c_hash)
+                deleted_old = True
+                try:
+                    await self.kb.add_document_chunks(
+                        doc_id=doc_id, title=title,
+                        chunks=new_chunks, embeddings=embeddings,
+                        metadata=staging_metadata,
+                    )
+                    await self.kb.set_doc_content_hash(doc_id, new_c_hash)
+                except Exception:
+                    logger.exception(f"Document reindex write failed, restoring previous chunks: doc_id={doc_id}")
+                    try:
+                        if deleted_old:
+                            await self._restore_document_chunks(doc_id, title, chunks, restore_hash)
+                    except Exception:
+                        logger.exception(f"Document restore failed after reindex write failure: doc_id={doc_id}")
+                    raise
         except WriteLockError:
             raise HTTPException(status_code=423, detail=f"写入锁被占用，文档「{title}」暂时无法重建索引")
+        finally:
+            self._delete_staging_chunks(staging_doc_id)
 
         logger.info(f"Document reindexed: doc_id={doc_id}, title={title}, old={len(chunks)}, new={len(new_chunks)}")
         return {"success": True, "doc_id": doc_id, "chunks_old": len(chunks), "chunks_new": len(new_chunks)}

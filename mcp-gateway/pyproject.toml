@@ -1,23 +1,26 @@
 # 此文件为补充声明（Poetry 格式）。
-# Docker 构建使用 requirements.txt（锁定版本），两者应保持同步。
+# Docker 构建使用 requirements.txt；本文件与 requirements.txt 保持同版本声明。
 # 新增依赖请同时更新 requirements.txt。
 
 [tool.poetry.dependencies]
 python = "^3.11"
-fastapi = "^0.115.0"
-uvicorn = {extras = ["standard"], version = "^0.34.0"}
-python-multipart = "^0.0.20"
-jinja2 = "^3.1.0"
-httpx = "^0.28.0"
-redis = "^5.2.0"
-chromadb = "^0.6.0"
-bcrypt = "^4.3.0"
-python-jose = {extras = ["cryptography"], version = "^3.4.0"}
-pydantic = "^2.11.0"
-pydantic-settings = "^2.9.0"
-minio = "^7.2.0"
-python-markdown = "^3.8.0"
-mcp = "^1.6.0"
+fastapi = "0.135.3"
+uvicorn = {extras = ["standard"], version = "0.44.0"}
+python-multipart = "0.0.26"
+jinja2 = "3.1.6"
+httpx = "0.28.1"
+redis = "7.4.0"
+chromadb = "1.5.9"
+bcrypt = "5.0.0"
+python-jose = {extras = ["cryptography"], version = "3.5.0"}
+pydantic = "2.12.5"
+pydantic-core = "2.41.5"
+pydantic-settings = "2.12.0"
+minio = "7.2.20"
+Markdown = "3.10.2"
+mcp = "1.16.0"
+starlette = "1.0.0"
+graphifyy = ">=0.8.22"
 
 [build-system]
 requires = ["poetry-core"]

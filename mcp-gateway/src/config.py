@@ -2,11 +2,17 @@ import os
 from functools import lru_cache
 
 from pydantic import model_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """应用全局配置，支持环境变量 + .env 文件"""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     # 服务
     APP_NAME: str = "Knowledge Base Management"
@@ -33,6 +39,10 @@ class Settings(BaseSettings):
     # Ollama
     OLLAMA_URL: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "bge-m3"
+    EMBEDDING_FALLBACKS: str = ""
+    EMBEDDING_HEALTH_CACHE_TTL: int = 30
+    EMBEDDING_FAILURE_THRESHOLD: int = 3
+    EMBEDDING_CIRCUIT_COOLDOWN: int = 30
 
     # MinIO
     MINIO_ENDPOINT: str = "localhost:9000"
@@ -56,11 +66,6 @@ class Settings(BaseSettings):
     EXTERNAL_DOMAIN: str = "kb.company.com"
     INTERNAL_DOMAIN: str = "kb.internal.company.com"
     CORS_ORIGINS: str = "*"
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        extra = "ignore"
 
     _DEFAULT_ADMIN_FILE = "/app/config/admin_accounts.json"
     _DEFAULT_API_KEY_FILE = "/app/config/api_keys.json"

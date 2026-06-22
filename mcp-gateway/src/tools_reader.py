@@ -5,9 +5,17 @@ from fastapi import HTTPException
 
 from knowledge_base import KnowledgeBase
 from source_store import SourceStore
-from embedding import OllamaEmbedder, EmbeddingError
+from embedding import OllamaEmbedder
 from directory_tree import DirectoryTree
 from logger import get_logger
+from rag.retrieval import (
+    KeywordChannel,
+    RetrievalPipeline,
+    RetrievalQuery,
+    StructureChannel,
+    VectorChannel,
+)
+from rag.keyword_index import KeywordInvertedIndex
 
 logger = get_logger()
 
@@ -26,6 +34,16 @@ class KnowledgeToolsReader:
         self.embedder = embedder
         self.source_store = source_store
         self.redis = redis_client
+        self.keyword_index = KeywordInvertedIndex()
+        self.retrieval_pipeline = RetrievalPipeline(
+            channels=[
+                VectorChannel(kb, embedder),
+                KeywordChannel(kb, self.keyword_index),
+                StructureChannel(kb),
+            ],
+            kb=kb,
+            neighbor_window=1,
+        )
 
     async def search_knowledge(
         self,
@@ -39,23 +57,17 @@ class KnowledgeToolsReader:
             raise HTTPException(status_code=400, detail="查询内容不能为空")
 
         try:
-            query_embedding = await self.embedder.embed_single(query)
-        except EmbeddingError as e:
-            raise HTTPException(
-                status_code=503,
-                detail=f"Embedding 服务异常，无法生成查询向量。{e}",
-            )
-        if not query_embedding:
-            raise HTTPException(
-                status_code=503,
-                detail="Embedding 服务不可用，请检查 Ollama 是否正常运行",
-            )
+            await self.keyword_index.rebuild(self.kb)
+        except Exception as e:
+            logger.warning(f"Failed to rebuild keyword index, falling back to scan: {e}")
 
-        results = await self.kb.search(
-            query_embedding=query_embedding,
-            top_k=top_k,
-            filter_tags=filter_tags,
-            filter_path=filter_path,
+        results = await self.retrieval_pipeline.search(
+            RetrievalQuery(
+                text=query,
+                top_k=top_k,
+                filter_tags=filter_tags or [],
+                filter_path=filter_path,
+            )
         )
 
         # 异步记录检索次数（REST API 和 MCP 共享此计数）
@@ -78,20 +90,9 @@ class KnowledgeToolsReader:
 
         return {
             "query": query,
-            "results": [
-                {
-                    "content": r.content,
-                    "title": r.title,
-                    "path": r.path,
-                    "source_path": r.source_path,
-                    "doc_id": r.doc_id,
-                    "chunk_index": r.chunk_index,
-                    "total_chunks": r.total_chunks,
-                    "score": round(r.score, 4),
-                }
-                for r in results
-            ],
+            "results": results,
             "total": len(results),
+            "retrieval_errors": self.retrieval_pipeline.last_errors,
         }
 
     async def list_documents(

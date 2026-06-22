@@ -18,11 +18,12 @@ from admin_auth import AdminAuth
 from lock import WriteLock
 from knowledge_base import KnowledgeBase
 from source_store import SourceStore
-from embedding import OllamaEmbedder
+from embedding import build_embedding_provider
 from tools import KnowledgeTools
 from server import create_mcp_server
 from logger import setup_logger
 from middleware import request_logging_middleware, csrf_middleware
+from mcp_auth_context import set_mcp_api_key_info, reset_mcp_api_key_info
 from api_routes import api_router
 from mcp.server.sse import SseServerTransport
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
@@ -68,7 +69,14 @@ async def lifespan(app: FastAPI):
             bucket=settings.MINIO_BUCKET,
         )
         logger.warning(f"MinIO unavailable ({e}), using LocalFileStore at {fallback_base}")
-    app.state.embedder = OllamaEmbedder(settings.OLLAMA_URL, settings.OLLAMA_MODEL)
+    app.state.embedder = build_embedding_provider(
+        primary_url=settings.OLLAMA_URL,
+        primary_model=settings.OLLAMA_MODEL,
+        fallback_specs=settings.EMBEDDING_FALLBACKS,
+        health_cache_ttl=settings.EMBEDDING_HEALTH_CACHE_TTL,
+        failure_threshold=settings.EMBEDDING_FAILURE_THRESHOLD,
+        circuit_cooldown=settings.EMBEDDING_CIRCUIT_COOLDOWN,
+    )
     app.state.api_key_auth = APIKeyAuth(app.state.redis, settings.API_KEY_FILE)
     app.state.admin_auth = AdminAuth(
         app.state.redis,
@@ -219,14 +227,18 @@ class _MCPRoute(BaseRoute):
 
         request = Request(scope, receive)
         try:
-            await request.app.state.api_key_auth.authenticate(request)
+            api_key_info = await request.app.state.api_key_auth.authenticate(request)
         except HTTPException as e:
             resp = JSONResponse(status_code=e.status_code, content={"detail": e.detail})
             await resp(scope, receive, send)
             return
 
         # 委托给官方 Session Manager —— 它处理会话创建、transport 生命周期和消息路由
-        await request.app.state.mcp_session_manager.handle_request(scope, receive, send)
+        token = set_mcp_api_key_info(api_key_info)
+        try:
+            await request.app.state.mcp_session_manager.handle_request(scope, receive, send)
+        finally:
+            reset_mcp_api_key_info(token)
 
     def matches(self, scope: Scope) -> tuple[Match, dict[str, str]]:
         if scope["path"] in ("/mcp", "/mcp/") and scope["method"] in ("GET", "POST", "DELETE"):
@@ -248,26 +260,34 @@ async def mcp_sse_endpoint(request: Request):
             (b"x-api-key", request.query_params["api_key"].encode())
         )
     api_key_auth = get_api_key_auth(request)
-    await api_key_auth.authenticate(request)
+    api_key_info = await api_key_auth.authenticate(request)
 
-    async with request.app.state.sse_transport.connect_sse(
-        request.scope, request.receive, request._send
-    ) as (read_stream, write_stream):
-        await request.app.state.mcp_server.run(
-            read_stream,
-            write_stream,
-            request.app.state.mcp_server.create_initialization_options(),
-        )
+    token = set_mcp_api_key_info(api_key_info)
+    try:
+        async with request.app.state.sse_transport.connect_sse(
+            request.scope, request.receive, request._send
+        ) as (read_stream, write_stream):
+            await request.app.state.mcp_server.run(
+                read_stream,
+                write_stream,
+                request.app.state.mcp_server.create_initialization_options(),
+            )
+    finally:
+        reset_mcp_api_key_info(token)
 
 
 @app.post("/sse/messages/")
 async def mcp_sse_messages(request: Request):
     """MCP SSE 消息端点（客户端通过 POST 发送请求到此端点）"""
     api_key_auth = get_api_key_auth(request)
-    await api_key_auth.authenticate(request)
-    await request.app.state.sse_transport.handle_post_message(
-        request.scope, request.receive, request._send
-    )
+    api_key_info = await api_key_auth.authenticate(request)
+    token = set_mcp_api_key_info(api_key_info)
+    try:
+        await request.app.state.sse_transport.handle_post_message(
+            request.scope, request.receive, request._send
+        )
+    finally:
+        reset_mcp_api_key_info(token)
 
 
 # ---------- REST API / Health / Metrics ----------

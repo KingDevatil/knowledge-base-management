@@ -1,6 +1,11 @@
 """Security unit tests: Open Redirect, rate limiting, Pydantic validation, CSRF."""
 import sys
 import os
+import io
+import tarfile
+import zipfile
+import json
+from types import SimpleNamespace
 
 # Set DEBUG mode before any project imports to prevent SESSION_SECRET validation
 os.environ["DEBUG"] = "true"
@@ -8,10 +13,17 @@ os.environ["DEBUG"] = "true"
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 import pytest
-from models import AddDocumentRequest, UpdateDocumentRequest, MAX_CONTENT_LENGTH
+from fastapi import HTTPException
+
+from models import APIKeyInfo, AddDocumentRequest, UpdateDocumentRequest, MAX_CONTENT_LENGTH
 
 # Import the validate function (we need to test it directly)
 from admin.routes_api import _validate_redirect_url
+from admin.archive_security import ArchiveValidationError, safe_extract_archive, validate_archive_size
+from admin.routes_documents_api import _upload_basename
+from mcp_auth_context import reset_mcp_api_key_info, set_mcp_api_key_info
+from server import MCP_TOOL_METADATA, require_mcp_tool_scope
+from api_routes import health_check
 
 
 # ==================== Open Redirect Tests ====================
@@ -50,6 +62,159 @@ class TestRedirectValidation:
         """Custom default should work."""
         assert _validate_redirect_url("", "/admin/settings") == "/admin/settings"
         assert _validate_redirect_url("https://evil.com", "/admin/settings") == "/admin/settings"
+
+
+# ==================== MCP Scope Tests ====================
+
+def _api_key_info(scope: list[str]) -> APIKeyInfo:
+    return APIKeyInfo(
+        key_prefix="sk-test",
+        applicant="tester",
+        scope=scope,
+        rate_limit=30,
+        status="active",
+        duration="7d",
+        created_at="2026-01-01T00:00:00Z",
+        expires_at="",
+    )
+
+
+class TestMCPScopeGuards:
+    """MCP write tools must require write scope, matching the REST API."""
+
+    def test_write_tool_metadata_requires_write_scope(self):
+        assert MCP_TOOL_METADATA["add_document"]["required_scope"] == "write"
+        assert MCP_TOOL_METADATA["update_document"]["required_scope"] == "write"
+        assert MCP_TOOL_METADATA["delete_document"]["required_scope"] == "write"
+        assert MCP_TOOL_METADATA["search_knowledge"]["required_scope"] == "read"
+
+    def test_read_key_cannot_call_write_tool(self):
+        token = set_mcp_api_key_info(_api_key_info(["read"]))
+        try:
+            with pytest.raises(HTTPException) as exc:
+                require_mcp_tool_scope("add_document")
+            assert exc.value.status_code == 403
+        finally:
+            reset_mcp_api_key_info(token)
+
+    def test_write_key_can_call_write_tool(self):
+        token = set_mcp_api_key_info(_api_key_info(["read", "write"]))
+        try:
+            require_mcp_tool_scope("add_document")
+        finally:
+            reset_mcp_api_key_info(token)
+
+
+# ==================== Health Check Tests ====================
+
+class TestHealthCheck:
+    """Health endpoint should expose embedding provider status without breaking legacy service status."""
+
+    @pytest.mark.asyncio
+    async def test_health_includes_embedding_provider_status(self):
+        class Redis:
+            async def ping(self):
+                return True
+
+        class Chroma:
+            def heartbeat(self):
+                return True
+
+        class Embedder:
+            async def health_check(self):
+                return True
+
+            def status(self):
+                return [{"name": "fake", "failures": 0, "circuit_open": False, "cached_health": True}]
+
+        class Store:
+            def bucket_exists(self, bucket):
+                return True
+
+        request = SimpleNamespace(
+            app=SimpleNamespace(
+                state=SimpleNamespace(
+                    redis=Redis(),
+                    chroma=Chroma(),
+                    embedder=Embedder(),
+                    source_store=Store(),
+                )
+            )
+        )
+
+        response = await health_check(request)
+        payload = json.loads(response.body)
+
+        assert response.status_code == 200
+        assert payload["services"]["ollama"] == "ok"
+        assert payload["embedding_providers"][0]["name"] == "fake"
+
+
+# ==================== Archive Extraction Tests ====================
+
+class TestArchiveSecurity:
+    """Uploaded archives must not write outside the temporary extraction directory."""
+
+    def test_safe_zip_extracts_markdown(self, tmp_path):
+        archive = tmp_path / "docs.zip"
+        extract_dir = tmp_path / "extract"
+        extract_dir.mkdir()
+
+        with zipfile.ZipFile(archive, "w") as zf:
+            zf.writestr("guide/readme.md", "# Readme")
+
+        extracted = safe_extract_archive(str(archive), str(extract_dir), "docs.zip")
+        assert extracted == 1
+        assert (extract_dir / "guide" / "readme.md").read_text(encoding="utf-8") == "# Readme"
+
+    def test_zip_slip_path_is_rejected(self, tmp_path):
+        archive = tmp_path / "evil.zip"
+        extract_dir = tmp_path / "extract"
+        extract_dir.mkdir()
+
+        with zipfile.ZipFile(archive, "w") as zf:
+            zf.writestr("../evil.md", "# Evil")
+
+        with pytest.raises(ArchiveValidationError):
+            safe_extract_archive(str(archive), str(extract_dir), "evil.zip")
+        assert not (tmp_path / "evil.md").exists()
+
+    def test_tar_slip_path_is_rejected(self, tmp_path):
+        archive = tmp_path / "evil.tar.gz"
+        extract_dir = tmp_path / "extract"
+        extract_dir.mkdir()
+
+        with tarfile.open(archive, "w:gz") as tf:
+            data = b"# Evil"
+            info = tarfile.TarInfo("../evil.md")
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+
+        with pytest.raises(ArchiveValidationError):
+            safe_extract_archive(str(archive), str(extract_dir), "evil.tar.gz")
+        assert not (tmp_path / "evil.md").exists()
+
+    def test_tar_symlink_is_rejected(self, tmp_path):
+        archive = tmp_path / "symlink.tar.gz"
+        extract_dir = tmp_path / "extract"
+        extract_dir.mkdir()
+
+        with tarfile.open(archive, "w:gz") as tf:
+            info = tarfile.TarInfo("link.md")
+            info.type = tarfile.SYMTYPE
+            info.linkname = "../outside.md"
+            tf.addfile(info)
+
+        with pytest.raises(ArchiveValidationError):
+            safe_extract_archive(str(archive), str(extract_dir), "symlink.tar.gz")
+
+    def test_archive_size_limit_is_enforced(self):
+        with pytest.raises(ArchiveValidationError):
+            validate_archive_size(b"x" * (200 * 1024 * 1024 + 1))
+
+    def test_upload_filename_is_reduced_to_basename(self):
+        assert _upload_basename("../evil.zip") == "evil.zip"
+        assert _upload_basename(r"..\evil.zip") == "evil.zip"
 
 
 # ==================== Pydantic Model Validation Tests ====================

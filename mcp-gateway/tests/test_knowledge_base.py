@@ -40,6 +40,7 @@ class MockCollection:
                 "id": chunk_id,
                 "document": documents[i] if documents else "",
                 "metadata": metadatas[i] if metadatas else {},
+                "embedding": embeddings[i] if embeddings else None,
             })
 
     def get(self, ids=None, where=None, include=None, limit=None, offset=None):
@@ -57,6 +58,8 @@ class MockCollection:
                 result["documents"] = [d["document"] for d in filtered]
             if "metadatas" in include:
                 result["metadatas"] = [d["metadata"] for d in filtered]
+            if "embeddings" in include:
+                result["embeddings"] = [d["embedding"] for d in filtered]
         return result
 
     def query(self, query_embeddings, n_results=5, where=None, include=None):
@@ -300,7 +303,8 @@ class TestKnowledgeBase:
         await kb._doc_index_set("d1", {"doc_id": "d1", "title": "Doc 1", "path": "a", "tags": [], "chunk_count": 2, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"})
         await kb._doc_index_set("d2", {"doc_id": "d2", "title": "Doc 2", "path": "b", "tags": [], "chunk_count": 1, "created_at": "2026-06-01T00:00:00Z", "updated_at": "2026-06-01T00:00:00Z"})
 
-        docs = await kb.list_documents(limit=10)
+        docs, total = await kb.list_documents(limit=10)
+        assert total == 2
         assert len(docs) == 2
         # Should be sorted by created_at desc (d2 first)
         assert docs[0].doc_id == "d2"
@@ -312,7 +316,8 @@ class TestKnowledgeBase:
         await kb._doc_index_set("d1", {"doc_id": "d1", "title": "D1", "path": "games", "tags": [], "chunk_count": 1, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"})
         await kb._doc_index_set("d2", {"doc_id": "d2", "title": "D2", "path": "docs", "tags": [], "chunk_count": 1, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"})
 
-        docs = await kb.list_documents(path="games")
+        docs, total = await kb.list_documents(path="games")
+        assert total == 1
         assert len(docs) == 1
         assert docs[0].doc_id == "d1"
 
@@ -323,10 +328,12 @@ class TestKnowledgeBase:
             await kb._doc_index_set(f"d{i}", {"doc_id": f"d{i}", "title": f"Doc {i}", "path": "", "tags": [], "chunk_count": 1, "created_at": f"2026-01-{i+1:02d}T00:00:00Z", "updated_at": f"2026-01-{i+1:02d}T00:00:00Z"})
 
         # First page
-        page1 = await kb.list_documents(limit=2, offset=0)
+        page1, total = await kb.list_documents(limit=2, offset=0)
+        assert total == 5
         assert len(page1) == 2
         # Second page
-        page2 = await kb.list_documents(limit=2, offset=2)
+        page2, total = await kb.list_documents(limit=2, offset=2)
+        assert total == 5
         assert len(page2) == 2
 
     @pytest.mark.asyncio
@@ -355,6 +362,7 @@ class TestKnowledgeBase:
         assert chunks[0]["metadata"]["chunk_index"] == 0
         assert chunks[1]["metadata"]["chunk_index"] == 1
         assert chunks[2]["metadata"]["chunk_index"] == 2
+        assert chunks[0]["embedding"] == [0.0]
 
     @pytest.mark.asyncio
     async def test_search_returns_results(self, kb):
@@ -402,9 +410,11 @@ class TestKnowledgeBase:
         await kb._doc_index_set("d3", {"doc_id": "d3", "title": "D3", "path": "docs", "tags": [], "chunk_count": 1, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"})
 
         # games + subpath should return both
-        docs = await kb.list_documents_by_paths(paths=["games"])
+        docs, total = await kb.list_documents_by_paths(paths=["games"])
+        assert total == 2
         assert len(docs) == 2
 
         # games + docs should return all
-        docs = await kb.list_documents_by_paths(paths=["games", "docs"])
+        docs, total = await kb.list_documents_by_paths(paths=["games", "docs"])
+        assert total == 3
         assert len(docs) == 3

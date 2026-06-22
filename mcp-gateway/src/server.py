@@ -1,12 +1,48 @@
 import json
 from typing import Any
 
+from fastapi import HTTPException, status
 from mcp.server import Server
 from mcp.types import TextContent, Tool
 
 from config import get_settings
 from kb_graph import KnowledgeGraphBuilder
+from mcp_auth_context import get_mcp_api_key_info
 from tools import KnowledgeTools
+
+
+MCP_TOOL_METADATA = {
+    "search_knowledge": {"required_scope": "read", "category": "read", "risk_level": "low"},
+    "get_document": {"required_scope": "read", "category": "read", "risk_level": "low"},
+    "list_documents": {"required_scope": "read", "category": "read", "risk_level": "low"},
+    "list_directories": {"required_scope": "read", "category": "read", "risk_level": "low"},
+    "add_document": {"required_scope": "write", "category": "write", "risk_level": "high"},
+    "update_document": {"required_scope": "write", "category": "write", "risk_level": "high"},
+    "delete_document": {"required_scope": "write", "category": "write", "risk_level": "high"},
+    "rename_directory": {"required_scope": "write", "category": "write", "risk_level": "high"},
+    "delete_directory": {"required_scope": "write", "category": "write", "risk_level": "high"},
+    "reindex_document": {"required_scope": "write", "category": "write", "risk_level": "medium"},
+    "build_knowledge_graph": {"required_scope": "write", "category": "admin", "risk_level": "medium"},
+}
+
+
+def require_mcp_tool_scope(tool_name: str) -> None:
+    metadata = MCP_TOOL_METADATA.get(tool_name)
+    if metadata is None:
+        return
+
+    required_scope = metadata["required_scope"]
+    api_key_info = get_mcp_api_key_info()
+    if api_key_info is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="MCP 工具调用缺少认证上下文",
+        )
+    if required_scope not in api_key_info.scope:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"MCP 工具 {tool_name} 需要 {required_scope} 权限",
+        )
 
 
 def create_mcp_server(tools: KnowledgeTools) -> Server:
@@ -192,8 +228,11 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
         if handler is None:
             return _make_result({"error": f"未知工具: {name}"})
         try:
+            require_mcp_tool_scope(name)
             result = await handler(arguments, tools)
             return _make_result(result)
+        except HTTPException as e:
+            return _make_result({"error": e.detail, "status_code": e.status_code})
         except Exception as e:
             return _make_result({"error": str(e)})
 

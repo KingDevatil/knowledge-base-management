@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+
+{% block title %}维护诊断 - 中央知识库{% endblock %}
+
+{% block content %}
+<header class="glass-header sticky top-0 z-20 border-b border-slate-200/80 dark:border-slate-800/80 px-8 py-4">
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-xl font-bold text-slate-900 dark:text-white">维护诊断</h1>
+            <p class="text-sm text-slate-500 dark:text-slate-400 mt-0.5">入库任务、清理任务与一致性诊断</p>
+        </div>
+    </div>
+</header>
+
+<div class="px-8 py-6 space-y-6">
+    <section class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6">
+        <div class="flex items-center justify-between mb-4">
+            <div class="flex items-center gap-3">
+                <div class="w-9 h-9 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 flex items-center justify-center">
+                    <i data-lucide="scan-search" class="w-5 h-5 text-emerald-600 dark:text-emerald-400"></i>
+                </div>
+                <div>
+                    <h2 class="text-base font-semibold text-slate-900 dark:text-white">一致性诊断</h2>
+                    <p class="text-xs text-slate-500 dark:text-slate-400">Redis 索引、Chroma 切片、源文件引用</p>
+                </div>
+            </div>
+            <span class="text-sm font-medium {% if consistency.success %}text-emerald-600 dark:text-emerald-400{% else %}text-red-600 dark:text-red-400{% endif %}">
+                {{ "正常" if consistency.success else "需处理" }}
+            </span>
+        </div>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+            <div class="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-4">
+                <p class="text-xs text-slate-500">索引文档</p>
+                <p class="text-2xl font-bold">{{ consistency.stats.indexed_documents or 0 }}</p>
+            </div>
+            <div class="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-4">
+                <p class="text-xs text-slate-500">向量文档</p>
+                <p class="text-2xl font-bold">{{ consistency.stats.chroma_documents or 0 }}</p>
+            </div>
+            <div class="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-4">
+                <p class="text-xs text-slate-500">错误</p>
+                <p class="text-2xl font-bold text-red-600 dark:text-red-400">{{ consistency.stats.errors or 0 }}</p>
+            </div>
+            <div class="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-4">
+                <p class="text-xs text-slate-500">警告</p>
+                <p class="text-2xl font-bold text-amber-600 dark:text-amber-400">{{ consistency.stats.warnings or 0 }}</p>
+            </div>
+        </div>
+        <div class="space-y-2">
+            {% for issue in consistency.issues %}
+            <div class="rounded-xl border border-slate-200 dark:border-slate-800 px-4 py-3 text-sm">
+                <span class="font-semibold">{{ issue.code }}</span>
+                <span class="text-slate-500">doc_id={{ issue.doc_id or "-" }}</span>
+                <p class="text-slate-600 dark:text-slate-300 mt-1">{{ issue.message }}</p>
+            </div>
+            {% else %}
+            <p class="text-sm text-slate-500">未发现一致性问题。</p>
+            {% endfor %}
+        </div>
+    </section>
+
+    <section class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6">
+            <h2 class="text-base font-semibold text-slate-900 dark:text-white mb-4">入库任务</h2>
+            <div class="space-y-3">
+                {% for task in ingestion_tasks %}
+                <div class="rounded-xl border border-slate-200 dark:border-slate-800 p-4">
+                    <div class="flex items-start justify-between gap-3">
+                        <div>
+                            <p class="text-sm font-semibold">{{ task.title or task.doc_id }}</p>
+                            <p class="text-xs text-slate-500 mt-1">{{ task.task_id }}</p>
+                            <p class="text-xs text-slate-500 mt-1">节点：{{ task.current_node or "-" }} · {{ task.error or "无错误" }}</p>
+                        </div>
+                        <span class="text-xs px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800">{{ task.status }}</span>
+                    </div>
+                    {% if task.status == "failed" %}
+                    <form method="post" action="/admin/api/ingestion-tasks/{{ task.task_id }}/retry" class="mt-3">
+                        <button class="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-brand-600 text-white text-sm hover:bg-brand-700">
+                            <i data-lucide="rotate-cw" class="w-4 h-4"></i>
+                            重试
+                        </button>
+                    </form>
+                    {% endif %}
+                </div>
+                {% else %}
+                <p class="text-sm text-slate-500">暂无入库任务。</p>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6">
+            <h2 class="text-base font-semibold text-slate-900 dark:text-white mb-4">清理任务</h2>
+            <div class="space-y-3">
+                {% for task in cleanup_tasks %}
+                <div class="rounded-xl border border-slate-200 dark:border-slate-800 p-4">
+                    <div class="flex items-start justify-between gap-3">
+                        <div>
+                            <p class="text-sm font-semibold">{{ task.type }} · {{ task.target }}</p>
+                            <p class="text-xs text-slate-500 mt-1">{{ task.task_id }}</p>
+                            <p class="text-xs text-slate-500 mt-1">{{ task.error or "无错误" }}</p>
+                        </div>
+                        <span class="text-xs px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800">{{ task.status }}</span>
+                    </div>
+                    {% if task.status != "succeeded" %}
+                    <form method="post" action="/admin/api/cleanup-tasks/{{ task.task_id }}/retry" class="mt-3">
+                        <button class="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-brand-600 text-white text-sm hover:bg-brand-700">
+                            <i data-lucide="rotate-cw" class="w-4 h-4"></i>
+                            重试清理
+                        </button>
+                    </form>
+                    {% endif %}
+                </div>
+                {% else %}
+                <p class="text-sm text-slate-500">暂无清理任务。</p>
+                {% endfor %}
+            </div>
+        </div>
+    </section>
+</div>
+{% endblock %}

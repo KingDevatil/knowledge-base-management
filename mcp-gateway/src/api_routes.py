@@ -121,6 +121,8 @@ async def health_check(request: Request):
     try:
         ollama_ok = await request.app.state.embedder.health_check()
         health["services"]["ollama"] = "ok" if ollama_ok else "unavailable"
+        if hasattr(request.app.state.embedder, "status"):
+            health["embedding_providers"] = request.app.state.embedder.status()
         if not ollama_ok:
             health["status"] = "degraded"
     except Exception as e:

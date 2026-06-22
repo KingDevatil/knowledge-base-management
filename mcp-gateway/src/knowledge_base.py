@@ -269,17 +269,21 @@ class KnowledgeBase:
         """获取某文档的所有切片"""
         results = self.collection.get(
             where={"doc_id": doc_id},
-            include=["documents", "metadatas"]
+            include=["documents", "metadatas", "embeddings"]
         )
 
         chunks = []
         if results["ids"]:
             for i in range(len(results["ids"])):
-                chunks.append({
+                chunk = {
                     "id": results["ids"][i],
                     "content": results["documents"][i] if results["documents"] else "",
                     "metadata": results["metadatas"][i] if results["metadatas"] else {},
-                })
+                }
+                embeddings = results.get("embeddings")
+                if embeddings is not None and i < len(embeddings):
+                    chunk["embedding"] = embeddings[i]
+                chunks.append(chunk)
             chunks.sort(key=lambda x: x["metadata"].get("chunk_index", 0))
         return chunks
 

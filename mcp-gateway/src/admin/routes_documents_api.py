@@ -1,8 +1,6 @@
 """Admin document management API routes — upload, CRUD, reindex."""
 import os
 import tempfile
-import zipfile
-import tarfile
 import shutil
 from urllib.parse import quote
 
@@ -12,8 +10,79 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Stre
 from lock import WriteLockError
 from models import ReindexByPathRequest
 from .helpers import require_admin, require_editor, get_current_user, check_path_access
+from .archive_security import (
+    ArchiveValidationError,
+    safe_extract_archive,
+    validate_archive_size,
+)
 
 documents_router = APIRouter()
+
+
+def _upload_basename(filename: str) -> str:
+    return filename.replace("\\", "/").rsplit("/", 1)[-1]
+
+
+# ---------- 入库任务 (admin only) ----------
+
+@documents_router.get("/api/ingestion-tasks")
+async def api_ingestion_tasks(
+    request: Request,
+    limit: int = 50,
+    user: dict = Depends(require_admin),
+):
+    tools = request.app.state.tools
+    tasks = list(getattr(tools, "ingestion_tasks", {}).values())
+    tasks.sort(key=lambda item: item.get("started_at", ""), reverse=True)
+    limit = max(1, min(limit, 200))
+    return JSONResponse({
+        "tasks": tasks[:limit],
+        "total": len(tasks),
+        "limit": limit,
+    })
+
+
+@documents_router.post("/api/ingestion-tasks/{task_id}/retry")
+async def api_retry_ingestion_task(
+    request: Request,
+    task_id: str,
+    user: dict = Depends(require_admin),
+):
+    tools = request.app.state.tools
+    result = await tools.retry_ingestion_task(task_id, retried_by=user["username"])
+    if "application/json" not in request.headers.get("accept", ""):
+        return RedirectResponse(url="/admin/maintenance", status_code=302)
+    return JSONResponse(result)
+
+
+@documents_router.get("/api/cleanup-tasks")
+async def api_cleanup_tasks(
+    request: Request,
+    limit: int = 50,
+    user: dict = Depends(require_admin),
+):
+    tools = request.app.state.tools
+    tasks = list(getattr(tools, "cleanup_tasks", {}).values())
+    tasks.sort(key=lambda item: item.get("created_at", ""), reverse=True)
+    limit = max(1, min(limit, 200))
+    return JSONResponse({
+        "tasks": tasks[:limit],
+        "total": len(tasks),
+        "limit": limit,
+    })
+
+
+@documents_router.post("/api/cleanup-tasks/{task_id}/retry")
+async def api_retry_cleanup_task(
+    request: Request,
+    task_id: str,
+    user: dict = Depends(require_admin),
+):
+    tools = request.app.state.tools
+    result = tools.retry_cleanup_task(task_id)
+    if "application/json" not in request.headers.get("accept", ""):
+        return RedirectResponse(url="/admin/maintenance", status_code=302)
+    return JSONResponse(result)
 
 
 # ---------- 文档上传 (admin only) ----------
@@ -41,7 +110,12 @@ async def api_batch_upload(
                 title=title, markdown_content=content, path=path,
                 tags=tag_list, created_by=user["username"],
             )
-            results.append({"filename": file.filename, "status": "ok", "doc_id": result["doc_id"]})
+            results.append({
+                "filename": file.filename,
+                "status": "ok",
+                "doc_id": result["doc_id"],
+                "task_id": result.get("task_id", ""),
+            })
         except UnicodeDecodeError:
             results.append({"filename": file.filename, "status": "error", "reason": "编码错误，请使用 UTF-8"})
         except WriteLockError:
@@ -49,7 +123,10 @@ async def api_batch_upload(
         except Exception as e:
             results.append({"filename": file.filename, "status": "error", "reason": str(e)})
 
-    return JSONResponse({"results": results})
+    return JSONResponse({
+        "results": results,
+        "tasks": [item["task_id"] for item in results if item.get("task_id")],
+    })
 
 
 # ---------- 压缩包上传 (admin only) ----------
@@ -71,22 +148,26 @@ async def api_upload_archive(
         return JSONResponse({"error": "仅支持 .zip / .tar.gz"}, status_code=400)
 
     tmpdir = tempfile.mkdtemp(prefix="kb_archive_")
-    archive_path = os.path.join(tmpdir, file.filename)
+    archive_name = _upload_basename(file.filename)
+    archive_path = os.path.join(tmpdir, archive_name)
 
     try:
         content = await file.read()
+        try:
+            validate_archive_size(content)
+        except ArchiveValidationError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+
         with open(archive_path, 'wb') as f:
             f.write(content)
 
         extract_dir = os.path.join(tmpdir, "extracted")
         os.makedirs(extract_dir, exist_ok=True)
 
-        if ext.endswith('.zip'):
-            with zipfile.ZipFile(archive_path, 'r') as zf:
-                zf.extractall(extract_dir)
-        else:
-            with tarfile.open(archive_path, 'r:gz') as tf:
-                tf.extractall(extract_dir)
+        try:
+            safe_extract_archive(archive_path, extract_dir, archive_name)
+        except ArchiveValidationError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
 
         md_files = []
         for root, dirs, files_ in os.walk(extract_dir):
@@ -130,7 +211,13 @@ async def api_upload_archive(
                     path=merged_path, tags=tag_list,
                     created_by=user["username"],
                 )
-                results.append({"filename": fn, "path": merged_path, "status": "ok", "doc_id": result["doc_id"]})
+                results.append({
+                    "filename": fn,
+                    "path": merged_path,
+                    "status": "ok",
+                    "doc_id": result["doc_id"],
+                    "task_id": result.get("task_id", ""),
+                })
                 success += 1
             except WriteLockError:
                 results.append({"filename": fn, "status": "error", "reason": "写锁被占用"})
@@ -139,6 +226,7 @@ async def api_upload_archive(
 
         return JSONResponse({
             "results": results,
+            "tasks": [item["task_id"] for item in results if item.get("task_id")],
             "total": len(md_files),
             "success": success,
             "failed": len(md_files) - success,
@@ -164,16 +252,15 @@ async def api_preview_archive(
     if not (ext.endswith('.zip') or ext.endswith('.tar.gz') or ext.endswith('.tgz')):
         return JSONResponse({"error": "仅支持 .zip / .tar.gz"}, status_code=400)
 
-    MAX_SIZE = 200 * 1024 * 1024
     content = await file.read()
-    if len(content) > MAX_SIZE:
-        return JSONResponse(
-            {"error": f"压缩包过大（{len(content) // 1024 // 1024}MB），最大支持 200MB"},
-            status_code=400,
-        )
+    try:
+        validate_archive_size(content)
+    except ArchiveValidationError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
 
     tmpdir = tempfile.mkdtemp(prefix="kb_preview_")
-    archive_path = os.path.join(tmpdir, file.filename)
+    archive_name = _upload_basename(file.filename)
+    archive_path = os.path.join(tmpdir, archive_name)
 
     try:
         with open(archive_path, 'wb') as f:
@@ -182,12 +269,10 @@ async def api_preview_archive(
         extract_dir = os.path.join(tmpdir, "extracted")
         os.makedirs(extract_dir, exist_ok=True)
 
-        if ext.endswith('.zip'):
-            with zipfile.ZipFile(archive_path, 'r') as zf:
-                zf.extractall(extract_dir)
-        else:
-            with tarfile.open(archive_path, 'r:gz') as tf:
-                tf.extractall(extract_dir)
+        try:
+            safe_extract_archive(archive_path, extract_dir, archive_name)
+        except ArchiveValidationError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
 
         files = []
         for root, dirs, fnames in os.walk(extract_dir):
