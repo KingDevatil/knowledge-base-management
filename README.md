@@ -170,6 +170,8 @@ docker compose up -d
 |------|--------|------|------|
 | `APP_NAME` | `Knowledge Base Management` | 否 | 服务名称，影响页面标题和指标标签 |
 | `DEBUG` | `false` | 否 | 调试模式，开启后输出详细日志 |
+| `HOST_KBDATA_DIR` | `./kbdata` | 否 | Docker 部署时的宿主机数据目录。Compose 会挂载到容器内 `/app/data` |
+| `KBDATA_DIR` | `/app/data` | 否 | 容器内数据目录。Docker 部署通常不要改，非 Docker 本地运行可设为 `./kbdata` |
 
 #### 域名与网络
 
@@ -237,6 +239,8 @@ CORS_ORIGINS=https://wiki.yourcompany.com,http://192.168.1.100
 |------|--------|------|------|
 | `SESSION_SECRET` | - | **是** | **Session 加密密钥。生产环境必须设置！** 建议 `openssl rand -hex 32` 生成 |
 | `SESSION_MAX_AGE` | `86400` | 否 | Session 过期时间（秒），默认 24 小时 |
+| `ADMIN_INITIAL_USERNAME` | `admin` | 否 | 首次启动且账号文件为空时自动创建的超级管理员用户名 |
+| `ADMIN_INITIAL_PASSWORD` | `123456` | 否 | 首次启动且账号文件为空时自动创建的超级管理员密码。生产环境务必在 `.env` 中改掉 |
 
 #### 国内镜像加速（国内部署可选）
 

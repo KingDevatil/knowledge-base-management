@@ -53,6 +53,22 @@ class AdminAuth:
     def hash_password(self, plain_password: str) -> str:
         return bcrypt.hashpw(plain_password.encode(), bcrypt.gensalt()).decode()
 
+    def ensure_bootstrap_admin(self, username: str = "admin", password: str = "123456") -> bool:
+        """Create the first super admin when a fresh Docker data volume is empty."""
+        accounts = self._load_accounts()
+        if accounts:
+            return False
+        username = (username or "admin").strip() or "admin"
+        password = password or "123456"
+        accounts[username] = {
+            "username": username,
+            "password_hash": self.hash_password(password),
+            "role": "super_admin",
+            "authorized_paths": [],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        return self._save_accounts(accounts)
+
     # ---- auth flow ----
 
     async def authenticate(self, username: str, password: str) -> Optional[dict]:

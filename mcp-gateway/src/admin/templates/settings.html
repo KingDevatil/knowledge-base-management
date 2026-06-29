@@ -176,6 +176,9 @@
                 <button type="button" class="settings-tab" data-settings-tab="environment">
                     <i data-lucide="server-cog" class="w-4 h-4"></i><span>服务环境</span>
                 </button>
+                <button type="button" class="settings-tab" data-settings-tab="reverse-proxy">
+                    <i data-lucide="route" class="w-4 h-4"></i><span>反向代理</span>
+                </button>
                 <button type="button" class="settings-tab" data-settings-tab="graph">
                     <i data-lucide="network" class="w-4 h-4"></i><span>知识图谱</span>
                 </button>
@@ -208,7 +211,10 @@
                         </div>
                         <div class="setting-row">
                             <span class="text-sm text-slate-600 dark:text-slate-400">数据目录</span>
-                            <code class="text-xs bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-lg text-slate-700 dark:text-slate-300 break-all">{{ settings.KBDATA_DIR or "-" }}</code>
+                            <div class="text-right">
+                                <code class="text-xs bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-lg text-slate-700 dark:text-slate-300 break-all">{{ kbdata_dir_display }}</code>
+                                <p class="text-xs text-slate-400 dark:text-slate-500 mt-1">建议使用 ./kbdata、kbdata 或容器内挂载路径，避免把本机绝对路径写死到通用配置。</p>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -317,8 +323,11 @@
                             </button>
                         </div>
                     </div>
-                    <div class="mb-5 rounded-xl border border-amber-200 dark:border-amber-500/20 bg-amber-50 dark:bg-amber-500/10 p-4 text-sm text-slate-700 dark:text-slate-300">
-                        启用配置会同步写入 <code class="px-1.5 py-0.5 rounded bg-white dark:bg-slate-900 text-xs">.env</code> 中的 DEPLOYMENT_MODE、EXTERNAL_DOMAIN、INTERNAL_DOMAIN、CORS_ORIGINS、SSL_CERT_FILE、SSL_KEY_FILE。运行中的服务需要重启后才会读取新的环境变量。
+                    <div class="mb-5 rounded-xl border border-amber-200 dark:border-amber-500/20 bg-amber-50 dark:bg-amber-500/10 p-4 text-sm text-slate-700 dark:text-slate-300 space-y-2">
+                        <p class="font-medium text-slate-900 dark:text-slate-100">外网访问说明</p>
+                        <p>外网模式需要域名 DNS 已解析到可访问的公网 IP，或通过 DDNS 自动更新动态公网 IP；同时需要路由器端口转发、云服务器安全组、防火墙和反向代理配置允许 80/443 访问。</p>
+                        <p>如果网络处于运营商 CGNAT、没有公网 IPv4，或 IPv6 入站未放行，即使配置了外网域名也无法直接从公网访问。</p>
+                        <p>运行中的服务需要重启后才会读取新的环境变量。</p>
                     </div>
                     <div class="overflow-x-auto">
                         <table class="ddns-table">
@@ -333,6 +342,40 @@
                                 </tr>
                             </thead>
                             <tbody id="env-profile-table"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <section id="settings-panel-reverse-proxy" class="settings-panel">
+                <div class="setting-card p-6">
+                    <div class="flex flex-wrap items-start justify-between gap-3 mb-5">
+                        <div>
+                            <h2 class="text-lg font-semibold text-slate-900 dark:text-white mb-1">反向代理管理</h2>
+                            <p class="text-sm text-slate-500 dark:text-slate-400">按外网域名生成 Caddy 或 Nginx 反代配置，将 80/443 请求转发到本机服务端口</p>
+                        </div>
+                        <button type="button" onclick="openReverseProxyModal()" class="inline-flex items-center gap-1.5 px-3 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg">
+                            <i data-lucide="plus" class="w-4 h-4"></i>新增反代
+                        </button>
+                    </div>
+                    <div class="mb-5 rounded-xl border border-blue-200 dark:border-blue-500/20 bg-blue-50 dark:bg-blue-500/10 p-4 text-sm text-slate-700 dark:text-slate-300 space-y-2">
+                        <p class="font-medium text-slate-900 dark:text-slate-100">配置说明</p>
+                        <p>Caddy 配置更适合新部署，可在域名正确解析到本机且 80/443 端口可访问时自动申请证书。Nginx 配置适合已有 Nginx 的服务器，通常需要手动准备证书路径。</p>
+                        <p>本页生成的是本机反向代理配置文本，不会自动修改路由器端口转发、云安全组或运营商网络限制。</p>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="ddns-table">
+                            <thead>
+                                <tr>
+                                    <th>名称</th>
+                                    <th>类型</th>
+                                    <th>域名</th>
+                                    <th>后端服务</th>
+                                    <th>状态</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="reverse-proxy-table"></tbody>
                         </table>
                     </div>
                 </div>
@@ -561,6 +604,7 @@
             <div class="sm:col-span-2">
                 <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">配置名称</label>
                 <input id="env-name" class="setting-input" placeholder="内网开发 / 外网生产">
+                <p class="mt-1.5 text-xs leading-5 text-slate-500 dark:text-slate-400">用于区分不同部署方案，例如“内网开发”“外网生产”。只影响后台显示，不会写入运行配置。</p>
             </div>
             <div>
                 <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">部署模式</label>
@@ -569,32 +613,116 @@
                     <option value="external">外网模式</option>
                     <option value="hybrid">内外网混合</option>
                 </select>
+                <p class="mt-1.5 text-xs leading-5 text-slate-500 dark:text-slate-400">内网模式适合局域网访问；外网模式会启用外网域名相关配置；内外网混合会同时保留内网和外网访问参数。</p>
             </div>
             <div>
                 <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">CORS Origins</label>
                 <input id="env-cors-origins" class="setting-input" placeholder="*">
+                <p class="mt-1.5 text-xs leading-5 text-slate-500 dark:text-slate-400">允许跨域访问的来源。开发环境可填 *；生产环境建议填写 https://你的外网域名，多个来源用英文逗号分隔。</p>
             </div>
             <div>
                 <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">内网域名</label>
                 <input id="env-internal-domain" class="setting-input" placeholder="localhost">
+                <p class="mt-1.5 text-xs leading-5 text-slate-500 dark:text-slate-400">内网访问时使用的主机名或 IP，例如 localhost、192.168.1.10 或 kb.internal.local。</p>
             </div>
             <div>
                 <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">外网域名</label>
                 <input id="env-external-domain" class="setting-input" placeholder="kb.example.com">
+                <p class="mt-1.5 text-xs leading-5 text-slate-500 dark:text-slate-400">外网模式或内外网混合模式必填，例如 kb.example.com。保存并启用后会写入 EXTERNAL_DOMAIN。</p>
             </div>
             <div>
                 <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">证书文件</label>
-                <input id="env-ssl-cert-file" class="setting-input" placeholder="D:/certs/fullchain.pem">
+                <input id="env-ssl-cert-file" class="setting-input" placeholder="certs/fullchain.pem">
+                <p class="mt-1.5 text-xs leading-5 text-slate-500 dark:text-slate-400">HTTPS 证书链文件路径。推荐使用项目相对路径或容器内挂载路径，例如 certs/fullchain.pem 或 /etc/letsencrypt/live/kb/fullchain.pem。留空表示由反向代理或外部网关处理证书。</p>
             </div>
             <div>
                 <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">私钥文件</label>
-                <input id="env-ssl-key-file" class="setting-input" placeholder="D:/certs/privkey.pem">
+                <input id="env-ssl-key-file" class="setting-input" placeholder="certs/privkey.pem">
+                <p class="mt-1.5 text-xs leading-5 text-slate-500 dark:text-slate-400">HTTPS 证书私钥文件路径。推荐使用项目相对路径或容器内挂载路径，例如 certs/privkey.pem 或 /etc/letsencrypt/live/kb/privkey.pem。请确保服务运行账号有读取权限。</p>
             </div>
             <div class="sm:col-span-2 flex justify-end gap-3 pt-2">
                 <button type="button" onclick="closeEnvModal()" class="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-300">取消</button>
                 <button type="button" onclick="saveEnvProfile()" class="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-sm font-medium text-white">保存</button>
             </div>
             <p id="env-msg" class="sm:col-span-2 text-sm"></p>
+        </div>
+    </div>
+</div>
+
+<div id="reverse-proxy-modal" class="ddns-modal fixed inset-0 z-50 items-center justify-center bg-slate-900/40 px-4">
+    <div class="w-full max-w-3xl rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-2xl max-h-[90vh] overflow-hidden flex flex-col">
+        <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-800">
+            <div>
+                <h3 id="reverse-proxy-modal-title" class="text-lg font-semibold text-slate-900 dark:text-white">新增反向代理</h3>
+                <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">生成 Caddy 或 Nginx 反代配置，将域名请求转发到当前服务。</p>
+            </div>
+            <button type="button" onclick="closeReverseProxyModal()" class="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"><i data-lucide="x" class="w-5 h-5"></i></button>
+        </div>
+        <div class="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4 overflow-y-auto">
+            <input type="hidden" id="reverse-proxy-id">
+            <div>
+                <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">配置名称</label>
+                <input id="reverse-proxy-name" class="setting-input" placeholder="外网生产反代">
+                <p class="mt-1.5 text-xs leading-5 text-slate-500 dark:text-slate-400">用于区分不同反代方案，例如“Caddy 外网”“Nginx 生产”。</p>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">反代类型</label>
+                <select id="reverse-proxy-type" class="setting-input">
+                    <option value="caddy">Caddy</option>
+                    <option value="nginx">Nginx</option>
+                </select>
+                <p class="mt-1.5 text-xs leading-5 text-slate-500 dark:text-slate-400">Caddy 可自动申请证书；Nginx 适合已有网关，通常需要手动配置证书。</p>
+            </div>
+            <div class="sm:col-span-2">
+                <label class="inline-flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
+                    <input type="checkbox" id="reverse-proxy-enabled" class="accent-brand-600" checked>
+                    启用此反向代理配置
+                </label>
+                <p class="mt-1.5 text-xs leading-5 text-slate-500 dark:text-slate-400">启用状态用于后台标记当前方案，实际生效还需要将生成的配置应用到 Caddy 或 Nginx 并 reload。</p>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">外网域名</label>
+                <input id="reverse-proxy-domain" class="setting-input" placeholder="kb.example.com">
+                <p class="mt-1.5 text-xs leading-5 text-slate-500 dark:text-slate-400">公网访问使用的域名，必须已通过 DNS 或 DDNS 解析到当前网络。</p>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">后端服务端口</label>
+                <input id="reverse-proxy-upstream-port" class="setting-input" placeholder="8000">
+                <p class="mt-1.5 text-xs leading-5 text-slate-500 dark:text-slate-400">当前知识库后台服务端口，默认是 8000。</p>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">后端服务地址</label>
+                <input id="reverse-proxy-upstream-host" class="setting-input" placeholder="127.0.0.1">
+                <p class="mt-1.5 text-xs leading-5 text-slate-500 dark:text-slate-400">反向代理访问应用的内网地址，本机部署通常填写 127.0.0.1。</p>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">HTTPS 策略</label>
+                <label class="h-10 px-3 flex items-center gap-2 rounded-xl border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-300">
+                    <input type="checkbox" id="reverse-proxy-force-https" class="accent-brand-600" checked>
+                    优先使用 HTTPS
+                </label>
+                <p class="mt-1.5 text-xs leading-5 text-slate-500 dark:text-slate-400">Caddy 会优先自动签发证书；Nginx 需要证书和私钥路径都已配置。</p>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">证书文件</label>
+                <input id="reverse-proxy-ssl-cert-file" class="setting-input" placeholder="certs/fullchain.pem">
+                <p class="mt-1.5 text-xs leading-5 text-slate-500 dark:text-slate-400">Nginx HTTPS 或 Caddy 手动证书模式使用。推荐使用项目相对路径或容器内挂载路径；留空时 Caddy 会尝试自动证书。</p>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">私钥文件</label>
+                <input id="reverse-proxy-ssl-key-file" class="setting-input" placeholder="certs/privkey.pem">
+                <p class="mt-1.5 text-xs leading-5 text-slate-500 dark:text-slate-400">与证书文件配套的私钥路径。推荐使用项目相对路径或容器内挂载路径，请确保代理进程有读取权限。</p>
+            </div>
+            <div class="sm:col-span-2">
+                <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">生成的配置文本</label>
+                <textarea id="reverse-proxy-config-text" rows="12" class="setting-input font-mono text-xs leading-5" placeholder="保存后自动生成，也可手动调整"></textarea>
+                <p class="mt-1.5 text-xs leading-5 text-slate-500 dark:text-slate-400">保存时如果留空会自动生成；如果手动修改，系统会保留你编辑后的文本。</p>
+            </div>
+            <div class="sm:col-span-2 flex justify-end gap-3 pt-2">
+                <button type="button" onclick="closeReverseProxyModal()" class="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-300">取消</button>
+                <button type="button" onclick="saveReverseProxyConfig()" class="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-sm font-medium text-white">保存</button>
+            </div>
+            <p id="reverse-proxy-msg" class="sm:col-span-2 text-sm"></p>
         </div>
     </div>
 </div>
@@ -627,6 +755,8 @@ const settingsPanels = document.querySelectorAll('.settings-panel');
 let ddnsServices = {{ ddns_services|tojson }};
 let envProfiles = {{ env_profiles|tojson }};
 let activeEnvProfileId = {{ active_env_profile_id|tojson }};
+let reverseProxyConfigs = {{ reverse_proxy_configs|tojson }};
+let activeReverseProxyConfigId = {{ active_reverse_proxy_config_id|tojson }};
 let hasManagementPassword = {{ has_management_password|tojson }};
 
 function activateSettingsTab(name) {
@@ -951,6 +1081,131 @@ async function deleteEnvProfile(id) {
     }
 }
 
+function reverseProxyTypeLabel(type) {
+    return {caddy: 'Caddy', nginx: 'Nginx'}[type] || type;
+}
+
+function renderReverseProxyConfigs() {
+    const tbody = document.getElementById('reverse-proxy-table');
+    if (!tbody) return;
+    if (!reverseProxyConfigs.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-slate-400 py-10">暂无反向代理配置</td></tr>';
+        return;
+    }
+    tbody.innerHTML = reverseProxyConfigs.map(item => {
+        const active = item.id === activeReverseProxyConfigId;
+        const enabled = item.enabled ? '已启用' : '已停用';
+        const statusClass = item.enabled ? 'text-emerald-600' : 'text-slate-400';
+        return `<tr>
+            <td class="text-slate-900 dark:text-slate-100">${item.name}</td>
+            <td class="text-slate-700 dark:text-slate-300">${reverseProxyTypeLabel(item.proxy_type)}</td>
+            <td class="text-slate-600 dark:text-slate-400 max-w-[240px] truncate" title="${item.domain || '-'}">${item.domain || '-'}</td>
+            <td class="text-slate-600 dark:text-slate-400">${item.upstream_host || '127.0.0.1'}:${item.upstream_port || '8000'}</td>
+            <td>${active ? '<span class="text-emerald-600">当前方案</span>' : `<span class="${statusClass}">${enabled}</span>`}</td>
+            <td>
+                <div class="flex items-center gap-2">
+                    <button type="button" onclick="openReverseProxyModal('${item.id}')" class="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800" title="编辑"><i data-lucide="pencil" class="w-4 h-4"></i></button>
+                    <button type="button" onclick="activateReverseProxyConfig('${item.id}')" class="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800" title="设为当前方案"><i data-lucide="power" class="w-4 h-4"></i></button>
+                    <button type="button" onclick="copyReverseProxyConfig('${item.id}')" class="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800" title="复制配置"><i data-lucide="copy" class="w-4 h-4"></i></button>
+                    <button type="button" onclick="deleteReverseProxyConfig('${item.id}')" class="p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-500/10 text-red-600" title="删除"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                </div>
+            </td>
+        </tr>`;
+    }).join('');
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+function openReverseProxyModal(id = '') {
+    const item = reverseProxyConfigs.find(config => config.id === id) || {};
+    document.getElementById('reverse-proxy-modal-title').textContent = id ? '编辑反向代理' : '新增反向代理';
+    document.getElementById('reverse-proxy-id').value = item.id || '';
+    document.getElementById('reverse-proxy-name').value = item.name || '';
+    document.getElementById('reverse-proxy-enabled').checked = item.enabled ?? true;
+    document.getElementById('reverse-proxy-type').value = item.proxy_type || 'caddy';
+    document.getElementById('reverse-proxy-domain').value = item.domain || '';
+    document.getElementById('reverse-proxy-upstream-host').value = item.upstream_host || '127.0.0.1';
+    document.getElementById('reverse-proxy-upstream-port').value = item.upstream_port || '8000';
+    document.getElementById('reverse-proxy-ssl-cert-file').value = item.ssl_cert_file || '';
+    document.getElementById('reverse-proxy-ssl-key-file').value = item.ssl_key_file || '';
+    document.getElementById('reverse-proxy-force-https').checked = item.force_https ?? true;
+    document.getElementById('reverse-proxy-config-text').value = item.config_text || '';
+    document.getElementById('reverse-proxy-msg').textContent = '';
+    document.getElementById('reverse-proxy-modal').classList.add('open');
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+function closeReverseProxyModal() {
+    document.getElementById('reverse-proxy-modal').classList.remove('open');
+}
+
+function reverseProxyPayload() {
+    return {
+        id: document.getElementById('reverse-proxy-id').value,
+        name: document.getElementById('reverse-proxy-name').value,
+        enabled: document.getElementById('reverse-proxy-enabled').checked,
+        proxy_type: document.getElementById('reverse-proxy-type').value,
+        domain: document.getElementById('reverse-proxy-domain').value,
+        upstream_host: document.getElementById('reverse-proxy-upstream-host').value,
+        upstream_port: document.getElementById('reverse-proxy-upstream-port').value,
+        ssl_cert_file: document.getElementById('reverse-proxy-ssl-cert-file').value,
+        ssl_key_file: document.getElementById('reverse-proxy-ssl-key-file').value,
+        force_https: document.getElementById('reverse-proxy-force-https').checked,
+        config_text: document.getElementById('reverse-proxy-config-text').value,
+    };
+}
+
+async function saveReverseProxyConfig() {
+    const msg = document.getElementById('reverse-proxy-msg');
+    try {
+        const resp = await fetch('/admin/api/reverse-proxy-configs', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(reverseProxyPayload()),
+        });
+        const result = await resp.json();
+        if (!result.success) throw new Error(result.error || '保存失败');
+        reverseProxyConfigs = result.configs;
+        activeReverseProxyConfigId = result.active_id;
+        renderReverseProxyConfigs();
+        closeReverseProxyModal();
+    } catch (err) {
+        msg.textContent = err.message || '请求失败';
+        msg.className = 'sm:col-span-2 text-sm text-red-600';
+    }
+}
+
+async function activateReverseProxyConfig(id) {
+    const resp = await fetch(`/admin/api/reverse-proxy-configs/${id}/activate`, {method: 'POST'});
+    const result = await resp.json();
+    if (result.success) {
+        reverseProxyConfigs = result.configs;
+        activeReverseProxyConfigId = result.active_id;
+        renderReverseProxyConfigs();
+    } else {
+        alert(result.error || '启用失败');
+    }
+}
+
+async function deleteReverseProxyConfig(id) {
+    if (!confirm('确定删除这个反向代理配置吗？')) return;
+    const resp = await fetch(`/admin/api/reverse-proxy-configs/${id}/delete`, {method: 'POST'});
+    const result = await resp.json();
+    if (result.success) {
+        reverseProxyConfigs = result.configs;
+        activeReverseProxyConfigId = result.active_id;
+        renderReverseProxyConfigs();
+    } else {
+        alert(result.error || '删除失败');
+    }
+}
+
+async function copyReverseProxyConfig(id) {
+    const item = reverseProxyConfigs.find(config => config.id === id);
+    if (!item) return;
+    await navigator.clipboard.writeText(item.config_text || '');
+    alert('反向代理配置已复制');
+}
+
 function openRestartModal() {
     document.getElementById('restart-msg').textContent = '';
     document.getElementById('management-password-setup').style.display = hasManagementPassword ? 'none' : 'block';
@@ -1008,5 +1263,6 @@ async function restartService() {
 }
 
 renderEnvProfiles();
+renderReverseProxyConfigs();
 </script>
 {% endblock %}

@@ -33,10 +33,16 @@ from ddns import (
 )
 from env_manager import (
     activate_profile,
+    activate_reverse_proxy_config,
     delete_profile,
+    delete_reverse_proxy_config,
     list_profiles,
+    list_reverse_proxy_configs,
+    is_docker_deployment,
     restart_current_service,
     save_profile,
+    save_reverse_proxy_config,
+    read_env,
 )
 
 page_router = APIRouter()
@@ -64,14 +70,14 @@ def _verify_management_password(request: Request, username: str, password: str) 
 
 def _set_management_password(request: Request, username: str, password: str) -> tuple[bool, str]:
     if not password or len(password) < 8:
-        return False, "management password must be at least 8 characters"
+        return False, "管理密码至少需要 8 个字符。"
     admin_auth = request.app.state.admin_auth
     accounts = admin_auth._load_accounts()
     account = accounts.get(username)
     if not account:
-        return False, "account not found"
+        return False, "当前管理员账号不存在，无法设置管理密码。"
     account["management_password_hash"] = admin_auth.hash_password(password)
-    return (True, "saved") if admin_auth._save_accounts(accounts) else (False, "save failed")
+    return (True, "管理密码已保存。") if admin_auth._save_accounts(accounts) else (False, "管理密码保存失败，请稍后重试。")
 
 
 # ---------- 登录/登出 ----------
@@ -385,6 +391,9 @@ async def settings_page(request: Request, user: dict = Depends(require_admin)):
     graph_semantic_threshold = 0.0
     ddns_services = []
     env_profiles, active_env_profile_id = list_profiles()
+    reverse_proxy_configs, active_reverse_proxy_config_id = list_reverse_proxy_configs()
+    env_values = read_env()
+    kbdata_dir_display = env_values.get("KBDATA_DIR") or settings.KBDATA_DIR or "默认数据目录"
     redis = getattr(request.app.state, "redis", None)
     if redis:
         try:
@@ -403,6 +412,9 @@ async def settings_page(request: Request, user: dict = Depends(require_admin)):
         "ddns_services": ddns_services,
         "env_profiles": env_profiles,
         "active_env_profile_id": active_env_profile_id,
+        "reverse_proxy_configs": reverse_proxy_configs,
+        "active_reverse_proxy_config_id": active_reverse_proxy_config_id,
+        "kbdata_dir_display": kbdata_dir_display,
         "has_management_password": _has_management_password(request, user["username"]),
     })
 
@@ -564,9 +576,46 @@ async def delete_env_profile(request: Request, profile_id: str, user: dict = Dep
     except Exception as e:
         return JSONResponse({"success": False, "error": str(e)}, status_code=500)
     if not deleted:
-        return JSONResponse({"success": False, "error": "profile not found"}, status_code=404)
+        return JSONResponse({"success": False, "error": "部署模式配置不存在或已被删除。"}, status_code=404)
     profiles, active_id = list_profiles()
     return JSONResponse({"success": True, "profiles": profiles, "active_id": active_id})
+
+
+@page_router.post("/api/reverse-proxy-configs")
+async def save_reverse_proxy(request: Request, user: dict = Depends(require_admin)):
+    try:
+        body = await request.json()
+        config = save_reverse_proxy_config(body)
+    except ValueError as e:
+        return JSONResponse({"success": False, "error": str(e)}, status_code=400)
+    except Exception as e:
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+    configs, active_id = list_reverse_proxy_configs()
+    return JSONResponse({"success": True, "config": config, "configs": configs, "active_id": active_id})
+
+
+@page_router.post("/api/reverse-proxy-configs/{config_id}/activate")
+async def activate_reverse_proxy(request: Request, config_id: str, user: dict = Depends(require_admin)):
+    try:
+        config = activate_reverse_proxy_config(config_id)
+    except ValueError as e:
+        return JSONResponse({"success": False, "error": str(e)}, status_code=404)
+    except Exception as e:
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+    configs, active_id = list_reverse_proxy_configs()
+    return JSONResponse({"success": True, "config": config, "configs": configs, "active_id": active_id})
+
+
+@page_router.post("/api/reverse-proxy-configs/{config_id}/delete")
+async def delete_reverse_proxy(request: Request, config_id: str, user: dict = Depends(require_admin)):
+    try:
+        deleted = delete_reverse_proxy_config(config_id)
+    except Exception as e:
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+    if not deleted:
+        return JSONResponse({"success": False, "error": "反向代理配置不存在或已被删除。"}, status_code=404)
+    configs, active_id = list_reverse_proxy_configs()
+    return JSONResponse({"success": True, "configs": configs, "active_id": active_id})
 
 
 @page_router.post("/api/management-password")
@@ -574,11 +623,11 @@ async def set_management_password(request: Request, user: dict = Depends(require
     try:
         body = await request.json()
     except Exception:
-        return JSONResponse({"success": False, "error": "invalid json"}, status_code=400)
+        return JSONResponse({"success": False, "error": "请求数据格式无效。"}, status_code=400)
     password = str(body.get("password", ""))
     confirm = str(body.get("confirm", ""))
     if password != confirm:
-        return JSONResponse({"success": False, "error": "password confirmation does not match"}, status_code=400)
+        return JSONResponse({"success": False, "error": "两次输入的管理密码不一致。"}, status_code=400)
     ok, msg = _set_management_password(request, user["username"], password)
     return JSONResponse({"success": ok, "error": "" if ok else msg}, status_code=200 if ok else 400)
 
@@ -588,13 +637,18 @@ async def restart_service(request: Request, user: dict = Depends(require_admin))
     try:
         body = await request.json()
     except Exception:
-        return JSONResponse({"success": False, "error": "invalid json"}, status_code=400)
+        return JSONResponse({"success": False, "error": "请求数据格式无效。"}, status_code=400)
     if not _has_management_password(request, user["username"]):
-        return JSONResponse({"success": False, "needs_management_password": True, "error": "management password is required"}, status_code=403)
+        return JSONResponse({"success": False, "needs_management_password": True, "error": "当前管理员账号尚未设置管理密码，请先设置后再重启服务。"}, status_code=403)
     if not _verify_management_password(request, user["username"], str(body.get("management_password", ""))):
-        return JSONResponse({"success": False, "error": "management password is incorrect"}, status_code=403)
+        return JSONResponse({"success": False, "error": "管理密码错误，请重新输入。"}, status_code=403)
+    if is_docker_deployment():
+        return JSONResponse({
+            "success": False,
+            "error": "Docker 部署下不能从容器内部直接重启服务，请在宿主机执行 docker compose restart mcp-gateway。",
+        }, status_code=400)
     asyncio.create_task(restart_current_service())
-    return JSONResponse({"success": True, "message": "service restart scheduled"})
+    return JSONResponse({"success": True, "message": "服务重启任务已提交，请稍后刷新页面。"})
 
 
 # ---------- 知识图谱 (all logged-in users) ----------

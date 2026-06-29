@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "Knowledge Base Management"
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
+    RUNNING_IN_DOCKER: bool = False
 
     # ==================== 数据存储路径 ====================
     KBDATA_DIR: str = ""
@@ -26,6 +27,8 @@ class Settings(BaseSettings):
     # 认证配置
     API_KEY_FILE: str = "/app/config/api_keys.json"
     ADMIN_ACCOUNTS_FILE: str = "/app/config/admin_accounts.json"
+    ADMIN_INITIAL_USERNAME: str = "admin"
+    ADMIN_INITIAL_PASSWORD: str = "123456"
     SESSION_SECRET: str = ""
     SESSION_MAX_AGE: int = 86400
 

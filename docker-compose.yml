@@ -18,12 +18,13 @@ services:
       - "${INTERNAL_IP:-0.0.0.0}:80:80"
     volumes:
       - ./nginx/nginx.conf.template:/etc/nginx/templates/nginx.conf.template:ro
+      - ./nginx/render-nginx-conf.sh:/etc/nginx/templates/render-nginx-conf.sh:ro
       - ./nginx/ssl:/etc/nginx/ssl:ro
     environment:
-      - EXTERNAL_DOMAIN=${EXTERNAL_DOMAIN:-kb.company.com}
-      - INTERNAL_DOMAIN=${INTERNAL_DOMAIN:-kb.internal.company.com}
+      - EXTERNAL_DOMAIN=${EXTERNAL_DOMAIN:-}
+      - INTERNAL_DOMAIN=${INTERNAL_DOMAIN:-localhost}
     command: >
-      /bin/sh -c "envsubst < /etc/nginx/templates/nginx.conf.template > /etc/nginx/nginx.conf && nginx -g 'daemon off;'"
+      /bin/sh -c "sh /etc/nginx/templates/render-nginx-conf.sh && nginx -g 'daemon off;'"
     depends_on:
       mcp-gateway:
         condition: service_started
@@ -52,10 +53,10 @@ services:
       - kb-network
 
   chroma:
-    image: ${MIRROR_PREFIX:-}chromadb/chroma:0.6.4
+    image: ${MIRROR_PREFIX:-}chromadb/chroma:1.5.9
     restart: always
     volumes:
-      - ${KBDATA_DIR:-./kbdata}/chroma:/chroma/chroma
+      - ${HOST_KBDATA_DIR:-./kbdata}/chroma:/chroma/chroma
     ports:
       - "127.0.0.1:8001:8000"
     environment:
@@ -73,13 +74,13 @@ services:
     restart: always
     command: server /data --console-address ":9001"
     volumes:
-      - ${KBDATA_DIR:-./kbdata}/minio:/data
+      - ${HOST_KBDATA_DIR:-./kbdata}/minio:/data
     ports:
       - "127.0.0.1:9000:9000"
       - "127.0.0.1:9001:9001"
     environment:
       - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
-      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-minioadmin}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 10s
@@ -121,25 +122,29 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
-      - ${KBDATA_DIR:-./kbdata}/config:/app/config:rw
+      - ${HOST_KBDATA_DIR:-./kbdata}:/app/data:rw
     environment:
-      - KBDATA_DIR=${KBDATA_DIR:-}
+      - RUNNING_IN_DOCKER=true
+      - KBDATA_DIR=/app/data
+      - SERVICE_ENV_FILE=/app/data/config/service.env
       - REDIS_URL=redis://redis:6379/0
       - CHROMA_HOST=chroma
       - CHROMA_PORT=8000
       - OLLAMA_URL=http://ollama:11434
       - MINIO_ENDPOINT=minio:9000
       - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}
-      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
       - MINIO_BUCKET=kb-sources
       - MINIO_SECURE=false
       - SESSION_SECRET=${SESSION_SECRET:?SESSION_SECRET is required in production}
       - DEBUG=${DEBUG:-false}
-      - CORS_ORIGINS=${CORS_ORIGINS:-https://${EXTERNAL_DOMAIN:-kb.company.com},http://${INTERNAL_DOMAIN:-kb.internal.company.com}}
-      - EXTERNAL_DOMAIN=${EXTERNAL_DOMAIN:-kb.company.com}
-      - INTERNAL_DOMAIN=${INTERNAL_DOMAIN:-kb.internal.company.com}
-      - ADMIN_ACCOUNTS_FILE=${ADMIN_ACCOUNTS_FILE:-/app/config/admin_accounts.json}
-      - API_KEY_FILE=${API_KEY_FILE:-/app/config/api_keys.json}
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+      - EXTERNAL_DOMAIN=${EXTERNAL_DOMAIN:-}
+      - INTERNAL_DOMAIN=${INTERNAL_DOMAIN:-localhost}
+      - ADMIN_ACCOUNTS_FILE=${ADMIN_ACCOUNTS_FILE:-/app/data/config/admin_accounts.json}
+      - API_KEY_FILE=${API_KEY_FILE:-/app/data/config/api_keys.json}
+      - ADMIN_INITIAL_USERNAME=${ADMIN_INITIAL_USERNAME:-admin}
+      - ADMIN_INITIAL_PASSWORD=${ADMIN_INITIAL_PASSWORD:-123456}
     depends_on:
       redis:
         condition: service_healthy

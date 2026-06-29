@@ -10,9 +10,11 @@ from pathlib import Path
 from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-ENV_PATH = PROJECT_ROOT / ".env"
+ENV_PATH = Path(os.environ.get("SERVICE_ENV_FILE") or PROJECT_ROOT / ".env")
 PROFILES_KEY = "SERVICE_ENV_PROFILES_JSON"
 ACTIVE_PROFILE_KEY = "ACTIVE_SERVICE_ENV_PROFILE_ID"
+REVERSE_PROXY_CONFIGS_KEY = "REVERSE_PROXY_CONFIGS_JSON"
+ACTIVE_REVERSE_PROXY_CONFIG_KEY = "ACTIVE_REVERSE_PROXY_CONFIG_ID"
 
 ENV_PROFILE_KEYS = {
     "DEPLOYMENT_MODE",
@@ -32,6 +34,20 @@ DEFAULT_PROFILE = {
     "cors_origins": "*",
     "ssl_cert_file": "",
     "ssl_key_file": "",
+}
+
+DEFAULT_REVERSE_PROXY_CONFIG = {
+    "id": "",
+    "name": "",
+    "enabled": True,
+    "proxy_type": "caddy",
+    "domain": "",
+    "upstream_host": "127.0.0.1",
+    "upstream_port": "8000",
+    "ssl_cert_file": "",
+    "ssl_key_file": "",
+    "force_https": True,
+    "config_text": "",
 }
 
 
@@ -80,7 +96,12 @@ def write_env_values(values: dict[str, Any]) -> None:
     for key, value in values.items():
         if key not in seen:
             output.append(f"{key}={_encode_env_value(value)}")
+    ENV_PATH.parent.mkdir(parents=True, exist_ok=True)
     ENV_PATH.write_text("\n".join(output).rstrip() + "\n", encoding="utf-8")
+
+
+def is_docker_deployment() -> bool:
+    return os.environ.get("RUNNING_IN_DOCKER", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def list_profiles() -> tuple[list[dict[str, Any]], str]:
@@ -105,12 +126,12 @@ def normalize_profile(data: dict[str, Any], existing: dict[str, Any] | None = No
     profile["name"] = str(profile.get("name") or "未命名环境").strip()
     mode = str(profile.get("deployment_mode") or "internal").strip().lower()
     if mode not in {"internal", "external", "hybrid"}:
-        raise ValueError("deployment_mode must be internal, external, or hybrid")
+        raise ValueError("部署模式无效，请选择内网模式、外网模式或内外网混合模式。")
     profile["deployment_mode"] = mode
     for key in ("external_domain", "internal_domain", "cors_origins", "ssl_cert_file", "ssl_key_file"):
         profile[key] = str(profile.get(key) or "").strip()
     if mode in {"external", "hybrid"} and not profile["external_domain"]:
-        raise ValueError("external_domain is required for external or hybrid mode")
+        raise ValueError("外网模式或内外网混合模式必须填写外网域名，例如 kb.example.com。")
     return profile
 
 
@@ -160,13 +181,127 @@ def activate_profile(profile_id: str) -> dict[str, Any]:
     profiles, _ = list_profiles()
     profile = next((item for item in profiles if item["id"] == profile_id), None)
     if not profile:
-        raise ValueError("profile not found")
+        raise ValueError("部署模式配置不存在或已被删除。")
     values = {ACTIVE_PROFILE_KEY: profile_id, **profile_to_env(profile)}
     write_env_values(values)
     return profile
 
 
+def _truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() not in {"0", "false", "no", "off", "否", ""}
+
+
+def generate_reverse_proxy_config(config: dict[str, Any]) -> str:
+    domain = config["domain"]
+    upstream = f"{config['upstream_host']}:{config['upstream_port']}"
+    proxy_type = config["proxy_type"]
+    cert = config.get("ssl_cert_file", "")
+    key = config.get("ssl_key_file", "")
+    if proxy_type == "caddy":
+        tls_line = f"\n    tls {cert} {key}" if cert and key else ""
+        return f"{domain} {{{tls_line}\n    reverse_proxy {upstream}\n}}\n"
+    if proxy_type == "nginx":
+        listen = "443 ssl http2" if cert and key else "80"
+        ssl_lines = f"\n    ssl_certificate {cert};\n    ssl_certificate_key {key};" if cert and key else ""
+        return (
+            "server {\n"
+            f"    listen {listen};\n"
+            f"    server_name {domain};{ssl_lines}\n\n"
+            "    location / {\n"
+            f"        proxy_pass http://{upstream};\n"
+            "        proxy_set_header Host $host;\n"
+            "        proxy_set_header X-Real-IP $remote_addr;\n"
+            "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+            "        proxy_set_header X-Forwarded-Proto $scheme;\n"
+            "    }\n"
+            "}\n"
+        )
+    raise ValueError("反向代理类型无效，请选择 Caddy 或 Nginx。")
+
+
+def normalize_reverse_proxy_config(data: dict[str, Any], existing: dict[str, Any] | None = None) -> dict[str, Any]:
+    config = {**DEFAULT_REVERSE_PROXY_CONFIG, **(existing or {})}
+    config.update({k: data.get(k, config[k]) for k in DEFAULT_REVERSE_PROXY_CONFIG})
+    config["id"] = str(data.get("id") or config.get("id") or uuid.uuid4())
+    config["name"] = str(config.get("name") or "未命名反向代理").strip()
+    config["enabled"] = _truthy(config.get("enabled"))
+    config["proxy_type"] = str(config.get("proxy_type") or "caddy").strip().lower()
+    if config["proxy_type"] not in {"caddy", "nginx"}:
+        raise ValueError("反向代理类型无效，请选择 Caddy 或 Nginx。")
+    for key in ("domain", "upstream_host", "upstream_port", "ssl_cert_file", "ssl_key_file", "config_text"):
+        config[key] = str(config.get(key) or "").strip()
+    if not config["domain"]:
+        raise ValueError("反向代理必须填写外网域名，例如 kb.example.com。")
+    if not config["upstream_host"]:
+        raise ValueError("反向代理必须填写后端服务地址，例如 127.0.0.1。")
+    if not config["upstream_port"].isdigit():
+        raise ValueError("反向代理后端端口必须是数字，例如 8000。")
+    port = int(config["upstream_port"])
+    if port < 1 or port > 65535:
+        raise ValueError("反向代理后端端口必须在 1 到 65535 之间。")
+    config["force_https"] = _truthy(config.get("force_https"))
+    if not config["config_text"]:
+        config["config_text"] = generate_reverse_proxy_config(config)
+    return config
+
+
+def list_reverse_proxy_configs() -> tuple[list[dict[str, Any]], str]:
+    env = read_env()
+    active_id = env.get(ACTIVE_REVERSE_PROXY_CONFIG_KEY, "")
+    raw = env.get(REVERSE_PROXY_CONFIGS_KEY, "")
+    configs: list[dict[str, Any]] = []
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                configs = [normalize_reverse_proxy_config(item) for item in parsed if isinstance(item, dict)]
+        except Exception:
+            configs = []
+    return configs, active_id
+
+
+def save_reverse_proxy_config(data: dict[str, Any]) -> dict[str, Any]:
+    configs, active_id = list_reverse_proxy_configs()
+    config_id = str(data.get("id") or "")
+    existing = next((item for item in configs if item["id"] == config_id), None)
+    config = normalize_reverse_proxy_config(data, existing)
+    if existing:
+        configs = [config if item["id"] == config["id"] else item for item in configs]
+    else:
+        configs.append(config)
+    values = {REVERSE_PROXY_CONFIGS_KEY: json.dumps(configs, ensure_ascii=False)}
+    if not active_id:
+        values[ACTIVE_REVERSE_PROXY_CONFIG_KEY] = config["id"]
+    write_env_values(values)
+    return config
+
+
+def activate_reverse_proxy_config(config_id: str) -> dict[str, Any]:
+    configs, _ = list_reverse_proxy_configs()
+    config = next((item for item in configs if item["id"] == config_id), None)
+    if not config:
+        raise ValueError("反向代理配置不存在或已被删除。")
+    write_env_values({ACTIVE_REVERSE_PROXY_CONFIG_KEY: config_id})
+    return config
+
+
+def delete_reverse_proxy_config(config_id: str) -> bool:
+    configs, active_id = list_reverse_proxy_configs()
+    kept = [item for item in configs if item["id"] != config_id]
+    if len(kept) == len(configs):
+        return False
+    values = {REVERSE_PROXY_CONFIGS_KEY: json.dumps(kept, ensure_ascii=False)}
+    if active_id == config_id:
+        values[ACTIVE_REVERSE_PROXY_CONFIG_KEY] = kept[0]["id"] if kept else ""
+    write_env_values(values)
+    return True
+
+
 async def restart_current_service(delay_seconds: float = 1.0) -> None:
+    if is_docker_deployment():
+        raise RuntimeError("Docker 部署下不能从容器内部直接重启服务，请在宿主机执行 docker compose restart mcp-gateway。")
     await asyncio.sleep(delay_seconds)
     command = (
         "Start-Sleep -Seconds 2; "

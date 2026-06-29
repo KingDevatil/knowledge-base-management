@@ -105,6 +105,14 @@ async def lifespan(app: FastAPI):
         settings.SESSION_SECRET,
         settings.SESSION_MAX_AGE,
     )
+    if app.state.admin_auth.ensure_bootstrap_admin(
+        settings.ADMIN_INITIAL_USERNAME,
+        settings.ADMIN_INITIAL_PASSWORD,
+    ):
+        logger.warning(
+            "Bootstrap admin account created because the admin account file was empty. "
+            "Change the initial password immediately in production."
+        )
     app.state.write_lock = WriteLock(
         app.state.redis,
         settings.WRITE_LOCK_KEY,

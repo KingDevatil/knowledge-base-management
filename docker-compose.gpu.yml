@@ -1,5 +1,5 @@
 # GPU 加速配置（独立文件，自动按需加载）
-# docker-compose.yml 会按 ${OLLAMA_GPU_COUNT:-0} 决定是否启用 GPU
+# 使用方式：docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
 
 services:
   ollama:
