@@ -2,6 +2,7 @@
 import json
 import markdown
 import re
+import asyncio
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Request, HTTPException, Depends
@@ -21,23 +22,56 @@ logger = get_logger()
 from admin_auth import is_admin_role
 from kb_graph import KnowledgeGraphBuilder
 from consistency import KnowledgeBaseConsistencyChecker
+from ddns import (
+    DDNS_LEGACY_KEY,
+    delete_service as ddns_delete_service,
+    list_services as ddns_list_services,
+    public_service as ddns_public_service,
+    save_service as ddns_save_service,
+    test_service as ddns_test_service,
+    update_service as ddns_update_service,
+)
+from env_manager import (
+    activate_profile,
+    delete_profile,
+    list_profiles,
+    restart_current_service,
+    save_profile,
+)
 
 page_router = APIRouter()
 
-DDNS_CONFIG_KEY = "kb:config:ddns"
-DDNS_DEFAULTS = {
-    "enabled": "false",
-    "provider": "cloudflare",
-    "domain": "",
-    "record_name": "",
-    "record_type": "A",
-    "ttl": "600",
-    "endpoint": "",
-    "access_key": "",
-    "api_token": "",
-}
-DDNS_PROVIDERS = {"cloudflare", "dnspod", "aliyun", "custom"}
-DDNS_RECORD_TYPES = {"A", "AAAA", "CNAME"}
+DDNS_CONFIG_KEY = DDNS_LEGACY_KEY
+
+
+def _management_password_hash(request: Request, username: str) -> str:
+    admin_auth = request.app.state.admin_auth
+    accounts = admin_auth._load_accounts()
+    account = accounts.get(username, {})
+    return account.get("management_password_hash", "")
+
+
+def _has_management_password(request: Request, username: str) -> bool:
+    return bool(_management_password_hash(request, username))
+
+
+def _verify_management_password(request: Request, username: str, password: str) -> bool:
+    password_hash = _management_password_hash(request, username)
+    if not password_hash:
+        return False
+    return request.app.state.admin_auth.verify_password(password, password_hash)
+
+
+def _set_management_password(request: Request, username: str, password: str) -> tuple[bool, str]:
+    if not password or len(password) < 8:
+        return False, "management password must be at least 8 characters"
+    admin_auth = request.app.state.admin_auth
+    accounts = admin_auth._load_accounts()
+    account = accounts.get(username)
+    if not account:
+        return False, "account not found"
+    account["management_password_hash"] = admin_auth.hash_password(password)
+    return (True, "saved") if admin_auth._save_accounts(accounts) else (False, "save failed")
 
 
 # ---------- 登录/登出 ----------
@@ -349,8 +383,8 @@ async def api_key_create_page(request: Request, user: dict = Depends(require_adm
 @page_router.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request, user: dict = Depends(require_admin)):
     graph_semantic_threshold = 0.0
-    ddns_config = DDNS_DEFAULTS.copy()
-    ddns_has_token = False
+    ddns_services = []
+    env_profiles, active_env_profile_id = list_profiles()
     redis = getattr(request.app.state, "redis", None)
     if redis:
         try:
@@ -360,18 +394,16 @@ async def settings_page(request: Request, user: dict = Depends(require_admin)):
         except Exception:
             pass
         try:
-            saved_ddns = await redis.hgetall(DDNS_CONFIG_KEY)
-            if saved_ddns:
-                ddns_config.update({k: str(v) for k, v in saved_ddns.items() if k in DDNS_DEFAULTS})
-                ddns_has_token = bool(ddns_config.get("api_token"))
-                ddns_config["api_token"] = ""
+            ddns_services = [ddns_public_service(item) for item in await ddns_list_services(redis)]
         except Exception:
             pass
     return templates.TemplateResponse(request, "settings.html", {
         "request": request, "admin": user, "settings": settings,
         "graph_semantic_threshold": graph_semantic_threshold,
-        "ddns_config": ddns_config,
-        "ddns_has_token": ddns_has_token,
+        "ddns_services": ddns_services,
+        "env_profiles": env_profiles,
+        "active_env_profile_id": active_env_profile_id,
+        "has_management_password": _has_management_password(request, user["username"]),
     })
 
 
@@ -441,7 +473,7 @@ async def save_graph_settings(request: Request, user: dict = Depends(require_adm
 
 @page_router.post("/api/save-ddns-settings")
 async def save_ddns_settings(request: Request, user: dict = Depends(require_admin)):
-    """Save DDNS settings to Redis for the admin console."""
+    """Save one DDNS service to Redis for the admin console."""
     try:
         body = await request.json()
     except Exception:
@@ -451,52 +483,118 @@ async def save_ddns_settings(request: Request, user: dict = Depends(require_admi
     if not redis:
         return JSONResponse({"success": False, "error": "Redis 不可用"}, status_code=503)
 
-    provider = str(body.get("provider", DDNS_DEFAULTS["provider"])).strip().lower()
-    if provider not in DDNS_PROVIDERS:
-        return JSONResponse({"success": False, "error": "不支持的 DDNS 服务商"}, status_code=400)
-
-    record_type = str(body.get("record_type", DDNS_DEFAULTS["record_type"])).strip().upper()
-    if record_type not in DDNS_RECORD_TYPES:
-        return JSONResponse({"success": False, "error": "不支持的记录类型"}, status_code=400)
-
     try:
-        ttl = int(body.get("ttl", DDNS_DEFAULTS["ttl"]))
-    except (TypeError, ValueError):
-        return JSONResponse({"success": False, "error": "TTL 必须是数字"}, status_code=400)
-    ttl = max(60, min(86400, ttl))
-
-    existing = {}
-    try:
-        existing = await redis.hgetall(DDNS_CONFIG_KEY)
-    except Exception:
-        existing = {}
-
-    api_token = str(body.get("api_token", "")).strip()
-    if not api_token and existing:
-        api_token = str(existing.get("api_token", ""))
-    if bool(body.get("clear_api_token")):
-        api_token = ""
-
-    config = {
-        "enabled": "true" if bool(body.get("enabled")) else "false",
-        "provider": provider,
-        "domain": str(body.get("domain", "")).strip(),
-        "record_name": str(body.get("record_name", "")).strip(),
-        "record_type": record_type,
-        "ttl": str(ttl),
-        "endpoint": str(body.get("endpoint", "")).strip(),
-        "access_key": str(body.get("access_key", "")).strip(),
-        "api_token": api_token,
-    }
-
-    try:
-        await redis.hset(DDNS_CONFIG_KEY, mapping=config)
+        service = await ddns_save_service(redis, body)
+    except ValueError as e:
+        return JSONResponse({"success": False, "error": str(e)}, status_code=400)
     except Exception as e:
         return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+    return JSONResponse({"success": True, "ddns": ddns_public_service(service)})
 
-    public_config = {k: v for k, v in config.items() if k != "api_token"}
-    public_config["has_token"] = bool(api_token)
-    return JSONResponse({"success": True, "ddns": public_config})
+
+@page_router.post("/api/ddns-services/{service_id}/delete")
+async def delete_ddns_service(request: Request, service_id: str, user: dict = Depends(require_admin)):
+    redis = getattr(request.app.state, "redis", None)
+    if not redis:
+        return JSONResponse({"success": False, "error": "Redis 不可用"}, status_code=503)
+    deleted = await ddns_delete_service(redis, service_id)
+    if not deleted:
+        return JSONResponse({"success": False, "error": "DDNS 配置不存在"}, status_code=404)
+    return JSONResponse({"success": True})
+
+
+@page_router.post("/api/ddns-services/{service_id}/test")
+async def test_ddns_service(request: Request, service_id: str, user: dict = Depends(require_admin)):
+    redis = getattr(request.app.state, "redis", None)
+    if not redis:
+        return JSONResponse({"success": False, "error": "Redis 不可用"}, status_code=503)
+    services = await ddns_list_services(redis)
+    service = next((item for item in services if item.get("id") == service_id), None)
+    if not service:
+        return JSONResponse({"success": False, "error": "DDNS 配置不存在"}, status_code=404)
+    result = await ddns_test_service(redis, service)
+    return JSONResponse(result)
+
+
+@page_router.post("/api/ddns-services/{service_id}/update")
+async def update_ddns_service(request: Request, service_id: str, user: dict = Depends(require_admin)):
+    redis = getattr(request.app.state, "redis", None)
+    if not redis:
+        return JSONResponse({"success": False, "error": "Redis 不可用"}, status_code=503)
+    services = await ddns_list_services(redis)
+    service = next((item for item in services if item.get("id") == service_id), None)
+    if not service:
+        return JSONResponse({"success": False, "error": "DDNS 配置不存在"}, status_code=404)
+    try:
+        result = await ddns_update_service(redis, service)
+    except Exception as e:
+        return JSONResponse({"success": False, "error": str(e)}, status_code=400)
+    return JSONResponse(result)
+
+
+@page_router.post("/api/env-profiles")
+async def save_env_profile(request: Request, user: dict = Depends(require_admin)):
+    try:
+        body = await request.json()
+        profile = save_profile(body)
+    except ValueError as e:
+        return JSONResponse({"success": False, "error": str(e)}, status_code=400)
+    except Exception as e:
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+    profiles, active_id = list_profiles()
+    return JSONResponse({"success": True, "profile": profile, "profiles": profiles, "active_id": active_id})
+
+
+@page_router.post("/api/env-profiles/{profile_id}/activate")
+async def activate_env_profile(request: Request, profile_id: str, user: dict = Depends(require_admin)):
+    try:
+        profile = activate_profile(profile_id)
+    except ValueError as e:
+        return JSONResponse({"success": False, "error": str(e)}, status_code=404)
+    except Exception as e:
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+    profiles, active_id = list_profiles()
+    return JSONResponse({"success": True, "profile": profile, "profiles": profiles, "active_id": active_id})
+
+
+@page_router.post("/api/env-profiles/{profile_id}/delete")
+async def delete_env_profile(request: Request, profile_id: str, user: dict = Depends(require_admin)):
+    try:
+        deleted = delete_profile(profile_id)
+    except Exception as e:
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+    if not deleted:
+        return JSONResponse({"success": False, "error": "profile not found"}, status_code=404)
+    profiles, active_id = list_profiles()
+    return JSONResponse({"success": True, "profiles": profiles, "active_id": active_id})
+
+
+@page_router.post("/api/management-password")
+async def set_management_password(request: Request, user: dict = Depends(require_admin)):
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"success": False, "error": "invalid json"}, status_code=400)
+    password = str(body.get("password", ""))
+    confirm = str(body.get("confirm", ""))
+    if password != confirm:
+        return JSONResponse({"success": False, "error": "password confirmation does not match"}, status_code=400)
+    ok, msg = _set_management_password(request, user["username"], password)
+    return JSONResponse({"success": ok, "error": "" if ok else msg}, status_code=200 if ok else 400)
+
+
+@page_router.post("/api/restart-service")
+async def restart_service(request: Request, user: dict = Depends(require_admin)):
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"success": False, "error": "invalid json"}, status_code=400)
+    if not _has_management_password(request, user["username"]):
+        return JSONResponse({"success": False, "needs_management_password": True, "error": "management password is required"}, status_code=403)
+    if not _verify_management_password(request, user["username"], str(body.get("management_password", ""))):
+        return JSONResponse({"success": False, "error": "management password is incorrect"}, status_code=403)
+    asyncio.create_task(restart_current_service())
+    return JSONResponse({"success": True, "message": "service restart scheduled"})
 
 
 # ---------- 知识图谱 (all logged-in users) ----------

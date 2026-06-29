@@ -97,6 +97,36 @@
         color: #e2e8f0;
         background: #020617;
     }
+    .ddns-modal {
+        display: none;
+    }
+    .ddns-modal.open {
+        display: flex;
+    }
+    .ddns-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+    .ddns-table th {
+        padding: 0.875rem 1rem;
+        text-align: left;
+        font-size: 0.8125rem;
+        color: #64748b;
+        border-bottom: 1px solid #e2e8f0;
+    }
+    .ddns-table td {
+        padding: 0.875rem 1rem;
+        font-size: 0.875rem;
+        border-bottom: 1px solid #f1f5f9;
+        vertical-align: middle;
+    }
+    .dark .ddns-table th {
+        color: #94a3b8;
+        border-bottom-color: #334155;
+    }
+    .dark .ddns-table td {
+        border-bottom-color: #1e293b;
+    }
     @media (max-width: 1023px) {
         .settings-layout {
             grid-template-columns: 1fr;
@@ -142,6 +172,9 @@
                 </button>
                 <button type="button" class="settings-tab" data-settings-tab="security">
                     <i data-lucide="shield" class="w-4 h-4"></i><span>访问与安全</span>
+                </button>
+                <button type="button" class="settings-tab" data-settings-tab="environment">
+                    <i data-lucide="server-cog" class="w-4 h-4"></i><span>服务环境</span>
                 </button>
                 <button type="button" class="settings-tab" data-settings-tab="graph">
                     <i data-lucide="network" class="w-4 h-4"></i><span>知识图谱</span>
@@ -268,6 +301,43 @@
                 </div>
             </section>
 
+            <section id="settings-panel-environment" class="settings-panel">
+                <div class="setting-card p-6">
+                    <div class="flex flex-wrap items-start justify-between gap-3 mb-5">
+                        <div>
+                            <h2 class="text-lg font-semibold text-slate-900 dark:text-white mb-1">服务环境管理</h2>
+                            <p class="text-sm text-slate-500 dark:text-slate-400">管理内网、外网或混合部署模式，启用后写入项目 .env</p>
+                        </div>
+                        <div class="flex gap-2">
+                            <button type="button" onclick="openEnvModal()" class="inline-flex items-center gap-1.5 px-3 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg">
+                                <i data-lucide="plus" class="w-4 h-4"></i>新增模式
+                            </button>
+                            <button type="button" onclick="openRestartModal()" class="inline-flex items-center gap-1.5 px-3 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg">
+                                <i data-lucide="rotate-cw" class="w-4 h-4"></i>重启服务
+                            </button>
+                        </div>
+                    </div>
+                    <div class="mb-5 rounded-xl border border-amber-200 dark:border-amber-500/20 bg-amber-50 dark:bg-amber-500/10 p-4 text-sm text-slate-700 dark:text-slate-300">
+                        启用配置会同步写入 <code class="px-1.5 py-0.5 rounded bg-white dark:bg-slate-900 text-xs">.env</code> 中的 DEPLOYMENT_MODE、EXTERNAL_DOMAIN、INTERNAL_DOMAIN、CORS_ORIGINS、SSL_CERT_FILE、SSL_KEY_FILE。运行中的服务需要重启后才会读取新的环境变量。
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="ddns-table">
+                            <thead>
+                                <tr>
+                                    <th>名称</th>
+                                    <th>模式</th>
+                                    <th>外网域名</th>
+                                    <th>证书</th>
+                                    <th>状态</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="env-profile-table"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
             <section id="settings-panel-graph" class="settings-panel">
                 <div class="setting-card p-6">
                     <h2 class="text-lg font-semibold text-slate-900 dark:text-white mb-1">知识图谱</h2>
@@ -301,80 +371,44 @@
 
             <section id="settings-panel-ddns" class="settings-panel">
                 <div class="setting-card p-6">
-                    <h2 class="text-lg font-semibold text-slate-900 dark:text-white mb-1">DDNS 配置</h2>
-                    <p class="text-sm text-slate-500 dark:text-slate-400 mb-5">保存动态 DNS 更新所需参数，供后续 DDNS 任务读取</p>
-                    <div class="mb-5 rounded-xl border border-blue-200 dark:border-blue-500/20 bg-blue-50 dark:bg-blue-500/10 p-4">
-                        <div class="flex items-start gap-3">
-                            <i data-lucide="info" class="w-4 h-4 text-blue-600 dark:text-blue-400 mt-0.5 flex-shrink-0"></i>
-                            <div class="space-y-2 text-sm text-slate-700 dark:text-slate-300">
-                                <p class="font-medium text-slate-900 dark:text-slate-100">配置说明</p>
-                                <p>主域名填写根域名，例如 <code class="px-1.5 py-0.5 rounded bg-white dark:bg-slate-900 text-xs">example.com</code>；记录名填写要更新的子域名前缀，例如 <code class="px-1.5 py-0.5 rounded bg-white dark:bg-slate-900 text-xs">kb</code>，根域名记录可填 <code class="px-1.5 py-0.5 rounded bg-white dark:bg-slate-900 text-xs">@</code>。</p>
-                                <p>记录类型通常选择 A 用于 IPv4，AAAA 用于 IPv6；TTL 建议保持 300-600 秒，过低可能被服务商限制。</p>
-                                <p>Cloudflare 通常使用 API Token；DNSPod 和 Aliyun 可将账号标识填入 Access Key / Account，将密钥填入 API Token / Secret；自定义 API 需要额外填写接口地址。</p>
-                                <p class="text-xs text-slate-500 dark:text-slate-400">当前页面只负责保存 DDNS 配置，不会立即执行域名解析更新；保存后的密钥不会在页面中明文回显。</p>
-                            </div>
+                    <div class="flex flex-wrap items-start justify-between gap-3 mb-5">
+                        <div>
+                            <h2 class="text-lg font-semibold text-slate-900 dark:text-white mb-1">DDNS 配置</h2>
+                            <p class="text-sm text-slate-500 dark:text-slate-400">自动检测本机公网 IPv4 / IPv6，并按更新周期同步到 DNS 记录</p>
+                        </div>
+                        <div class="flex gap-2">
+                            <button type="button" onclick="openDdnsModal()"
+                                class="inline-flex items-center gap-1.5 px-3 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg">
+                                <i data-lucide="plus" class="w-4 h-4"></i>新增
+                            </button>
+                            <button type="button" onclick="updateAllDdnsServices()"
+                                class="inline-flex items-center gap-1.5 px-3 py-2 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-sm font-medium rounded-lg border border-slate-200 dark:border-slate-700">
+                                <i data-lucide="refresh-cw" class="w-4 h-4"></i>立即更新
+                            </button>
                         </div>
                     </div>
-                    <form id="ddns-form" class="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                        <label class="flex items-center gap-3 xl:col-span-2">
-                            <input type="checkbox" id="ddns-enabled" class="w-4 h-4 accent-brand-600" {% if ddns_config.enabled == "true" %}checked{% endif %}>
-                            <span class="text-sm font-medium text-slate-700 dark:text-slate-300">启用 DDNS</span>
-                        </label>
-                        <div>
-                            <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">服务商</label>
-                            <select id="ddns-provider" class="setting-input">
-                                <option value="cloudflare" {% if ddns_config.provider == "cloudflare" %}selected{% endif %}>Cloudflare</option>
-                                <option value="dnspod" {% if ddns_config.provider == "dnspod" %}selected{% endif %}>DNSPod</option>
-                                <option value="aliyun" {% if ddns_config.provider == "aliyun" %}selected{% endif %}>Aliyun DNS</option>
-                                <option value="custom" {% if ddns_config.provider == "custom" %}selected{% endif %}>自定义 API</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">记录类型</label>
-                            <select id="ddns-record-type" class="setting-input">
-                                <option value="A" {% if ddns_config.record_type == "A" %}selected{% endif %}>A</option>
-                                <option value="AAAA" {% if ddns_config.record_type == "AAAA" %}selected{% endif %}>AAAA</option>
-                                <option value="CNAME" {% if ddns_config.record_type == "CNAME" %}selected{% endif %}>CNAME</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">主域名</label>
-                            <input id="ddns-domain" class="setting-input" value="{{ ddns_config.domain }}" placeholder="example.com">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">记录名</label>
-                            <input id="ddns-record-name" class="setting-input" value="{{ ddns_config.record_name }}" placeholder="@ 或 kb">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">TTL</label>
-                            <input id="ddns-ttl" type="number" min="60" max="86400" class="setting-input" value="{{ ddns_config.ttl }}">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">自定义 API 地址</label>
-                            <input id="ddns-endpoint" class="setting-input" value="{{ ddns_config.endpoint }}" placeholder="https://api.example.com/update">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Access Key / Account</label>
-                            <input id="ddns-access-key" class="setting-input" value="{{ ddns_config.access_key }}" autocomplete="off">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">API Token / Secret</label>
-                            <input id="ddns-api-token" type="password" class="setting-input" placeholder="{% if ddns_has_token %}已保存，留空则保留{% else %}输入 API Token 或 Secret{% endif %}" autocomplete="new-password">
-                            {% if ddns_has_token %}
-                            <label class="flex items-center gap-2 mt-2 text-xs text-slate-500 dark:text-slate-400">
-                                <input id="ddns-clear-token" type="checkbox" class="accent-brand-600">
-                                清除已保存密钥
-                            </label>
-                            {% endif %}
-                        </div>
-                        <div class="xl:col-span-2 pt-2">
-                            <button type="button" onclick="saveDdnsSettings()"
-                                class="px-4 py-2 bg-brand-600 hover:bg-brand-700 disabled:bg-brand-400 text-white text-sm font-medium rounded-xl transition-all cursor-pointer disabled:cursor-not-allowed">
-                                保存 DDNS 配置
-                            </button>
-                            <span id="ddns-settings-msg" class="text-sm ml-2"></span>
-                        </div>
-                    </form>
+
+                    <div class="mb-5 rounded-xl border border-blue-200 dark:border-blue-500/20 bg-blue-50 dark:bg-blue-500/10 p-4 text-sm text-slate-700 dark:text-slate-300">
+                        <p class="font-medium text-slate-900 dark:text-slate-100 mb-2">配置说明</p>
+                        <p>每条 DDNS 服务会按“更新周期”自动获取本机公网 IP。IPv4 开启时更新 A 记录，IPv6 开启时更新 AAAA 记录；两者可分别启用或禁用。</p>
+                        <p class="mt-1">Cloudflare 使用 API Token；DNSPod 使用 Token ID 和 Token；阿里云使用 AccessKey ID 和 Secret；腾讯云使用 SecretId 和 SecretKey；自定义 API 会收到标准 JSON 更新请求。</p>
+                    </div>
+
+                    <div class="overflow-x-auto">
+                        <table class="ddns-table">
+                            <thead>
+                                <tr>
+                                    <th>服务商</th>
+                                    <th>域名</th>
+                                    <th>外部 IP 地址</th>
+                                    <th>状态</th>
+                                    <th>上次更新时间</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="ddns-service-table"></tbody>
+                        </table>
+                    </div>
                 </div>
             </section>
 
@@ -410,9 +444,190 @@
     </div>
 </div>
 
+<div id="ddns-modal" class="ddns-modal fixed inset-0 z-50 items-center justify-center bg-slate-900/40 px-4">
+    <div class="w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-2xl">
+        <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-800">
+            <h3 id="ddns-modal-title" class="text-lg font-semibold text-slate-900 dark:text-white">新增 DDNS</h3>
+            <button type="button" onclick="closeDdnsModal()" class="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200">
+                <i data-lucide="x" class="w-5 h-5"></i>
+            </button>
+        </div>
+        <div class="p-6 space-y-4">
+            <input type="hidden" id="ddns-id">
+            <label class="flex items-center gap-3">
+                <input type="checkbox" id="ddns-enabled" class="w-4 h-4 accent-brand-600" checked>
+                <span class="text-sm font-medium text-slate-700 dark:text-slate-300">启用自动更新</span>
+            </label>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">服务商</label>
+                    <select id="ddns-provider" class="setting-input">
+                        <option value="tencentcloud">腾讯云 DNSPod</option>
+                        <option value="dnspod">DNSPod Token</option>
+                        <option value="aliyun">Aliyun DNS</option>
+                        <option value="cloudflare">Cloudflare</option>
+                        <option value="custom">自定义 API</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">更新周期</label>
+                    <select id="ddns-update-interval" class="setting-input">
+                        <option value="1">每 1 分钟</option>
+                        <option value="5" selected>每 5 分钟</option>
+                        <option value="10">每 10 分钟</option>
+                        <option value="30">每 30 分钟</option>
+                        <option value="60">每 1 小时</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">主域名</label>
+                    <input id="ddns-domain" class="setting-input" placeholder="example.com">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">记录名</label>
+                    <input id="ddns-record-name" class="setting-input" placeholder="@ 或 kb">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">TTL</label>
+                    <input id="ddns-ttl" type="number" min="60" max="86400" class="setting-input" value="600">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">自定义 API 地址</label>
+                    <input id="ddns-endpoint" class="setting-input" placeholder="https://api.example.com/update">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Access Key / Account</label>
+                    <input id="ddns-access-key" class="setting-input" autocomplete="off">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">API Token / Secret</label>
+                    <input id="ddns-api-token" type="password" class="setting-input" autocomplete="new-password">
+                    <label class="flex items-center gap-2 mt-2 text-xs text-slate-500 dark:text-slate-400">
+                        <input id="ddns-clear-token" type="checkbox" class="accent-brand-600">
+                        清除已保存密钥
+                    </label>
+                </div>
+            </div>
+            <div class="rounded-xl border border-slate-200 dark:border-slate-700 p-4 space-y-3">
+                <p class="text-sm font-medium text-slate-900 dark:text-white">IPv4 地址</p>
+                <label class="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+                    <input id="ddns-ipv4-enabled" type="checkbox" class="accent-brand-600" checked>
+                    启用 IPv4 DDNS（A 记录）
+                </label>
+                <select id="ddns-ipv4-mode" class="setting-input">
+                    <option value="auto">自动获取本机公网 IPv4</option>
+                    <option value="custom">使用指定 IPv4 地址</option>
+                    <option value="disabled">禁用</option>
+                </select>
+                <input id="ddns-ipv4-address" class="setting-input" placeholder="指定 IPv4 地址">
+            </div>
+            <div class="rounded-xl border border-slate-200 dark:border-slate-700 p-4 space-y-3">
+                <p class="text-sm font-medium text-slate-900 dark:text-white">IPv6 地址</p>
+                <label class="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+                    <input id="ddns-ipv6-enabled" type="checkbox" class="accent-brand-600">
+                    启用 IPv6 DDNS（AAAA 记录）
+                </label>
+                <select id="ddns-ipv6-mode" class="setting-input">
+                    <option value="auto">自动获取本机公网 IPv6</option>
+                    <option value="custom">使用指定 IPv6 地址</option>
+                    <option value="disabled">禁用</option>
+                </select>
+                <input id="ddns-ipv6-address" class="setting-input" placeholder="指定 IPv6 地址">
+            </div>
+            <div class="flex items-center justify-between gap-3 pt-2">
+                <div class="text-sm">
+                    <span class="text-slate-500 dark:text-slate-400">状态</span>
+                    <span id="ddns-modal-status" class="ml-2 text-slate-700 dark:text-slate-300">未测试</span>
+                </div>
+                <button type="button" onclick="testDdnsFromModal()" class="text-sm font-medium text-brand-600 dark:text-brand-400">测试连接</button>
+            </div>
+            <div class="flex justify-end gap-3 pt-2">
+                <button type="button" onclick="closeDdnsModal()" class="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-300">取消</button>
+                <button type="button" onclick="saveDdnsSettings()" class="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-sm font-medium text-white">确定</button>
+            </div>
+            <p id="ddns-settings-msg" class="text-sm"></p>
+        </div>
+    </div>
+</div>
+
+<div id="env-modal" class="ddns-modal fixed inset-0 z-50 items-center justify-center bg-slate-900/40 px-4">
+    <div class="w-full max-w-lg rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-2xl">
+        <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-800">
+            <h3 id="env-modal-title" class="text-lg font-semibold text-slate-900 dark:text-white">新增部署模式</h3>
+            <button type="button" onclick="closeEnvModal()" class="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"><i data-lucide="x" class="w-5 h-5"></i></button>
+        </div>
+        <div class="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <input type="hidden" id="env-id">
+            <div class="sm:col-span-2">
+                <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">配置名称</label>
+                <input id="env-name" class="setting-input" placeholder="内网开发 / 外网生产">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">部署模式</label>
+                <select id="env-deployment-mode" class="setting-input">
+                    <option value="internal">内网模式</option>
+                    <option value="external">外网模式</option>
+                    <option value="hybrid">内外网混合</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">CORS Origins</label>
+                <input id="env-cors-origins" class="setting-input" placeholder="*">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">内网域名</label>
+                <input id="env-internal-domain" class="setting-input" placeholder="localhost">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">外网域名</label>
+                <input id="env-external-domain" class="setting-input" placeholder="kb.example.com">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">证书文件</label>
+                <input id="env-ssl-cert-file" class="setting-input" placeholder="D:/certs/fullchain.pem">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">私钥文件</label>
+                <input id="env-ssl-key-file" class="setting-input" placeholder="D:/certs/privkey.pem">
+            </div>
+            <div class="sm:col-span-2 flex justify-end gap-3 pt-2">
+                <button type="button" onclick="closeEnvModal()" class="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-300">取消</button>
+                <button type="button" onclick="saveEnvProfile()" class="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-sm font-medium text-white">保存</button>
+            </div>
+            <p id="env-msg" class="sm:col-span-2 text-sm"></p>
+        </div>
+    </div>
+</div>
+
+<div id="restart-modal" class="ddns-modal fixed inset-0 z-50 items-center justify-center bg-slate-900/40 px-4">
+    <div class="w-full max-w-md rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-2xl">
+        <div class="px-6 py-4 border-b border-slate-200 dark:border-slate-800">
+            <h3 id="restart-modal-title" class="text-lg font-semibold text-slate-900 dark:text-white">重启服务验证</h3>
+            <p id="restart-modal-desc" class="text-sm text-slate-500 dark:text-slate-400 mt-1"></p>
+        </div>
+        <div class="p-6 space-y-4">
+            <div id="management-password-setup" class="space-y-3" style="display:none">
+                <input id="management-password-new" type="password" class="setting-input" placeholder="设置管理密码，至少 8 位">
+                <input id="management-password-confirm" type="password" class="setting-input" placeholder="再次输入管理密码">
+                <button type="button" onclick="setManagementPassword()" class="w-full px-4 py-2 rounded-xl bg-brand-600 text-white text-sm font-medium">保存管理密码</button>
+            </div>
+            <div id="management-password-verify" class="space-y-3">
+                <input id="management-password-current" type="password" class="setting-input" placeholder="输入管理密码">
+                <button type="button" onclick="restartService()" class="w-full px-4 py-2 rounded-xl bg-red-600 text-white text-sm font-medium">确认重启</button>
+            </div>
+            <button type="button" onclick="closeRestartModal()" class="w-full px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-300">取消</button>
+            <p id="restart-msg" class="text-sm"></p>
+        </div>
+    </div>
+</div>
+
 <script>
 const settingsTabs = document.querySelectorAll('[data-settings-tab]');
 const settingsPanels = document.querySelectorAll('.settings-panel');
+let ddnsServices = {{ ddns_services|tojson }};
+let envProfiles = {{ env_profiles|tojson }};
+let activeEnvProfileId = {{ active_env_profile_id|tojson }};
+let hasManagementPassword = {{ has_management_password|tojson }};
 
 function activateSettingsTab(name) {
     settingsTabs.forEach(tab => tab.classList.toggle('active', tab.dataset.settingsTab === name));
@@ -453,41 +668,345 @@ async function saveGraphSettings() {
     btn.disabled = false;
 }
 
-async function saveDdnsSettings() {
-    const btn = event.currentTarget;
-    const msg = document.getElementById('ddns-settings-msg');
-    btn.disabled = true;
-    const clearToken = document.getElementById('ddns-clear-token');
-    const payload = {
+function ddnsStatusLabel(status) {
+    const map = {
+        updated: ['已更新', 'bg-emerald-500'],
+        reachable: ['连接正常', 'bg-emerald-500'],
+        error: ['异常', 'bg-red-500'],
+        not_configured: ['未配置', 'bg-slate-400'],
+    };
+    return map[status] || [status || '未知', 'bg-slate-400'];
+}
+
+function renderDdnsTable() {
+    const tbody = document.getElementById('ddns-service-table');
+    if (!tbody) return;
+    if (!ddnsServices.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-slate-400 py-10">暂无 DDNS 配置</td></tr>';
+        return;
+    }
+    tbody.innerHTML = ddnsServices.map(s => {
+        const [label, dot] = ddnsStatusLabel(s.status);
+        const domain = `${s.record_name === '@' ? '' : s.record_name + '.'}${s.domain}`;
+        return `<tr>
+            <td class="text-slate-700 dark:text-slate-300">${s.provider_label || s.provider}</td>
+            <td class="text-slate-900 dark:text-slate-100 max-w-[220px] truncate" title="${domain}">${domain}</td>
+            <td class="text-slate-600 dark:text-slate-400 max-w-[260px] truncate" title="${s.last_ip || '-'}">${s.last_ip || '-'}</td>
+            <td><span class="inline-flex items-center gap-2 text-slate-700 dark:text-slate-300"><span class="w-2 h-2 rounded-full ${dot}"></span>${label}</span></td>
+            <td class="text-slate-600 dark:text-slate-400">${formatDdnsTime(s.last_update_at)}</td>
+            <td>
+                <div class="flex items-center gap-2">
+                    <button type="button" onclick="openDdnsModal('${s.id}')" class="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800" title="编辑"><i data-lucide="pencil" class="w-4 h-4"></i></button>
+                    <button type="button" onclick="updateDdnsService('${s.id}')" class="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800" title="立即更新"><i data-lucide="refresh-cw" class="w-4 h-4"></i></button>
+                    <button type="button" onclick="deleteDdnsService('${s.id}')" class="p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-500/10 text-red-600" title="删除"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                </div>
+            </td>
+        </tr>`;
+    }).join('');
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+function formatDdnsTime(value) {
+    if (!value) return '-';
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return value;
+    return d.toLocaleString();
+}
+
+function getDdnsPayload() {
+    return {
+        id: document.getElementById('ddns-id').value,
         enabled: document.getElementById('ddns-enabled').checked,
         provider: document.getElementById('ddns-provider').value,
         domain: document.getElementById('ddns-domain').value,
         record_name: document.getElementById('ddns-record-name').value,
-        record_type: document.getElementById('ddns-record-type').value,
         ttl: parseInt(document.getElementById('ddns-ttl').value || '600', 10),
+        update_interval_minutes: parseInt(document.getElementById('ddns-update-interval').value || '5', 10),
         endpoint: document.getElementById('ddns-endpoint').value,
         access_key: document.getElementById('ddns-access-key').value,
         api_token: document.getElementById('ddns-api-token').value,
-        clear_api_token: clearToken ? clearToken.checked : false,
+        clear_api_token: document.getElementById('ddns-clear-token').checked,
+        ipv4_enabled: document.getElementById('ddns-ipv4-enabled').checked,
+        ipv4_mode: document.getElementById('ddns-ipv4-mode').value,
+        ipv4_address: document.getElementById('ddns-ipv4-address').value,
+        ipv6_enabled: document.getElementById('ddns-ipv6-enabled').checked,
+        ipv6_mode: document.getElementById('ddns-ipv6-mode').value,
+        ipv6_address: document.getElementById('ddns-ipv6-address').value,
     };
+}
+
+function openDdnsModal(id = '') {
+    const item = ddnsServices.find(s => s.id === id) || {};
+    document.getElementById('ddns-modal-title').textContent = id ? '编辑 DDNS' : '新增 DDNS';
+    document.getElementById('ddns-id').value = item.id || '';
+    document.getElementById('ddns-enabled').checked = item.enabled ?? true;
+    document.getElementById('ddns-provider').value = item.provider || 'tencentcloud';
+    document.getElementById('ddns-domain').value = item.domain || '';
+    document.getElementById('ddns-record-name').value = item.record_name || '';
+    document.getElementById('ddns-ttl').value = item.ttl || 600;
+    document.getElementById('ddns-update-interval').value = item.update_interval_minutes || 5;
+    document.getElementById('ddns-endpoint').value = item.endpoint || '';
+    document.getElementById('ddns-access-key').value = item.access_key || '';
+    document.getElementById('ddns-api-token').value = '';
+    document.getElementById('ddns-api-token').placeholder = item.has_token ? '已保存，留空则保留' : '输入 API Token 或 Secret';
+    document.getElementById('ddns-clear-token').checked = false;
+    document.getElementById('ddns-ipv4-enabled').checked = item.ipv4_enabled ?? true;
+    document.getElementById('ddns-ipv4-mode').value = item.ipv4_mode || 'auto';
+    document.getElementById('ddns-ipv4-address').value = item.ipv4_address || '';
+    document.getElementById('ddns-ipv6-enabled').checked = item.ipv6_enabled ?? false;
+    document.getElementById('ddns-ipv6-mode').value = item.ipv6_mode || 'auto';
+    document.getElementById('ddns-ipv6-address').value = item.ipv6_address || '';
+    document.getElementById('ddns-modal-status').textContent = item.last_error || ddnsStatusLabel(item.status || 'not_configured')[0];
+    document.getElementById('ddns-settings-msg').textContent = '';
+    document.getElementById('ddns-modal').classList.add('open');
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+function closeDdnsModal() {
+    document.getElementById('ddns-modal').classList.remove('open');
+}
+
+async function saveDdnsSettings(closeAfterSave = true) {
+    const msg = document.getElementById('ddns-settings-msg');
     try {
         const resp = await fetch('/admin/api/save-ddns-settings', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(payload),
+            body: JSON.stringify(getDdnsPayload()),
         });
         const result = await resp.json();
-        msg.textContent = result.success ? '已保存' : '保存失败: ' + (result.error || '');
-        msg.className = result.success ? 'text-sm text-emerald-600 ml-2' : 'text-sm text-red-600 ml-2';
-        if (result.success) {
-            document.getElementById('ddns-api-token').value = '';
-        }
+        if (!result.success) throw new Error(result.error || '保存失败');
+        const index = ddnsServices.findIndex(s => s.id === result.ddns.id);
+        if (index >= 0) ddnsServices[index] = result.ddns;
+        else ddnsServices.push(result.ddns);
+        document.getElementById('ddns-id').value = result.ddns.id;
+        renderDdnsTable();
+        if (closeAfterSave) closeDdnsModal();
+        return result.ddns;
     } catch (err) {
-        msg.textContent = '请求失败';
-        msg.className = 'text-sm text-red-600 ml-2';
+        msg.textContent = err.message || '请求失败';
+        msg.className = 'text-sm text-red-600';
     }
-    setTimeout(() => { msg.textContent = ''; }, 3000);
-    btn.disabled = false;
 }
+
+async function testDdnsFromModal() {
+    const saved = await saveDdnsSettings(false);
+    if (saved && saved.id) await testDdnsService(saved.id, true);
+}
+
+async function testDdnsService(id, reopen = false) {
+    const resp = await fetch(`/admin/api/ddns-services/${id}/test`, {method: 'POST'});
+    const result = await resp.json();
+    const item = ddnsServices.find(s => s.id === id);
+    if (item) {
+        item.status = result.status || (result.success ? 'reachable' : 'error');
+        item.last_error = result.success ? '' : (result.message || '');
+        item.last_ip = result.ip || item.last_ip || '';
+        item.last_checked_at = new Date().toISOString();
+    }
+    renderDdnsTable();
+    if (reopen && item) {
+        openDdnsModal(id);
+        document.getElementById('ddns-modal-status').textContent = result.message || (result.success ? '连接正常' : '连接失败');
+    }
+}
+
+async function updateDdnsService(id) {
+    const resp = await fetch(`/admin/api/ddns-services/${id}/update`, {method: 'POST'});
+    const result = await resp.json();
+    const item = ddnsServices.find(s => s.id === id);
+    if (item) {
+        item.status = result.success ? 'updated' : 'error';
+        item.last_error = result.success ? '' : (result.error || '');
+        item.last_ip = result.last_ip || item.last_ip || '';
+        item.last_update_at = result.last_update_at || item.last_update_at || '';
+        item.last_checked_at = result.last_checked_at || new Date().toISOString();
+    }
+    renderDdnsTable();
+}
+
+async function updateAllDdnsServices() {
+    for (const item of ddnsServices.filter(s => s.enabled)) {
+        await updateDdnsService(item.id);
+    }
+}
+
+async function deleteDdnsService(id) {
+    if (!confirm('确定删除这个 DDNS 配置吗？')) return;
+    const resp = await fetch(`/admin/api/ddns-services/${id}/delete`, {method: 'POST'});
+    const result = await resp.json();
+    if (result.success) {
+        ddnsServices = ddnsServices.filter(s => s.id !== id);
+        renderDdnsTable();
+    }
+}
+
+renderDdnsTable();
+
+function envModeLabel(mode) {
+    return {internal: '内网', external: '外网', hybrid: '混合'}[mode] || mode;
+}
+
+function renderEnvProfiles() {
+    const tbody = document.getElementById('env-profile-table');
+    if (!tbody) return;
+    if (!envProfiles.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-slate-400 py-10">暂无部署模式配置</td></tr>';
+        return;
+    }
+    tbody.innerHTML = envProfiles.map(p => {
+        const active = p.id === activeEnvProfileId;
+        return `<tr>
+            <td class="text-slate-900 dark:text-slate-100">${p.name}</td>
+            <td class="text-slate-700 dark:text-slate-300">${envModeLabel(p.deployment_mode)}</td>
+            <td class="text-slate-600 dark:text-slate-400">${p.external_domain || '-'}</td>
+            <td class="text-slate-600 dark:text-slate-400">${p.ssl_cert_file ? '已配置' : '-'}</td>
+            <td>${active ? '<span class="text-emerald-600">已启用</span>' : '<span class="text-slate-400">未启用</span>'}</td>
+            <td>
+                <div class="flex items-center gap-2">
+                    <button type="button" onclick="openEnvModal('${p.id}')" class="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800" title="编辑"><i data-lucide="pencil" class="w-4 h-4"></i></button>
+                    <button type="button" onclick="activateEnvProfile('${p.id}')" class="p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800" title="启用"><i data-lucide="power" class="w-4 h-4"></i></button>
+                    <button type="button" onclick="deleteEnvProfile('${p.id}')" class="p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-500/10 text-red-600" title="删除"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                </div>
+            </td>
+        </tr>`;
+    }).join('');
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+function openEnvModal(id = '') {
+    const p = envProfiles.find(item => item.id === id) || {};
+    document.getElementById('env-modal-title').textContent = id ? '编辑部署模式' : '新增部署模式';
+    document.getElementById('env-id').value = p.id || '';
+    document.getElementById('env-name').value = p.name || '';
+    document.getElementById('env-deployment-mode').value = p.deployment_mode || 'internal';
+    document.getElementById('env-external-domain').value = p.external_domain || '';
+    document.getElementById('env-internal-domain').value = p.internal_domain || 'localhost';
+    document.getElementById('env-cors-origins').value = p.cors_origins || '*';
+    document.getElementById('env-ssl-cert-file').value = p.ssl_cert_file || '';
+    document.getElementById('env-ssl-key-file').value = p.ssl_key_file || '';
+    document.getElementById('env-msg').textContent = '';
+    document.getElementById('env-modal').classList.add('open');
+}
+
+function closeEnvModal() {
+    document.getElementById('env-modal').classList.remove('open');
+}
+
+function envPayload() {
+    return {
+        id: document.getElementById('env-id').value,
+        name: document.getElementById('env-name').value,
+        deployment_mode: document.getElementById('env-deployment-mode').value,
+        external_domain: document.getElementById('env-external-domain').value,
+        internal_domain: document.getElementById('env-internal-domain').value,
+        cors_origins: document.getElementById('env-cors-origins').value,
+        ssl_cert_file: document.getElementById('env-ssl-cert-file').value,
+        ssl_key_file: document.getElementById('env-ssl-key-file').value,
+    };
+}
+
+async function saveEnvProfile() {
+    const msg = document.getElementById('env-msg');
+    try {
+        const resp = await fetch('/admin/api/env-profiles', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(envPayload()),
+        });
+        const result = await resp.json();
+        if (!result.success) throw new Error(result.error || '保存失败');
+        envProfiles = result.profiles;
+        activeEnvProfileId = result.active_id;
+        renderEnvProfiles();
+        closeEnvModal();
+    } catch (err) {
+        msg.textContent = err.message || '请求失败';
+        msg.className = 'text-sm text-red-600';
+    }
+}
+
+async function activateEnvProfile(id) {
+    const resp = await fetch(`/admin/api/env-profiles/${id}/activate`, {method: 'POST'});
+    const result = await resp.json();
+    if (result.success) {
+        envProfiles = result.profiles;
+        activeEnvProfileId = result.active_id;
+        renderEnvProfiles();
+    } else {
+        alert(result.error || '启用失败');
+    }
+}
+
+async function deleteEnvProfile(id) {
+    if (!confirm('确定删除这个部署模式配置吗？')) return;
+    const resp = await fetch(`/admin/api/env-profiles/${id}/delete`, {method: 'POST'});
+    const result = await resp.json();
+    if (result.success) {
+        envProfiles = result.profiles;
+        activeEnvProfileId = result.active_id;
+        renderEnvProfiles();
+    } else {
+        alert(result.error || '删除失败');
+    }
+}
+
+function openRestartModal() {
+    document.getElementById('restart-msg').textContent = '';
+    document.getElementById('management-password-setup').style.display = hasManagementPassword ? 'none' : 'block';
+    document.getElementById('management-password-verify').style.display = hasManagementPassword ? 'block' : 'none';
+    document.getElementById('restart-modal-desc').textContent = hasManagementPassword
+        ? '请输入额外的管理密码。该密码不是管理员登录密码。'
+        : '当前账号尚未设置管理密码，请先设置后再重启服务。';
+    document.getElementById('restart-modal').classList.add('open');
+}
+
+function closeRestartModal() {
+    document.getElementById('restart-modal').classList.remove('open');
+}
+
+async function setManagementPassword() {
+    const msg = document.getElementById('restart-msg');
+    const resp = await fetch('/admin/api/management-password', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            password: document.getElementById('management-password-new').value,
+            confirm: document.getElementById('management-password-confirm').value,
+        }),
+    });
+    const result = await resp.json();
+    if (result.success) {
+        hasManagementPassword = true;
+        openRestartModal();
+        msg.textContent = '管理密码已设置，请输入后确认重启';
+        msg.className = 'text-sm text-emerald-600';
+    } else {
+        msg.textContent = result.error || '设置失败';
+        msg.className = 'text-sm text-red-600';
+    }
+}
+
+async function restartService() {
+    const msg = document.getElementById('restart-msg');
+    const resp = await fetch('/admin/api/restart-service', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({management_password: document.getElementById('management-password-current').value}),
+    });
+    const result = await resp.json();
+    if (result.success) {
+        msg.textContent = '服务正在重启，请稍后刷新页面';
+        msg.className = 'text-sm text-emerald-600';
+    } else if (result.needs_management_password) {
+        hasManagementPassword = false;
+        openRestartModal();
+    } else {
+        msg.textContent = result.error || '重启失败';
+        msg.className = 'text-sm text-red-600';
+    }
+}
+
+renderEnvProfiles();
 </script>
 {% endblock %}

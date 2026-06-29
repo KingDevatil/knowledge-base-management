@@ -1,3 +1,4 @@
+import asyncio
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -25,6 +26,7 @@ from logger import setup_logger
 from middleware import request_logging_middleware, csrf_middleware
 from mcp_auth_context import set_mcp_api_key_info, reset_mcp_api_key_info
 from api_routes import api_router
+from ddns import ddns_update_loop
 from mcp.server.sse import SseServerTransport
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
@@ -127,6 +129,10 @@ async def lifespan(app: FastAPI):
 
     # 将文件中的 Key 同步到 Redis（不删除 Redis 中已有 Key）
     await app.state.api_key_auth._load_keys_to_redis()
+    app.state.ddns_stop_event = asyncio.Event()
+    app.state.ddns_task = asyncio.create_task(
+        ddns_update_loop(app.state.redis, app.state.ddns_stop_event)
+    )
 
     # 启动健康检查
     startup_checks = {}
@@ -172,6 +178,12 @@ async def lifespan(app: FastAPI):
 
     # 关闭
     logger.info("Shutting down MCP Gateway...")
+    app.state.ddns_stop_event.set()
+    app.state.ddns_task.cancel()
+    try:
+        await app.state.ddns_task
+    except asyncio.CancelledError:
+        pass
     await app.state.redis.close()
     await app.state.embedder.close()
     logger.info("MCP Gateway stopped")
