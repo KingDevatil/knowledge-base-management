@@ -3,158 +3,96 @@
 {% block title %}仪表盘 - 中央知识库{% endblock %}
 
 {% block content %}
-<!-- 顶部栏 -->
-<header class="glass-header sticky top-0 z-20 border-b border-slate-200/80 dark:border-slate-800/80 px-8 py-4">
+<header class="page-header sticky top-0 z-20 px-6 py-3.5">
     <div class="flex items-center justify-between">
         <div>
-            <h1 class="text-xl font-bold text-slate-900 dark:text-white">仪表盘</h1>
-            <p class="text-sm text-slate-500 dark:text-slate-400 mt-0.5">欢迎回来，今日知识库运行平稳</p>
+            <h1 class="text-lg font-semibold text-slate-900 dark:text-white">仪表盘</h1>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">知识库运行概览</p>
         </div>
     </div>
 </header>
 
-<div class="px-8 py-6 space-y-6">
-    <!-- 统计卡片 -->
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
-        <div class="stat-card bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 relative overflow-hidden group">
-            <div class="absolute top-0 right-0 w-32 h-32 bg-brand-500/5 rounded-full -mr-16 -mt-16 transition-transform group-hover:scale-150"></div>
-            <div class="relative">
-                <div class="flex items-center justify-between mb-4">
-                    <div class="w-10 h-10 rounded-xl bg-brand-50 dark:bg-brand-500/10 flex items-center justify-center">
-                        <i data-lucide="file-text" class="w-5 h-5 text-brand-600 dark:text-brand-400"></i>
-                    </div>
+<div class="px-6 py-5 space-y-5">
+    <!-- Stats -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="stat-card bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-4">
+            <div class="flex items-center gap-3 mb-2">
+                <div class="w-8 h-8 rounded-md bg-brand-50 dark:bg-brand-500/10 flex items-center justify-center">
+                    <i data-lucide="file-text" class="w-4 h-4 text-brand-600 dark:text-brand-400"></i>
                 </div>
-                <p class="text-3xl font-bold text-slate-900 dark:text-white mb-1">{{ doc_count }}</p>
-                <p class="text-sm text-slate-500 dark:text-slate-400">文档总量</p>
+                <span class="text-xs text-slate-500 dark:text-slate-400">文档总量</span>
             </div>
+            <p class="text-2xl font-bold text-slate-900 dark:text-white">{{ doc_count }}</p>
         </div>
 
-        <div class="stat-card bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 relative overflow-hidden group">
-            <div class="absolute top-0 right-0 w-32 h-32 bg-cyan-500/5 rounded-full -mr-16 -mt-16 transition-transform group-hover:scale-150"></div>
-            <div class="relative">
-                <div class="flex items-center justify-between mb-4">
-                    <div class="w-10 h-10 rounded-xl bg-cyan-50 dark:bg-cyan-500/10 flex items-center justify-center">
-                        <i data-lucide="search" class="w-5 h-5 text-cyan-600 dark:text-cyan-400"></i>
-                    </div>
+        <div class="stat-card bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-4">
+            <div class="flex items-center gap-3 mb-2">
+                <div class="w-8 h-8 rounded-md bg-cyan-50 dark:bg-cyan-500/10 flex items-center justify-center">
+                    <i data-lucide="search" class="w-4 h-4 text-cyan-600 dark:text-cyan-400"></i>
                 </div>
-                <p class="text-3xl font-bold text-slate-900 dark:text-white mb-1">{{ today_search_count }}</p>
-                <p class="text-sm text-slate-500 dark:text-slate-400">今日检索</p>
+                <span class="text-xs text-slate-500 dark:text-slate-400">今日检索</span>
             </div>
+            <p class="text-2xl font-bold text-slate-900 dark:text-white">{{ today_search_count }}</p>
         </div>
 
-        <div class="stat-card bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 relative overflow-hidden group">
-            <div class="absolute top-0 right-0 w-32 h-32 bg-purple-500/5 rounded-full -mr-16 -mt-16 transition-transform group-hover:scale-150"></div>
-            <div class="relative">
-                <div class="flex items-center justify-between mb-4">
-                    <div class="w-10 h-10 rounded-xl bg-purple-50 dark:bg-purple-500/10 flex items-center justify-center">
-                        <i data-lucide="key" class="w-5 h-5 text-purple-600 dark:text-purple-400"></i>
-                    </div>
-                    <span class="text-xs font-medium text-slate-500 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-full">活跃</span>
+        <div class="stat-card bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-4">
+            <div class="flex items-center gap-3 mb-2">
+                <div class="w-8 h-8 rounded-md bg-emerald-50 dark:bg-emerald-500/10 flex items-center justify-center">
+                    <i data-lucide="key" class="w-4 h-4 text-emerald-600 dark:text-emerald-400"></i>
                 </div>
-                <p class="text-3xl font-bold text-slate-900 dark:text-white mb-1">{{ active_key_count }}</p>
-                <p class="text-sm text-slate-500 dark:text-slate-400">API Key</p>
+                <span class="text-xs text-slate-500 dark:text-slate-400">活跃 API Key</span>
             </div>
+            <p class="text-2xl font-bold text-slate-900 dark:text-white">{{ active_key_count }}</p>
         </div>
 
-        <div class="stat-card bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 relative overflow-hidden group">
-            <div class="absolute top-0 right-0 w-32 h-32 bg-amber-500/5 rounded-full -mr-16 -mt-16 transition-transform group-hover:scale-150"></div>
-            <div class="relative">
-                <div class="flex items-center justify-between mb-4">
-                    <div class="w-10 h-10 rounded-xl bg-amber-50 dark:bg-amber-500/10 flex items-center justify-center">
-                        <i data-lucide="alert-triangle" class="w-5 h-5 text-amber-600 dark:text-amber-400"></i>
-                    </div>
-                    {% if expired_soon_count > 0 %}
-                    <span class="text-xs font-medium text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 px-2 py-1 rounded-full">需关注</span>
-                    {% endif %}
+        <div class="stat-card bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-4">
+            <div class="flex items-center gap-3 mb-2">
+                <div class="w-8 h-8 rounded-md {% if expired_soon_count > 0 %}bg-red-50 dark:bg-red-500/10{% else %}bg-amber-50 dark:bg-amber-500/10{% endif %} flex items-center justify-center">
+                    <i data-lucide="alert-triangle" class="w-4 h-4 {% if expired_soon_count > 0 %}text-red-600 dark:text-red-400{% else %}text-amber-600 dark:text-amber-400{% endif %}"></i>
                 </div>
-                <p class="text-3xl font-bold {% if expired_soon_count > 0 %}text-amber-600 dark:text-amber-400{% else %}text-slate-900 dark:text-white{% endif %} mb-1">{{ expired_soon_count }}</p>
-                <p class="text-sm text-slate-500 dark:text-slate-400">即将过期 Key</p>
+                <span class="text-xs text-slate-500 dark:text-slate-400">即将过期 Key</span>
                 {% if expired_soon_count > 0 %}
-                <a href="/admin/api-keys" class="text-xs text-red-600 dark:text-red-400 hover:text-red-700 mt-2 inline-flex items-center gap-1">
-                    查看详情 <i data-lucide="arrow-right" class="w-3 h-3"></i>
-                </a>
+                <a href="/admin/api-keys" class="ml-auto text-[10px] text-red-600 dark:text-red-400 hover:underline">查看</a>
                 {% endif %}
             </div>
+            <p class="text-2xl font-bold {% if expired_soon_count > 0 %}text-red-600 dark:text-red-400{% else %}text-slate-900 dark:text-white{% endif %}">{{ expired_soon_count }}</p>
         </div>
     </div>
 
-    <!-- 中间区域：系统健康 + 快速操作 -->
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
-        <!-- 系统健康 -->
-        <div class="lg:col-span-2 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6">
-            <div class="flex items-center justify-between mb-6">
-                <div class="flex items-center gap-3">
-                    <div class="w-8 h-8 rounded-lg bg-emerald-50 dark:bg-emerald-500/10 flex items-center justify-center">
-                        <i data-lucide="activity" class="w-4 h-4 text-emerald-600 dark:text-emerald-400"></i>
-                    </div>
-                    <h2 class="text-base font-semibold text-slate-900 dark:text-white">系统健康</h2>
-                </div>
-                <span class="text-xs text-slate-400">最后更新: 刚刚</span>
+    <!-- Trend + Quick Actions -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <!-- Trend chart -->
+        <div class="lg:col-span-2 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-4">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="text-sm font-semibold text-slate-900 dark:text-white">检索趋势</h3>
+                <span id="trend-summary" class="text-xs text-slate-400"></span>
             </div>
-
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-4" hx-get="/admin/api/health-cards" hx-trigger="load every 30s" hx-target="#health-status" hx-swap="innerHTML">
-                <div id="health-status" class="contents">
-                    <div class="relative p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700/50">
-                        <div class="flex items-center gap-2 mb-1">
-                            <span class="w-2.5 h-2.5 rounded-full bg-slate-300 dark:bg-slate-600 animate-pulse"></span>
-                            <span class="text-sm font-medium text-slate-500 dark:text-slate-400">检测中...</span>
-                        </div>
-                        <p class="text-xs text-slate-400">正在检查各服务连接状态</p>
-                    </div>
-                </div>
-            </div>
-
-            <!-- API 请求趋势图 -->
-            <div class="mt-6 pt-6 border-t border-slate-100 dark:border-slate-800">
-                <div class="flex items-center justify-between mb-4">
-                    <h3 class="text-sm font-medium text-slate-700 dark:text-slate-300">API 请求趋势（24h）</h3>
-                    <div id="trend-summary" class="text-xs text-slate-400"></div>
-                </div>
-                <div class="relative">
-                    <canvas id="trend-chart" class="w-full h-32"></canvas>
-                    <div id="trend-empty" class="absolute inset-0 flex items-center justify-center text-sm text-slate-400 dark:text-slate-500 bg-slate-50/80 dark:bg-slate-800/30 rounded-xl pointer-events-none hidden">
-                        暂无检索数据
-                    </div>
-                </div>
+            <div id="trend-chart-container" class="relative" style="height:160px">
+                <canvas id="trend-chart"></canvas>
+                <div id="trend-empty" class="absolute inset-0 flex items-center justify-center text-sm text-slate-400 hidden">暂无数据</div>
             </div>
         </div>
 
-        <!-- 右侧：快速操作 -->
-        <div class="space-y-5">
-            <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6">
-                <h2 class="text-base font-semibold text-slate-900 dark:text-white mb-4">快速操作</h2>
-                <div class="space-y-2.5">
-                    <a href="/admin/documents/upload" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-brand-50 dark:bg-brand-500/10 text-brand-700 dark:text-brand-400 hover:bg-brand-100 dark:hover:bg-brand-500/20 transition-all group">
-                        <div class="w-8 h-8 rounded-lg bg-brand-500/20 flex items-center justify-center group-hover:scale-110 transition-transform">
-                            <i data-lucide="upload-cloud" class="w-4 h-4"></i>
-                        </div>
-                        <div class="text-left">
-                            <p class="text-sm font-semibold">上传文档</p>
-                            <p class="text-xs text-brand-600/70 dark:text-brand-400/70">支持 Markdown / PDF</p>
-                        </div>
-                        <i data-lucide="arrow-right" class="w-4 h-4 ml-auto opacity-0 group-hover:opacity-100 transition-opacity"></i>
-                    </a>
-                    <a href="/admin/documents/new/edit" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-all group">
-                        <div class="w-8 h-8 rounded-lg bg-slate-200 dark:bg-slate-700 flex items-center justify-center group-hover:scale-110 transition-transform">
-                            <i data-lucide="file-plus" class="w-4 h-4"></i>
-                        </div>
-                        <div class="text-left">
-                            <p class="text-sm font-semibold">新建文档</p>
-                            <p class="text-xs text-slate-500">创建空白文档</p>
-                        </div>
-                        <i data-lucide="arrow-right" class="w-4 h-4 ml-auto opacity-0 group-hover:opacity-100 transition-opacity"></i>
-                    </a>
-                    <a href="/admin/api-keys/create" class="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-all group">
-                        <div class="w-8 h-8 rounded-lg bg-slate-200 dark:bg-slate-700 flex items-center justify-center group-hover:scale-110 transition-transform">
-                            <i data-lucide="key-round" class="w-4 h-4"></i>
-                        </div>
-                        <div class="text-left">
-                            <p class="text-sm font-semibold">新建 API Key</p>
-                            <p class="text-xs text-slate-500">为应用授权访问</p>
-                        </div>
-                        <i data-lucide="arrow-right" class="w-4 h-4 ml-auto opacity-0 group-hover:opacity-100 transition-opacity"></i>
-                    </a>
-                </div>
+        <!-- Quick Actions -->
+        <div class="bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-4">
+            <h3 class="text-sm font-semibold text-slate-900 dark:text-white mb-3">快捷操作</h3>
+            <div class="space-y-2">
+                <a href="/admin/documents" class="flex items-center gap-2.5 px-3 py-2.5 rounded-md bg-slate-50 dark:bg-slate-800/50 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors text-sm">
+                    <i data-lucide="file-text" class="w-4 h-4 text-slate-400"></i>
+                    <span class="font-medium">文档管理</span>
+                </a>
+                <a href="/admin/documents/upload" class="flex items-center gap-2.5 px-3 py-2.5 rounded-md bg-slate-50 dark:bg-slate-800/50 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors text-sm">
+                    <i data-lucide="upload-cloud" class="w-4 h-4 text-slate-400"></i>
+                    <span class="font-medium">上传文档</span>
+                </a>
+                <a href="/admin/documents/new/edit" class="flex items-center gap-2.5 px-3 py-2.5 rounded-md bg-slate-50 dark:bg-slate-800/50 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors text-sm">
+                    <i data-lucide="file-plus" class="w-4 h-4 text-slate-400"></i>
+                    <span class="font-medium">新建文档</span>
+                </a>
+                <a href="/admin/api-keys/create" class="flex items-center gap-2.5 px-3 py-2.5 rounded-md bg-slate-50 dark:bg-slate-800/50 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors text-sm">
+                    <i data-lucide="key" class="w-4 h-4 text-slate-400"></i>
+                    <span class="font-medium">新建 API Key</span>
+                </a>
             </div>
         </div>
     </div>
@@ -164,7 +102,7 @@
 {% block extra_head %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <style>
-    #trend-chart-container { height: 140px; }
+    #trend-chart-container { height: 160px; }
 </style>
 {% endblock %}
 
@@ -185,7 +123,7 @@ function loadTrendChart() {
 
             const total = data.counts.reduce((a, b) => a + b, 0);
             const maxVal = Math.max(...data.counts);
-            document.getElementById('trend-summary').textContent = `24h 共 ${total} 次 · 峰值 ${maxVal} 次`;
+            document.getElementById('trend-summary').textContent = '24h 共 ' + total + ' 次 / 峰值 ' + maxVal;
 
             if (trendChartInstance) {
                 trendChartInstance.destroy();
@@ -197,9 +135,9 @@ function loadTrendChart() {
             const tickColor = isDark ? '#94a3b8' : '#64748b';
 
             const ctx = document.getElementById('trend-chart').getContext('2d');
-            const gradient = ctx.createLinearGradient(0, 0, 0, 140);
-            gradient.addColorStop(0, 'rgba(99, 102, 241, 0.5)');
-            gradient.addColorStop(1, 'rgba(99, 102, 241, 0.05)');
+            const gradient = ctx.createLinearGradient(0, 0, 0, 160);
+            gradient.addColorStop(0, 'rgba(37, 99, 235, 0.4)');
+            gradient.addColorStop(1, 'rgba(37, 99, 235, 0.05)');
 
             trendChartInstance = new Chart(ctx, {
                 type: 'bar',
@@ -209,16 +147,16 @@ function loadTrendChart() {
                         label: '请求数',
                         data: data.counts,
                         backgroundColor: gradient,
-                        borderColor: '#818cf8',
+                        borderColor: '#3b82f6',
                         borderWidth: 1,
-                        borderRadius: 3,
+                        borderRadius: 2,
                         borderSkipped: false,
                     }]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    animation: { duration: 600 },
+                    animation: { duration: 400 },
                     plugins: { legend: { display: false } },
                     scales: {
                         x: {
@@ -242,7 +180,7 @@ function loadTrendChart() {
                 }
             });
         })
-        .catch(() => {
+        .catch(function() {
             document.getElementById('trend-empty').classList.remove('hidden');
             document.getElementById('trend-empty').textContent = '加载失败';
         });
@@ -252,8 +190,7 @@ document.addEventListener('DOMContentLoaded', function() {
     setTimeout(loadTrendChart, 100);
 });
 
-// 主题切换时重建图表
-const _origToggle = window.toggleTheme;
+var _origToggle = window.toggleTheme;
 window.toggleTheme = function() {
     _origToggle();
     setTimeout(loadTrendChart, 200);
