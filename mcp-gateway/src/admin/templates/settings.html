@@ -2,176 +2,492 @@
 
 {% block title %}系统设置 - 知识库管理后台{% endblock %}
 
+{% block extra_head %}
+<style>
+    .settings-shell {
+        width: min(100%, 1440px);
+    }
+    .settings-layout {
+        display: grid;
+        grid-template-columns: 240px minmax(0, 1fr);
+        gap: 1.5rem;
+        align-items: start;
+    }
+    .settings-nav {
+        position: sticky;
+        top: 1.5rem;
+    }
+    .settings-tab {
+        width: 100%;
+        display: flex;
+        align-items: center;
+        gap: 0.625rem;
+        padding: 0.75rem 0.875rem;
+        border-radius: 0.75rem;
+        color: #475569;
+        font-size: 0.875rem;
+        font-weight: 500;
+        transition: all 0.15s ease;
+    }
+    .settings-tab:hover {
+        color: #4f46e5;
+        background: #f8fafc;
+    }
+    .settings-tab.active {
+        color: #4f46e5;
+        background: #eef2ff;
+    }
+    .dark .settings-tab {
+        color: #94a3b8;
+    }
+    .dark .settings-tab:hover {
+        color: #a5b4fc;
+        background: rgba(30, 41, 59, 0.6);
+    }
+    .dark .settings-tab.active {
+        color: #c7d2fe;
+        background: rgba(79, 70, 229, 0.18);
+    }
+    .settings-panel {
+        display: none;
+    }
+    .settings-panel.active {
+        display: block;
+    }
+    .setting-card {
+        background: white;
+        border: 1px solid #e2e8f0;
+        border-radius: 1rem;
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    }
+    .dark .setting-card {
+        background: #0f172a;
+        border-color: #1e293b;
+    }
+    .setting-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 0.875rem 0;
+        border-bottom: 1px solid #f1f5f9;
+    }
+    .setting-row:last-child {
+        border-bottom: none;
+    }
+    .dark .setting-row {
+        border-bottom-color: #1e293b;
+    }
+    .setting-input {
+        width: 100%;
+        border: 1px solid #cbd5e1;
+        border-radius: 0.75rem;
+        padding: 0.625rem 0.75rem;
+        font-size: 0.875rem;
+        color: #0f172a;
+        background: white;
+        outline: none;
+    }
+    .setting-input:focus {
+        border-color: #6366f1;
+        box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+    }
+    .dark .setting-input {
+        border-color: #334155;
+        color: #e2e8f0;
+        background: #020617;
+    }
+    @media (max-width: 1023px) {
+        .settings-layout {
+            grid-template-columns: 1fr;
+        }
+        .settings-nav {
+            position: static;
+        }
+        .settings-nav-list {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+    }
+    @media (max-width: 640px) {
+        .settings-nav-list {
+            grid-template-columns: 1fr;
+        }
+        .setting-row {
+            align-items: flex-start;
+            flex-direction: column;
+        }
+    }
+</style>
+{% endblock %}
+
 {% block content %}
-<div class="p-8 max-w-2xl mx-auto">
-    <!-- 页面标题 -->
+<div class="settings-shell mx-auto px-6 lg:px-8 py-8">
     <div class="mb-8">
         <h1 class="text-2xl font-bold text-slate-900 dark:text-white">系统设置</h1>
-        <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">查看当前系统配置与运行参数</p>
+        <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">按模块查看和维护系统运行配置</p>
     </div>
 
-    <div class="space-y-4">
-        <!-- Embedding 配置 -->
-        <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden p-5">
-            <h2 class="text-base font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
-                <div class="w-8 h-8 rounded-lg bg-purple-100 dark:bg-purple-500/10 flex items-center justify-center">
-                    <i data-lucide="brain" class="w-4 h-4 text-purple-600 dark:text-purple-400"></i>
-                </div>
-                Embedding 配置
-            </h2>
-            <div class="space-y-3">
-                <div class="flex justify-between items-center py-2 border-b border-slate-100 dark:border-slate-800">
-                    <span class="text-sm text-slate-600 dark:text-slate-400">模型</span>
-                    <span class="text-sm font-medium text-slate-900 dark:text-slate-200">{{ settings.OLLAMA_MODEL }}</span>
-                </div>
-                <div class="flex justify-between items-center py-2">
-                    <span class="text-sm text-slate-600 dark:text-slate-400">Ollama 地址</span>
-                    <code class="text-xs bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-lg text-slate-700 dark:text-slate-300">{{ settings.OLLAMA_URL }}</code>
-                </div>
+    <div class="settings-layout">
+        <aside class="settings-nav setting-card p-3">
+            <div class="settings-nav-list space-y-1">
+                <button type="button" class="settings-tab active" data-settings-tab="overview">
+                    <i data-lucide="info" class="w-4 h-4"></i><span>基础信息</span>
+                </button>
+                <button type="button" class="settings-tab" data-settings-tab="embedding">
+                    <i data-lucide="brain" class="w-4 h-4"></i><span>模型与切片</span>
+                </button>
+                <button type="button" class="settings-tab" data-settings-tab="storage">
+                    <i data-lucide="database" class="w-4 h-4"></i><span>存储服务</span>
+                </button>
+                <button type="button" class="settings-tab" data-settings-tab="security">
+                    <i data-lucide="shield" class="w-4 h-4"></i><span>访问与安全</span>
+                </button>
+                <button type="button" class="settings-tab" data-settings-tab="graph">
+                    <i data-lucide="network" class="w-4 h-4"></i><span>知识图谱</span>
+                </button>
+                <button type="button" class="settings-tab" data-settings-tab="ddns">
+                    <i data-lucide="globe-2" class="w-4 h-4"></i><span>DDNS 配置</span>
+                </button>
+                <button type="button" class="settings-tab" data-settings-tab="maintenance">
+                    <i data-lucide="archive" class="w-4 h-4"></i><span>备份维护</span>
+                </button>
             </div>
-        </div>
+        </aside>
 
-        <!-- 切片配置 -->
-        <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden p-5">
-            <h2 class="text-base font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
-                <div class="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-500/10 flex items-center justify-center">
-                    <i data-lucide="scissors" class="w-4 h-4 text-blue-600 dark:text-blue-400"></i>
-                </div>
-                切片配置
-            </h2>
-            <div class="space-y-3">
-                <div class="flex justify-between items-center py-2 border-b border-slate-100 dark:border-slate-800">
-                    <span class="text-sm text-slate-600 dark:text-slate-400">切片大小</span>
-                    <span class="text-sm font-medium text-slate-900 dark:text-slate-200">{{ settings.CHUNK_SIZE }} 字符</span>
-                </div>
-                <div class="flex justify-between items-center py-2">
-                    <span class="text-sm text-slate-600 dark:text-slate-400">重叠长度</span>
-                    <span class="text-sm font-medium text-slate-900 dark:text-slate-200">{{ settings.CHUNK_OVERLAP }} 字符</span>
-                </div>
-            </div>
-        </div>
-
-        <!-- 写入锁配置 -->
-        <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden p-5">
-            <h2 class="text-base font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
-                <div class="w-8 h-8 rounded-lg bg-orange-100 dark:bg-orange-500/10 flex items-center justify-center">
-                    <i data-lucide="lock" class="w-4 h-4 text-orange-600 dark:text-orange-400"></i>
-                </div>
-                写入锁配置
-            </h2>
-            <div class="flex justify-between items-center py-2">
-                <span class="text-sm text-slate-600 dark:text-slate-400">锁超时时间</span>
-                <span class="text-sm font-medium text-slate-900 dark:text-slate-200">{{ settings.WRITE_LOCK_TTL }} 秒</span>
-            </div>
-        </div>
-
-        <!-- 限流配置 -->
-        <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden p-5">
-            <h2 class="text-base font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
-                <div class="w-8 h-8 rounded-lg bg-emerald-100 dark:bg-emerald-500/10 flex items-center justify-center">
-                    <i data-lucide="gauge" class="w-4 h-4 text-emerald-600 dark:text-emerald-400"></i>
-                </div>
-                限流配置
-            </h2>
-            <div class="flex justify-between items-center py-2">
-                <span class="text-sm text-slate-600 dark:text-slate-400">默认限流</span>
-                <span class="text-sm font-medium text-slate-900 dark:text-slate-200">{{ settings.RATE_LIMIT_DEFAULT }} 请求/分钟</span>
-            </div>
-        </div>
-
-        <!-- 知识图谱配置 -->
-        <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden p-5">
-            <h2 class="text-base font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
-                <div class="w-8 h-8 rounded-lg bg-fuchsia-100 dark:bg-fuchsia-500/10 flex items-center justify-center">
-                    <i data-lucide="network" class="w-4 h-4 text-fuchsia-600 dark:text-fuchsia-400"></i>
-                </div>
-                知识图谱配置
-            </h2>
-            <div class="space-y-4">
-                <p class="text-sm text-slate-500 dark:text-slate-400">控制知识图谱构建时的语义相似度阈值，关闭后仅基于标签和目录结构建图。</p>
-                <div>
-                    <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                        语义相似度阈值：<span id="threshold-value" class="text-brand-600 dark:text-brand-400 font-bold">{{ graph_semantic_threshold }}</span>
-                    </label>
-                    <input type="range" id="semantic-threshold" name="semantic_threshold"
-                        min="0.0" max="0.9" step="0.05"
-                        value="{{ graph_semantic_threshold }}"
-                        oninput="document.getElementById('threshold-value').textContent = parseFloat(this.value).toFixed(2)"
-                        class="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-brand-600">
-                    <div class="relative text-xs text-slate-400 mt-1 h-4">
-                        <span style="position:absolute;left:0">关闭 (0.0)</span>
-                        <span style="position:absolute;left:55.6%;transform:translateX(-50%)">推荐 (0.50)</span>
-                        <span style="position:absolute;right:0">严格 (0.90)</span>
+        <main class="min-w-0 space-y-5">
+            <section id="settings-panel-overview" class="settings-panel active">
+                <div class="setting-card p-6">
+                    <h2 class="text-lg font-semibold text-slate-900 dark:text-white mb-1">基础信息</h2>
+                    <p class="text-sm text-slate-500 dark:text-slate-400 mb-5">应用名称、版本和运行模式</p>
+                    <div>
+                        <div class="setting-row">
+                            <span class="text-sm text-slate-600 dark:text-slate-400">应用名称</span>
+                            <span class="text-sm font-medium text-slate-900 dark:text-slate-200">{{ settings.APP_NAME }}</span>
+                        </div>
+                        <div class="setting-row">
+                            <span class="text-sm text-slate-600 dark:text-slate-400">版本</span>
+                            <span class="text-sm font-medium text-slate-900 dark:text-slate-200">{{ settings.APP_VERSION }}</span>
+                        </div>
+                        <div class="setting-row">
+                            <span class="text-sm text-slate-600 dark:text-slate-400">调试模式</span>
+                            <span class="text-sm font-medium text-slate-900 dark:text-slate-200">{{ "开启" if settings.DEBUG else "关闭" }}</span>
+                        </div>
+                        <div class="setting-row">
+                            <span class="text-sm text-slate-600 dark:text-slate-400">数据目录</span>
+                            <code class="text-xs bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-lg text-slate-700 dark:text-slate-300 break-all">{{ settings.KBDATA_DIR or "-" }}</code>
+                        </div>
                     </div>
                 </div>
-                <button type="button" onclick="saveGraphSettings()"
-                    class="px-4 py-2 bg-brand-600 hover:bg-brand-700 disabled:bg-brand-400 text-white text-sm font-medium rounded-xl transition-all cursor-pointer disabled:cursor-not-allowed">
-                    保存设置
-                </button>
-                <span id="graph-settings-msg" class="text-sm ml-2"></span>
-            </div>
-        </div>
+            </section>
 
-        <script>
-        async function saveGraphSettings() {
-            const btn = event.currentTarget;
-            const msg = document.getElementById('graph-settings-msg');
-            btn.disabled = true;
-            const threshold = document.getElementById('semantic-threshold').value;
-            try {
-                const resp = await fetch('/admin/api/save-graph-settings', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({semantic_threshold: parseFloat(threshold)}),
-                });
-                const result = await resp.json();
-                msg.textContent = result.success ? '已保存 ✓' : '保存失败: ' + (result.error || '');
-                msg.className = result.success ? 'text-sm text-emerald-600 ml-2' : 'text-sm text-red-600 ml-2';
-            } catch (err) {
-                msg.textContent = '请求失败';
-                msg.className = 'text-sm text-red-600 ml-2';
-            }
-            setTimeout(() => { msg.textContent = ''; }, 3000);
-            btn.disabled = false;
-        }
-        </script>
-
-        <!-- 备份与导出 -->
-        <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden p-5">
-            <h2 class="text-base font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
-                <div class="w-8 h-8 rounded-lg bg-indigo-100 dark:bg-indigo-500/10 flex items-center justify-center">
-                    <i data-lucide="download" class="w-4 h-4 text-indigo-600 dark:text-indigo-400"></i>
+            <section id="settings-panel-embedding" class="settings-panel">
+                <div class="setting-card p-6">
+                    <h2 class="text-lg font-semibold text-slate-900 dark:text-white mb-1">模型与切片</h2>
+                    <p class="text-sm text-slate-500 dark:text-slate-400 mb-5">Embedding 服务和文档切片参数</p>
+                    <div>
+                        <div class="setting-row">
+                            <span class="text-sm text-slate-600 dark:text-slate-400">Embedding 模型</span>
+                            <span class="text-sm font-medium text-slate-900 dark:text-slate-200">{{ settings.OLLAMA_MODEL }}</span>
+                        </div>
+                        <div class="setting-row">
+                            <span class="text-sm text-slate-600 dark:text-slate-400">Ollama 地址</span>
+                            <code class="text-xs bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-lg text-slate-700 dark:text-slate-300 break-all">{{ settings.OLLAMA_URL }}</code>
+                        </div>
+                        <div class="setting-row">
+                            <span class="text-sm text-slate-600 dark:text-slate-400">切片大小</span>
+                            <span class="text-sm font-medium text-slate-900 dark:text-slate-200">{{ settings.CHUNK_SIZE }} 字符</span>
+                        </div>
+                        <div class="setting-row">
+                            <span class="text-sm text-slate-600 dark:text-slate-400">重叠长度</span>
+                            <span class="text-sm font-medium text-slate-900 dark:text-slate-200">{{ settings.CHUNK_OVERLAP }} 字符</span>
+                        </div>
+                    </div>
                 </div>
-                备份与导出
-            </h2>
-            <p class="text-sm text-slate-600 dark:text-slate-400 mb-4">导出知识库所有文档为 Markdown 文件，按目录结构打包为 ZIP 压缩包。</p>
-            <div class="flex gap-3 items-center">
-                <a href="/admin/api/backup/export"
-                   class="inline-flex items-center gap-2 px-4 py-2.5 bg-brand-600 hover:bg-brand-700 text-white text-sm font-semibold rounded-xl shadow-lg shadow-brand-500/25 hover:shadow-brand-500/40 transition-all duration-200 hover:-translate-y-0.5">
-                    <i data-lucide="archive" class="w-4 h-4"></i>
-                    导出备份 ZIP
-                </a>
-                <span class="text-xs text-slate-400 dark:text-slate-500">系统将收集所有文档并打包</span>
-            </div>
-        </div>
+            </section>
 
-        <!-- 危险操作 -->
-        <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden p-5 border-red-200 dark:border-red-500/20">
-            <h2 class="text-base font-semibold text-red-700 dark:text-red-400 mb-4 flex items-center gap-2">
-                <div class="w-8 h-8 rounded-lg bg-red-100 dark:bg-red-500/10 flex items-center justify-center">
-                    <i data-lucide="alert-triangle" class="w-4 h-4 text-red-600 dark:text-red-400"></i>
+            <section id="settings-panel-storage" class="settings-panel">
+                <div class="setting-card p-6">
+                    <h2 class="text-lg font-semibold text-slate-900 dark:text-white mb-1">存储服务</h2>
+                    <p class="text-sm text-slate-500 dark:text-slate-400 mb-5">Redis、Chroma 和 MinIO 连接参数</p>
+                    <div>
+                        <div class="setting-row">
+                            <span class="text-sm text-slate-600 dark:text-slate-400">Redis</span>
+                            <code class="text-xs bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-lg text-slate-700 dark:text-slate-300 break-all">{{ settings.REDIS_URL }}</code>
+                        </div>
+                        <div class="setting-row">
+                            <span class="text-sm text-slate-600 dark:text-slate-400">Chroma</span>
+                            <code class="text-xs bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-lg text-slate-700 dark:text-slate-300">{{ settings.CHROMA_HOST }}:{{ settings.CHROMA_PORT }}</code>
+                        </div>
+                        <div class="setting-row">
+                            <span class="text-sm text-slate-600 dark:text-slate-400">Chroma Collection</span>
+                            <code class="text-xs bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-lg text-slate-700 dark:text-slate-300 break-all">{{ settings.CHROMA_COLLECTION }}</code>
+                        </div>
+                        <div class="setting-row">
+                            <span class="text-sm text-slate-600 dark:text-slate-400">MinIO Endpoint</span>
+                            <code class="text-xs bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-lg text-slate-700 dark:text-slate-300">{{ settings.MINIO_ENDPOINT }}</code>
+                        </div>
+                        <div class="setting-row">
+                            <span class="text-sm text-slate-600 dark:text-slate-400">MinIO Bucket</span>
+                            <code class="text-xs bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-lg text-slate-700 dark:text-slate-300">{{ settings.MINIO_BUCKET }}</code>
+                        </div>
+                    </div>
                 </div>
-                危险操作
-            </h2>
-            <p class="text-sm text-slate-600 dark:text-slate-400 mb-4">以下操作不可恢复，请谨慎使用。</p>
-            <div class="flex gap-3 items-center">
-                <button type="button" disabled
-                    class="px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-xl opacity-50 cursor-not-allowed">
-                    清空知识库
-                </button>
-                <span class="text-xs text-slate-400 dark:text-slate-500">（功能开发中）</span>
-            </div>
-        </div>
+            </section>
+
+            <section id="settings-panel-security" class="settings-panel">
+                <div class="setting-card p-6">
+                    <h2 class="text-lg font-semibold text-slate-900 dark:text-white mb-1">访问与安全</h2>
+                    <p class="text-sm text-slate-500 dark:text-slate-400 mb-5">会话、写入锁、限流和跨域参数</p>
+                    <div>
+                        <div class="setting-row">
+                            <span class="text-sm text-slate-600 dark:text-slate-400">Session 有效期</span>
+                            <span class="text-sm font-medium text-slate-900 dark:text-slate-200">{{ settings.SESSION_MAX_AGE }} 秒</span>
+                        </div>
+                        <div class="setting-row">
+                            <span class="text-sm text-slate-600 dark:text-slate-400">写入锁超时</span>
+                            <span class="text-sm font-medium text-slate-900 dark:text-slate-200">{{ settings.WRITE_LOCK_TTL }} 秒</span>
+                        </div>
+                        <div class="setting-row">
+                            <span class="text-sm text-slate-600 dark:text-slate-400">默认限流</span>
+                            <span class="text-sm font-medium text-slate-900 dark:text-slate-200">{{ settings.RATE_LIMIT_DEFAULT }} 请求/分钟</span>
+                        </div>
+                        <div class="setting-row">
+                            <span class="text-sm text-slate-600 dark:text-slate-400">外部域名</span>
+                            <code class="text-xs bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-lg text-slate-700 dark:text-slate-300">{{ settings.EXTERNAL_DOMAIN }}</code>
+                        </div>
+                        <div class="setting-row">
+                            <span class="text-sm text-slate-600 dark:text-slate-400">内部域名</span>
+                            <code class="text-xs bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-lg text-slate-700 dark:text-slate-300">{{ settings.INTERNAL_DOMAIN }}</code>
+                        </div>
+                        <div class="setting-row">
+                            <span class="text-sm text-slate-600 dark:text-slate-400">CORS Origins</span>
+                            <code class="text-xs bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-lg text-slate-700 dark:text-slate-300 break-all">{{ settings.CORS_ORIGINS }}</code>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="settings-panel-graph" class="settings-panel">
+                <div class="setting-card p-6">
+                    <h2 class="text-lg font-semibold text-slate-900 dark:text-white mb-1">知识图谱</h2>
+                    <p class="text-sm text-slate-500 dark:text-slate-400 mb-5">控制知识图谱构建时的语义相似度阈值</p>
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                                语义相似度阈值：<span id="threshold-value" class="text-brand-600 dark:text-brand-400 font-bold">{{ graph_semantic_threshold }}</span>
+                            </label>
+                            <input type="range" id="semantic-threshold" name="semantic_threshold"
+                                min="0.0" max="0.9" step="0.05"
+                                value="{{ graph_semantic_threshold }}"
+                                oninput="document.getElementById('threshold-value').textContent = parseFloat(this.value).toFixed(2)"
+                                class="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-brand-600">
+                            <div class="relative text-xs text-slate-400 mt-1 h-4">
+                                <span style="position:absolute;left:0">关闭 (0.0)</span>
+                                <span style="position:absolute;left:55.6%;transform:translateX(-50%)">推荐 (0.50)</span>
+                                <span style="position:absolute;right:0">严格 (0.90)</span>
+                            </div>
+                        </div>
+                        <div>
+                            <button type="button" onclick="saveGraphSettings()"
+                                class="px-4 py-2 bg-brand-600 hover:bg-brand-700 disabled:bg-brand-400 text-white text-sm font-medium rounded-xl transition-all cursor-pointer disabled:cursor-not-allowed">
+                                保存设置
+                            </button>
+                            <span id="graph-settings-msg" class="text-sm ml-2"></span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="settings-panel-ddns" class="settings-panel">
+                <div class="setting-card p-6">
+                    <h2 class="text-lg font-semibold text-slate-900 dark:text-white mb-1">DDNS 配置</h2>
+                    <p class="text-sm text-slate-500 dark:text-slate-400 mb-5">保存动态 DNS 更新所需参数，供后续 DDNS 任务读取</p>
+                    <div class="mb-5 rounded-xl border border-blue-200 dark:border-blue-500/20 bg-blue-50 dark:bg-blue-500/10 p-4">
+                        <div class="flex items-start gap-3">
+                            <i data-lucide="info" class="w-4 h-4 text-blue-600 dark:text-blue-400 mt-0.5 flex-shrink-0"></i>
+                            <div class="space-y-2 text-sm text-slate-700 dark:text-slate-300">
+                                <p class="font-medium text-slate-900 dark:text-slate-100">配置说明</p>
+                                <p>主域名填写根域名，例如 <code class="px-1.5 py-0.5 rounded bg-white dark:bg-slate-900 text-xs">example.com</code>；记录名填写要更新的子域名前缀，例如 <code class="px-1.5 py-0.5 rounded bg-white dark:bg-slate-900 text-xs">kb</code>，根域名记录可填 <code class="px-1.5 py-0.5 rounded bg-white dark:bg-slate-900 text-xs">@</code>。</p>
+                                <p>记录类型通常选择 A 用于 IPv4，AAAA 用于 IPv6；TTL 建议保持 300-600 秒，过低可能被服务商限制。</p>
+                                <p>Cloudflare 通常使用 API Token；DNSPod 和 Aliyun 可将账号标识填入 Access Key / Account，将密钥填入 API Token / Secret；自定义 API 需要额外填写接口地址。</p>
+                                <p class="text-xs text-slate-500 dark:text-slate-400">当前页面只负责保存 DDNS 配置，不会立即执行域名解析更新；保存后的密钥不会在页面中明文回显。</p>
+                            </div>
+                        </div>
+                    </div>
+                    <form id="ddns-form" class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                        <label class="flex items-center gap-3 xl:col-span-2">
+                            <input type="checkbox" id="ddns-enabled" class="w-4 h-4 accent-brand-600" {% if ddns_config.enabled == "true" %}checked{% endif %}>
+                            <span class="text-sm font-medium text-slate-700 dark:text-slate-300">启用 DDNS</span>
+                        </label>
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">服务商</label>
+                            <select id="ddns-provider" class="setting-input">
+                                <option value="cloudflare" {% if ddns_config.provider == "cloudflare" %}selected{% endif %}>Cloudflare</option>
+                                <option value="dnspod" {% if ddns_config.provider == "dnspod" %}selected{% endif %}>DNSPod</option>
+                                <option value="aliyun" {% if ddns_config.provider == "aliyun" %}selected{% endif %}>Aliyun DNS</option>
+                                <option value="custom" {% if ddns_config.provider == "custom" %}selected{% endif %}>自定义 API</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">记录类型</label>
+                            <select id="ddns-record-type" class="setting-input">
+                                <option value="A" {% if ddns_config.record_type == "A" %}selected{% endif %}>A</option>
+                                <option value="AAAA" {% if ddns_config.record_type == "AAAA" %}selected{% endif %}>AAAA</option>
+                                <option value="CNAME" {% if ddns_config.record_type == "CNAME" %}selected{% endif %}>CNAME</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">主域名</label>
+                            <input id="ddns-domain" class="setting-input" value="{{ ddns_config.domain }}" placeholder="example.com">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">记录名</label>
+                            <input id="ddns-record-name" class="setting-input" value="{{ ddns_config.record_name }}" placeholder="@ 或 kb">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">TTL</label>
+                            <input id="ddns-ttl" type="number" min="60" max="86400" class="setting-input" value="{{ ddns_config.ttl }}">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">自定义 API 地址</label>
+                            <input id="ddns-endpoint" class="setting-input" value="{{ ddns_config.endpoint }}" placeholder="https://api.example.com/update">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Access Key / Account</label>
+                            <input id="ddns-access-key" class="setting-input" value="{{ ddns_config.access_key }}" autocomplete="off">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">API Token / Secret</label>
+                            <input id="ddns-api-token" type="password" class="setting-input" placeholder="{% if ddns_has_token %}已保存，留空则保留{% else %}输入 API Token 或 Secret{% endif %}" autocomplete="new-password">
+                            {% if ddns_has_token %}
+                            <label class="flex items-center gap-2 mt-2 text-xs text-slate-500 dark:text-slate-400">
+                                <input id="ddns-clear-token" type="checkbox" class="accent-brand-600">
+                                清除已保存密钥
+                            </label>
+                            {% endif %}
+                        </div>
+                        <div class="xl:col-span-2 pt-2">
+                            <button type="button" onclick="saveDdnsSettings()"
+                                class="px-4 py-2 bg-brand-600 hover:bg-brand-700 disabled:bg-brand-400 text-white text-sm font-medium rounded-xl transition-all cursor-pointer disabled:cursor-not-allowed">
+                                保存 DDNS 配置
+                            </button>
+                            <span id="ddns-settings-msg" class="text-sm ml-2"></span>
+                        </div>
+                    </form>
+                </div>
+            </section>
+
+            <section id="settings-panel-maintenance" class="settings-panel">
+                <div class="space-y-5">
+                    <div class="setting-card p-6">
+                        <h2 class="text-lg font-semibold text-slate-900 dark:text-white mb-1">备份与导出</h2>
+                        <p class="text-sm text-slate-500 dark:text-slate-400 mb-5">导出知识库所有文档为 Markdown 文件，并按目录结构打包</p>
+                        <div class="flex flex-wrap gap-3 items-center">
+                            <a href="/admin/api/backup/export"
+                               class="inline-flex items-center gap-2 px-4 py-2.5 bg-brand-600 hover:bg-brand-700 text-white text-sm font-semibold rounded-xl shadow-lg shadow-brand-500/25 hover:shadow-brand-500/40 transition-all duration-200 hover:-translate-y-0.5">
+                                <i data-lucide="archive" class="w-4 h-4"></i>
+                                导出备份 ZIP
+                            </a>
+                            <span class="text-xs text-slate-400 dark:text-slate-500">系统将收集所有文档并打包</span>
+                        </div>
+                    </div>
+
+                    <div class="setting-card p-6 border-red-200 dark:border-red-500/20">
+                        <h2 class="text-lg font-semibold text-red-700 dark:text-red-400 mb-1">危险操作</h2>
+                        <p class="text-sm text-slate-500 dark:text-slate-400 mb-5">以下操作不可恢复，请谨慎使用</p>
+                        <div class="flex flex-wrap gap-3 items-center">
+                            <button type="button" disabled
+                                class="px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-xl opacity-50 cursor-not-allowed">
+                                清空知识库
+                            </button>
+                            <span class="text-xs text-slate-400 dark:text-slate-500">功能开发中</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
     </div>
 </div>
+
+<script>
+const settingsTabs = document.querySelectorAll('[data-settings-tab]');
+const settingsPanels = document.querySelectorAll('.settings-panel');
+
+function activateSettingsTab(name) {
+    settingsTabs.forEach(tab => tab.classList.toggle('active', tab.dataset.settingsTab === name));
+    settingsPanels.forEach(panel => panel.classList.toggle('active', panel.id === `settings-panel-${name}`));
+    const url = new URL(window.location.href);
+    url.searchParams.set('tab', name);
+    window.history.replaceState({}, '', url);
+}
+
+settingsTabs.forEach(tab => {
+    tab.addEventListener('click', () => activateSettingsTab(tab.dataset.settingsTab));
+});
+
+const initialTab = new URLSearchParams(window.location.search).get('tab');
+if (initialTab && document.getElementById(`settings-panel-${initialTab}`)) {
+    activateSettingsTab(initialTab);
+}
+
+async function saveGraphSettings() {
+    const btn = event.currentTarget;
+    const msg = document.getElementById('graph-settings-msg');
+    btn.disabled = true;
+    const threshold = document.getElementById('semantic-threshold').value;
+    try {
+        const resp = await fetch('/admin/api/save-graph-settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({semantic_threshold: parseFloat(threshold)}),
+        });
+        const result = await resp.json();
+        msg.textContent = result.success ? '已保存' : '保存失败: ' + (result.error || '');
+        msg.className = result.success ? 'text-sm text-emerald-600 ml-2' : 'text-sm text-red-600 ml-2';
+    } catch (err) {
+        msg.textContent = '请求失败';
+        msg.className = 'text-sm text-red-600 ml-2';
+    }
+    setTimeout(() => { msg.textContent = ''; }, 3000);
+    btn.disabled = false;
+}
+
+async function saveDdnsSettings() {
+    const btn = event.currentTarget;
+    const msg = document.getElementById('ddns-settings-msg');
+    btn.disabled = true;
+    const clearToken = document.getElementById('ddns-clear-token');
+    const payload = {
+        enabled: document.getElementById('ddns-enabled').checked,
+        provider: document.getElementById('ddns-provider').value,
+        domain: document.getElementById('ddns-domain').value,
+        record_name: document.getElementById('ddns-record-name').value,
+        record_type: document.getElementById('ddns-record-type').value,
+        ttl: parseInt(document.getElementById('ddns-ttl').value || '600', 10),
+        endpoint: document.getElementById('ddns-endpoint').value,
+        access_key: document.getElementById('ddns-access-key').value,
+        api_token: document.getElementById('ddns-api-token').value,
+        clear_api_token: clearToken ? clearToken.checked : false,
+    };
+    try {
+        const resp = await fetch('/admin/api/save-ddns-settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload),
+        });
+        const result = await resp.json();
+        msg.textContent = result.success ? '已保存' : '保存失败: ' + (result.error || '');
+        msg.className = result.success ? 'text-sm text-emerald-600 ml-2' : 'text-sm text-red-600 ml-2';
+        if (result.success) {
+            document.getElementById('ddns-api-token').value = '';
+        }
+    } catch (err) {
+        msg.textContent = '请求失败';
+        msg.className = 'text-sm text-red-600 ml-2';
+    }
+    setTimeout(() => { msg.textContent = ''; }, 3000);
+    btn.disabled = false;
+}
+</script>
 {% endblock %}

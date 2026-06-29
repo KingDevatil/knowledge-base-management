@@ -14,10 +14,11 @@ class SourceStore:
     """MinIO 源文件存储管理（支持多级目录树）"""
 
     def __init__(self, endpoint: str, access_key: str, secret_key: str, bucket: str, secure: bool = False):
-        # Use httpx timeout for MinIO client
-        import httpx
-        http_client = httpx.Client(
-            timeout=httpx.Timeout(connect=MINIO_CONNECT_TIMEOUT, read=MINIO_READ_TIMEOUT, pool=10),
+        import urllib3
+        http_client = urllib3.PoolManager(
+            timeout=urllib3.Timeout(connect=MINIO_CONNECT_TIMEOUT, read=MINIO_READ_TIMEOUT),
+            maxsize=10,
+            retries=False,
         )
         self.client = Minio(endpoint, access_key, secret_key, secure=secure, http_client=http_client)
         self.bucket = bucket

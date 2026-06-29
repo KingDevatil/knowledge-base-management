@@ -4,6 +4,9 @@
 
 {% block extra_head %}
 <style>
+    .document-edit-shell {
+        width: min(100%, 1600px);
+    }
     .editor-container {
         display: grid;
         grid-template-columns: 1fr 1fr;
@@ -48,12 +51,158 @@
     }
     .preview-pane {
         background: white;
-        padding: 1rem;
+        padding: 1.25rem 1.5rem;
         overflow: auto;
+        line-height: 1.8;
+        font-size: 0.95rem;
+        color: #1e293b;
     }
     .dark .preview-pane {
         background: #0f172a;
         color: #e2e8f0;
+    }
+    .preview-pane h1 {
+        font-size: 1.875rem;
+        font-weight: 700;
+        margin: 1.75rem 0 0.75rem;
+        padding-bottom: 0.5rem;
+        border-bottom: 1px solid #e2e8f0;
+        color: #0f172a;
+    }
+    .preview-pane h2 {
+        font-size: 1.45rem;
+        font-weight: 600;
+        margin: 1.6rem 0 0.5rem;
+        color: #0f172a;
+    }
+    .preview-pane h3 {
+        font-size: 1.2rem;
+        font-weight: 600;
+        margin: 1.35rem 0 0.375rem;
+        color: #1e293b;
+    }
+    .preview-pane h4 {
+        font-size: 1.05rem;
+        font-weight: 600;
+        margin: 1.15rem 0 0.375rem;
+        color: #334155;
+    }
+    .preview-pane h5 {
+        font-size: 0.95rem;
+        font-weight: 600;
+        margin: 1rem 0 0.25rem;
+        color: #475569;
+    }
+    .preview-pane h6 {
+        font-size: 0.85rem;
+        font-weight: 600;
+        margin: 1rem 0 0.25rem;
+        color: #64748b;
+    }
+    .preview-pane h1:first-child,
+    .preview-pane h2:first-child,
+    .preview-pane h3:first-child {
+        margin-top: 0;
+    }
+    .preview-pane p { margin: 0.75rem 0; }
+    .preview-pane ul,
+    .preview-pane ol {
+        margin: 0.75rem 0;
+        padding-left: 1.5rem;
+    }
+    .preview-pane ul { list-style-type: disc; }
+    .preview-pane ol { list-style-type: decimal; }
+    .preview-pane li { margin: 0.25rem 0; }
+    .preview-pane li > ul,
+    .preview-pane li > ol { margin: 0.25rem 0; }
+    .preview-pane blockquote {
+        margin: 1rem 0;
+        padding: 0.75rem 1rem;
+        border-left: 4px solid #6366f1;
+        background: #f8fafc;
+        border-radius: 0 0.5rem 0.5rem 0;
+        color: #475569;
+    }
+    .preview-pane pre {
+        margin: 1rem 0;
+        padding: 1rem 1.25rem;
+        background: #0f172a;
+        border-radius: 0.75rem;
+        overflow-x: auto;
+        font-size: 0.875rem;
+        line-height: 1.6;
+    }
+    .preview-pane code {
+        font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+        font-size: 0.875em;
+        padding: 0.125rem 0.375rem;
+        background: #f1f5f9;
+        border-radius: 0.375rem;
+        color: #db2777;
+    }
+    .preview-pane pre code {
+        padding: 0;
+        background: transparent;
+        color: #e2e8f0;
+        font-size: 0.8125rem;
+    }
+    .preview-pane a {
+        color: #4f46e5;
+        text-decoration: underline;
+        text-underline-offset: 2px;
+        text-decoration-thickness: 1px;
+    }
+    .preview-pane a:hover { color: #4338ca; }
+    .preview-pane table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 1rem 0;
+        font-size: 0.875rem;
+    }
+    .preview-pane th {
+        background: #f8fafc;
+        padding: 0.625rem 0.75rem;
+        border: 1px solid #e2e8f0;
+        font-weight: 600;
+        text-align: left;
+    }
+    .preview-pane td {
+        padding: 0.5rem 0.75rem;
+        border: 1px solid #e2e8f0;
+    }
+    .preview-pane img {
+        max-width: 100%;
+        border-radius: 0.75rem;
+        margin: 1rem 0;
+        box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+    }
+    .preview-pane hr {
+        margin: 1.5rem 0;
+        border: none;
+        border-top: 1px solid #e2e8f0;
+    }
+    .preview-pane strong { color: #0f172a; }
+    .preview-pane em { color: #475569; }
+    .preview-pane input[type="checkbox"] {
+        margin-right: 0.5rem;
+        vertical-align: middle;
+    }
+    .preview-pane .admonition {
+        margin: 1rem 0;
+        padding: 0.75rem 1rem;
+        border-radius: 0.75rem;
+        border-left: 4px solid;
+        font-size: 0.875rem;
+    }
+    .preview-pane .admonition.note {
+        background: #eff6ff;
+        border-left-color: #3b82f6;
+        color: #1e40af;
+    }
+    .preview-pane .admonition.warning {
+        background: #fefce8;
+        border-left-color: #eab308;
+        color: #92400e;
     }
     .dark .preview-pane h1,
     .dark .preview-pane h2,
@@ -63,6 +212,11 @@
     .dark .preview-pane h6 {
         color: #f1f5f9;
     }
+    .dark .preview-pane h1 { border-bottom-color: #1e293b; }
+    .dark .preview-pane h3 { color: #e2e8f0; }
+    .dark .preview-pane h4 { color: #cbd5e1; }
+    .dark .preview-pane h5,
+    .dark .preview-pane h6 { color: #94a3b8; }
     .dark .preview-pane p {
         color: #cbd5e1;
     }
@@ -84,6 +238,9 @@
     .dark .preview-pane a {
         color: #818cf8;
     }
+    .dark .preview-pane a:hover {
+        color: #a5b4fc;
+    }
     .dark .preview-pane ul li::marker,
     .dark .preview-pane ol li::marker {
         color: #64748b;
@@ -95,6 +252,16 @@
     .dark .preview-pane table th {
         background: #1e293b;
     }
+    .dark .preview-pane strong { color: #f1f5f9; }
+    .dark .preview-pane em { color: #94a3b8; }
+    .dark .preview-pane .admonition.note {
+        background: rgba(59,130,246,0.1);
+        color: #93c5fd;
+    }
+    .dark .preview-pane .admonition.warning {
+        background: rgba(234,179,8,0.1);
+        color: #fde047;
+    }
     .dark .preview-pane hr {
         border-color: #334155;
     }
@@ -102,7 +269,7 @@
 {% endblock %}
 
 {% block content %}
-<div class="p-8 max-w-5xl mx-auto">
+<div class="document-edit-shell mx-auto px-6 lg:px-8 py-8">
     <!-- 页面标题 -->
     <div class="mb-6">
         <h1 class="text-2xl font-bold text-slate-900 dark:text-white">{% if is_new %}新建文档{% else %}编辑文档{% endif %}</h1>
@@ -153,7 +320,7 @@
                     <div class="editor-pane">
                         <textarea name="content" id="content-editor" placeholder="# 标题&#10;&#10;开始输入 Markdown 内容...">{{ content }}</textarea>
                     </div>
-                    <div class="preview-pane prose prose-slate max-w-none dark:prose-invert" id="preview-pane">
+                    <div class="preview-pane" id="preview-pane">
                         <p class="text-slate-400 dark:text-slate-500">右侧实时预览...</p>
                     </div>
                 </div>
@@ -183,13 +350,22 @@
     const editor = document.getElementById('content-editor');
     const preview = document.getElementById('preview-pane');
 
+    marked.setOptions({
+        gfm: true,
+        breaks: false
+    });
+
+    function normalizeMarkdownForPreview(text) {
+        return text.replace(/^(?![ \t]*[-*+]\s)([^#\n>\[].*)\n(?=\d+\.\s+|[-*+]\s+)/gm, '$1\n\n');
+    }
+
     function updatePreview() {
         const text = editor.value;
         if (!text.trim()) {
             preview.innerHTML = '<p class="text-slate-400 dark:text-slate-500">右侧实时预览...</p>';
             return;
         }
-        preview.innerHTML = marked.parse(text);
+        preview.innerHTML = marked.parse(normalizeMarkdownForPreview(text));
     }
 
     editor.addEventListener('input', updatePreview);

@@ -62,7 +62,8 @@
                         {% if node.name != 'root' or node.children %}
                         {% if node.name != 'root' %}
                         <a href="/admin/documents?path={{ node.path | urlencode }}"
-                           class="folder-item flex items-center gap-1.5 px-2 py-1.5 text-sm rounded-md {% if current_path == node.path %}bg-brand-50 dark:bg-brand-500/10 text-brand-700 dark:text-brand-400 font-medium{% else %}text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50{% endif %}">
+                           style="padding-left: {{ 8 + level * 16 }}px"
+                           class="folder-item flex items-center gap-1.5 pr-2 py-1.5 text-sm rounded-md {% if current_path == node.path %}bg-brand-50 dark:bg-brand-500/10 text-brand-700 dark:text-brand-400 font-medium{% else %}text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/50{% endif %}">
                             {% if level > 0 %}<span class="w-3 text-center text-slate-300 text-[10px]">└</span>{% else %}<span class="w-3"></span>{% endif %}
                             <i data-lucide="{% if current_path == node.path %}folder-open{% else %}folder{% endif %}"
                                class="w-3.5 h-3.5 {% if current_path == node.path %}text-brand-500{% else %}text-slate-400{% endif %}"></i>
@@ -70,7 +71,7 @@
                         </a>
                         {% endif %}
                         {% for child in node.children %}
-                            {{ render_tree(child, level + 1 if node.name != 'root' else 0) }}
+                            {{ render_tree(child, level + 1) }}
                         {% endfor %}
                         {% endif %}
                     {% endmacro %}
@@ -120,7 +121,7 @@
                         {% for doc in documents %}
                         <tr class="doc-row border-b border-slate-50 dark:border-slate-800/50 last:border-0">
                             <td class="px-4 py-2.5">
-                                <a href="/admin/documents/{{ doc.doc_id }}/edit{% if current_path %}?path={{ current_path | urlencode }}{% endif %}"
+                                <a href="/admin/documents/{{ doc.doc_id }}{% if current_path %}?path={{ current_path | urlencode }}{% endif %}"
                                    class="text-slate-900 dark:text-white hover:text-brand-600 dark:hover:text-brand-400 font-medium transition-colors">
                                     {{ doc.title }}
                                 </a>
@@ -140,7 +141,7 @@
                                        class="action-btn p-1.5 rounded-md text-slate-400 hover:text-brand-600 hover:bg-brand-50 dark:hover:bg-brand-500/10 transition-all" title="编辑">
                                         <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
                                     </a>
-                                    <button hx-post="/admin/api/reindex/{{ doc.doc_id }}"
+                                    <button hx-post="/admin/documents/{{ doc.doc_id }}/reindex"
                                             hx-confirm="确定重新切片该文档吗？"
                                             hx-target="closest tr"
                                             hx-swap="none"

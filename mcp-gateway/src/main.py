@@ -31,6 +31,16 @@ from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 settings = get_settings()
 logger = setup_logger()
 
+
+def _create_local_source_store():
+    from local_store import LocalFileStore
+    import os as _os
+    fallback_base = _os.path.join(settings.KBDATA_DIR, "sources") if settings.KBDATA_DIR else "kbdata/sources"
+    return LocalFileStore(
+        base_dir=fallback_base,
+        bucket=settings.MINIO_BUCKET,
+    ), fallback_base
+
 # Windows 系统代理会导致 httpx 走代理连接本地 ChromaDB 被拒
 import os as _os
 _no_proxy = _os.environ.get("NO_PROXY", "")
@@ -52,22 +62,31 @@ async def lifespan(app: FastAPI):
     app.state.kb.set_redis(app.state.redis)  # 注入 Redis 用于文档索引缓存
     # 源文件存储：优先 MinIO，不可用时回退到本地文件系统
     try:
-        app.state.source_store = SourceStore(
+        minio_store = SourceStore(
             endpoint=settings.MINIO_ENDPOINT,
             access_key=settings.MINIO_ACCESS_KEY,
             secret_key=settings.MINIO_SECRET_KEY,
             bucket=settings.MINIO_BUCKET,
             secure=settings.MINIO_SECURE,
         )
-        logger.info("Source store: MinIO")
+        local_store, fallback_base = _create_local_source_store()
+        try:
+            minio_docs = minio_store.list_all_documents()
+            local_docs = local_store.list_all_documents()
+        except Exception:
+            minio_docs = []
+            local_docs = []
+        if settings.KBDATA_DIR and not minio_docs and local_docs:
+            app.state.source_store = local_store
+            logger.warning(
+                "MinIO is available but empty; using LocalFileStore at "
+                f"{fallback_base} with {len(local_docs)} existing source files"
+            )
+        else:
+            app.state.source_store = minio_store
+            logger.info("Source store: MinIO")
     except Exception as e:
-        from local_store import LocalFileStore
-        import os as _os
-        fallback_base = _os.path.join(settings.KBDATA_DIR, "sources") if settings.KBDATA_DIR else "kbdata/sources"
-        app.state.source_store = LocalFileStore(
-            base_dir=fallback_base,
-            bucket=settings.MINIO_BUCKET,
-        )
+        app.state.source_store, fallback_base = _create_local_source_store()
         logger.warning(f"MinIO unavailable ({e}), using LocalFileStore at {fallback_base}")
     app.state.embedder = build_embedding_provider(
         primary_url=settings.OLLAMA_URL,

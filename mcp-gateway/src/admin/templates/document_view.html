@@ -19,8 +19,12 @@
 }
 
 /* ---------- Reading Panel ---------- */
+.document-reading-shell {
+    width: min(100%, 1440px);
+    gap: 1.5rem;
+}
 .reading-panel {
-    max-width: 85ch;
+    max-width: min(100%, 110ch);
     margin: 0 auto;
     padding: 2rem 1.5rem;
     line-height: 1.8;
@@ -29,6 +33,9 @@
 }
 .dark .reading-panel {
     color: #e2e8f0;
+}
+.document-meta-footer {
+    max-width: min(100%, 110ch);
 }
 
 .reading-panel h1 {
@@ -531,7 +538,7 @@ async function loadShares() {
 </script>
 
 <!-- Reading Panel -->
-<div class="flex max-w-[110ch] mx-auto">
+<div class="document-reading-shell flex flex-col lg:flex-row mx-auto px-4 lg:px-6">
     {% if toc_html %}
     <!-- TOC Sidebar -->
     <div class="w-52 flex-shrink-0 hidden lg:block">
@@ -566,7 +573,7 @@ async function loadShares() {
         </div>
 
         <!-- Footer Meta -->
-        <div class="max-w-[85ch] mx-auto px-6 pb-8">
+        <div class="document-meta-footer mx-auto px-6 pb-8">
             <div class="border-t border-slate-200 dark:border-slate-800 pt-4 mt-4">
                 <div class="text-xs text-slate-400 dark:text-slate-500 space-y-1">
                     <p class="flex items-center gap-2">

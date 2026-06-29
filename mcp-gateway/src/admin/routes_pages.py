@@ -24,6 +24,21 @@ from consistency import KnowledgeBaseConsistencyChecker
 
 page_router = APIRouter()
 
+DDNS_CONFIG_KEY = "kb:config:ddns"
+DDNS_DEFAULTS = {
+    "enabled": "false",
+    "provider": "cloudflare",
+    "domain": "",
+    "record_name": "",
+    "record_type": "A",
+    "ttl": "600",
+    "endpoint": "",
+    "access_key": "",
+    "api_token": "",
+}
+DDNS_PROVIDERS = {"cloudflare", "dnspod", "aliyun", "custom"}
+DDNS_RECORD_TYPES = {"A", "AAAA", "CNAME"}
+
 
 # ---------- 登录/登出 ----------
 
@@ -184,10 +199,21 @@ async def document_list(
     tree = DirectoryTree.build_from_metadata([{"path": d.path} for d in all_docs])
     tree = merge_into_tree(tree)
     breadcrumbs = DirectoryTree.get_breadcrumbs(path)
+    available_tags = sorted({
+        item.strip()
+        for d in all_docs
+        for item in (
+            d.tags
+            if isinstance(d.tags, list)
+            else str(d.tags or "").replace("，", ",").split(",")
+        )
+        if item and item.strip()
+    })
 
     return templates.TemplateResponse(request, "documents.html", {
         "request": request, "admin": user,
-        "documents": docs, "tree": tree, "current_path": path,
+        "documents": docs, "tree": tree, "directories": tree,
+        "current_path": path, "tags": available_tags,
         "breadcrumbs": breadcrumbs, "q": q, "tag": tag, "page": page,
         "total": total, "limit": limit,
     })
@@ -323,6 +349,8 @@ async def api_key_create_page(request: Request, user: dict = Depends(require_adm
 @page_router.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request, user: dict = Depends(require_admin)):
     graph_semantic_threshold = 0.0
+    ddns_config = DDNS_DEFAULTS.copy()
+    ddns_has_token = False
     redis = getattr(request.app.state, "redis", None)
     if redis:
         try:
@@ -331,9 +359,19 @@ async def settings_page(request: Request, user: dict = Depends(require_admin)):
                 graph_semantic_threshold = float(val)
         except Exception:
             pass
+        try:
+            saved_ddns = await redis.hgetall(DDNS_CONFIG_KEY)
+            if saved_ddns:
+                ddns_config.update({k: str(v) for k, v in saved_ddns.items() if k in DDNS_DEFAULTS})
+                ddns_has_token = bool(ddns_config.get("api_token"))
+                ddns_config["api_token"] = ""
+        except Exception:
+            pass
     return templates.TemplateResponse(request, "settings.html", {
         "request": request, "admin": user, "settings": settings,
         "graph_semantic_threshold": graph_semantic_threshold,
+        "ddns_config": ddns_config,
+        "ddns_has_token": ddns_has_token,
     })
 
 
@@ -399,6 +437,66 @@ async def save_graph_settings(request: Request, user: dict = Depends(require_adm
             return JSONResponse({"success": False, "error": str(e)}, status_code=500)
 
     return JSONResponse({"success": True, "semantic_threshold": threshold})
+
+
+@page_router.post("/api/save-ddns-settings")
+async def save_ddns_settings(request: Request, user: dict = Depends(require_admin)):
+    """Save DDNS settings to Redis for the admin console."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"success": False, "error": "无效的 JSON"}, status_code=400)
+
+    redis = getattr(request.app.state, "redis", None)
+    if not redis:
+        return JSONResponse({"success": False, "error": "Redis 不可用"}, status_code=503)
+
+    provider = str(body.get("provider", DDNS_DEFAULTS["provider"])).strip().lower()
+    if provider not in DDNS_PROVIDERS:
+        return JSONResponse({"success": False, "error": "不支持的 DDNS 服务商"}, status_code=400)
+
+    record_type = str(body.get("record_type", DDNS_DEFAULTS["record_type"])).strip().upper()
+    if record_type not in DDNS_RECORD_TYPES:
+        return JSONResponse({"success": False, "error": "不支持的记录类型"}, status_code=400)
+
+    try:
+        ttl = int(body.get("ttl", DDNS_DEFAULTS["ttl"]))
+    except (TypeError, ValueError):
+        return JSONResponse({"success": False, "error": "TTL 必须是数字"}, status_code=400)
+    ttl = max(60, min(86400, ttl))
+
+    existing = {}
+    try:
+        existing = await redis.hgetall(DDNS_CONFIG_KEY)
+    except Exception:
+        existing = {}
+
+    api_token = str(body.get("api_token", "")).strip()
+    if not api_token and existing:
+        api_token = str(existing.get("api_token", ""))
+    if bool(body.get("clear_api_token")):
+        api_token = ""
+
+    config = {
+        "enabled": "true" if bool(body.get("enabled")) else "false",
+        "provider": provider,
+        "domain": str(body.get("domain", "")).strip(),
+        "record_name": str(body.get("record_name", "")).strip(),
+        "record_type": record_type,
+        "ttl": str(ttl),
+        "endpoint": str(body.get("endpoint", "")).strip(),
+        "access_key": str(body.get("access_key", "")).strip(),
+        "api_token": api_token,
+    }
+
+    try:
+        await redis.hset(DDNS_CONFIG_KEY, mapping=config)
+    except Exception as e:
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+
+    public_config = {k: v for k, v in config.items() if k != "api_token"}
+    public_config["has_token"] = bool(api_token)
+    return JSONResponse({"success": True, "ddns": public_config})
 
 
 # ---------- 知识图谱 (all logged-in users) ----------

@@ -154,17 +154,63 @@
     </div>
 </div>
 
+<script>
+async function rebuildGraph() {
+    const btn = document.getElementById('rebuild-btn');
+    const icon = document.getElementById('rebuild-icon');
+    const text = document.getElementById('rebuild-text');
+    const toast = document.getElementById('build-toast');
+    const msg = document.getElementById('build-message');
+
+    if (!btn || !icon || !text || !toast || !msg) return;
+
+    btn.disabled = true;
+    icon.classList.add('animate-spin');
+    text.textContent = '构建中...';
+    toast.classList.remove('hidden');
+
+    try {
+        const resp = await fetch('/admin/api/rebuild-graph', { method: 'POST' });
+        const result = await resp.json();
+        if (resp.ok && result.success) {
+            msg.textContent = result.message || '构建完成';
+            showToast('图谱构建完成', 'success');
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            msg.textContent = '构建失败';
+            showToast('构建失败: ' + (result.error || result.detail || '未知错误'), 'error');
+        }
+    } catch (err) {
+        msg.textContent = '请求失败';
+        showToast('请求失败: ' + err.message, 'error');
+    } finally {
+        setTimeout(() => { toast.classList.add('hidden'); }, 3000);
+        btn.disabled = false;
+        icon.classList.remove('animate-spin');
+        text.textContent = '重建图谱';
+    }
+}
+</script>
+
 {% endblock %}
 
 {% block extra_head %}
 {% if graph_exists and graph_data %}
-<script src="https://unpkg.com/vis-network@9.1.6/standalone/umd/vis-network.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.6/standalone/umd/vis-network.min.js"></script>
 {% endif %}
 {% endblock %}
 
 {% block extra_js %}
 {% if graph_exists and graph_data %}
 <script>
+if (typeof vis === 'undefined') {
+    const canvas = document.getElementById('graph-canvas');
+    if (canvas) {
+        canvas.innerHTML = '<div class="h-full flex items-center justify-center text-sm text-red-500">图谱可视化库加载失败，请检查网络后刷新页面。</div>';
+    }
+    throw new Error('vis-network failed to load');
+}
+
 // ── 颜色系统 ──
 const GROUP_COLORS = [
     '#6366f1', '#06b6d4', '#10b981', '#f59e0b', '#ef4444',
@@ -389,40 +435,6 @@ function resetView() {
     closeDetail();
 }
 
-// ── 重建图谱 ──
-async function rebuildGraph() {
-    const btn = document.getElementById('rebuild-btn');
-    const icon = document.getElementById('rebuild-icon');
-    const text = document.getElementById('rebuild-text');
-    const toast = document.getElementById('build-toast');
-    const msg = document.getElementById('build-message');
-
-    btn.disabled = true;
-    icon.classList.add('animate-spin');
-    text.textContent = '构建中…';
-    toast.classList.remove('hidden');
-
-    try {
-        const resp = await fetch('/admin/api/rebuild-graph', { method: 'POST' });
-        const result = await resp.json();
-        if (result.success) {
-            msg.textContent = result.message || '构建完成！';
-            showToast('图谱构建完成', 'success');
-            setTimeout(() => location.reload(), 1500);
-        } else {
-            msg.textContent = '构建失败';
-            showToast('构建失败: ' + (result.error || '未知错误'), 'error');
-        }
-    } catch (err) {
-        msg.textContent = '请求失败';
-        showToast('请求失败: ' + err.message, 'error');
-    } finally {
-        setTimeout(() => { toast.classList.add('hidden'); }, 3000);
-        btn.disabled = false;
-        icon.classList.remove('animate-spin');
-        text.textContent = '重建图谱';
-    }
-}
 </script>
 {% endif %}
 {% endblock %}

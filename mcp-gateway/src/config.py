@@ -1,5 +1,6 @@
 import os
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -76,6 +77,10 @@ class Settings(BaseSettings):
         if not self.KBDATA_DIR:
             return self
         data_dir = self.KBDATA_DIR.rstrip("/\\")
+        if data_dir and not os.path.isabs(data_dir):
+            project_root = Path(__file__).resolve().parents[2]
+            data_dir = str((project_root / data_dir).resolve())
+            object.__setattr__(self, "KBDATA_DIR", data_dir)
         if self.ADMIN_ACCOUNTS_FILE == self._DEFAULT_ADMIN_FILE:
             object.__setattr__(self, "ADMIN_ACCOUNTS_FILE",
                                os.path.join(data_dir, "config", "admin_accounts.json"))
