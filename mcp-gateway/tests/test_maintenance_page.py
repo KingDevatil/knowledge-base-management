@@ -144,6 +144,31 @@ async def test_settings_page_builds_module_context(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_settings_page_tolerates_optional_settings_failures(monkeypatch):
+    monkeypatch.setattr(routes_pages, "templates", FakeTemplates())
+    monkeypatch.setattr(routes_pages, "list_profiles", lambda: (_ for _ in ()).throw(RuntimeError("profiles unavailable")))
+    monkeypatch.setattr(routes_pages, "list_reverse_proxy_configs", lambda: (_ for _ in ()).throw(RuntimeError("reverse proxy unavailable")))
+    monkeypatch.setattr(routes_pages, "read_env", lambda: (_ for _ in ()).throw(RuntimeError("env unavailable")))
+
+    class BrokenAdminAuth(FakeAdminAuth):
+        def _load_accounts(self):
+            raise RuntimeError("accounts unavailable")
+
+    request = FakeRequest(redis=None, admin_auth=BrokenAdminAuth())
+
+    response = await routes_pages.settings_page(
+        request=request,
+        user={"role": "admin"},
+    )
+
+    assert response["template"] == "settings.html"
+    assert response["context"]["env_profiles"] == []
+    assert response["context"]["reverse_proxy_configs"] == []
+    assert response["context"]["reverse_proxy_service_state"]["enabled"] is False
+    assert response["context"]["has_management_password"] is False
+
+
+@pytest.mark.asyncio
 async def test_save_ddns_settings_persists_service_to_redis():
     redis = FakeRedis()
     request = FakeRequest(

@@ -10,6 +10,11 @@ import sys
 import os
 import re
 
+if __name__ != "__main__":
+    import pytest
+
+    pytest.skip("smoke_test.py is a manual smoke script; run it directly against a live gateway.", allow_module_level=True)
+
 BASE = "http://localhost:8000"
 passed = 0
 failed = 0

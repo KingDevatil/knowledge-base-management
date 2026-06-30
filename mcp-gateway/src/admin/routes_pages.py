@@ -54,14 +54,20 @@ page_router = APIRouter()
 DDNS_CONFIG_KEY = DDNS_LEGACY_KEY
 
 
-def _management_password_hash(request: Request, username: str) -> str:
-    admin_auth = request.app.state.admin_auth
-    accounts = admin_auth._load_accounts()
-    account = accounts.get(username, {})
-    return account.get("management_password_hash", "")
+def _management_password_hash(request: Request, username: str | None) -> str:
+    if not username:
+        return ""
+    try:
+        admin_auth = request.app.state.admin_auth
+        accounts = admin_auth._load_accounts()
+        account = accounts.get(username, {})
+        return account.get("management_password_hash", "")
+    except Exception as exc:
+        logger.warning("Failed to read management password state for settings page: %s", exc)
+        return ""
 
 
-def _has_management_password(request: Request, username: str) -> bool:
+def _has_management_password(request: Request, username: str | None) -> bool:
     return bool(_management_password_hash(request, username))
 
 
@@ -394,10 +400,32 @@ async def api_key_create_page(request: Request, user: dict = Depends(require_adm
 async def settings_page(request: Request, user: dict = Depends(require_admin)):
     graph_semantic_threshold = 0.0
     ddns_services = []
-    env_profiles, active_env_profile_id = list_profiles()
-    reverse_proxy_configs, active_reverse_proxy_config_id = list_reverse_proxy_configs()
-    reverse_proxy_service_state = get_reverse_proxy_service_state()
-    env_values = read_env()
+    env_profiles = []
+    active_env_profile_id = ""
+    reverse_proxy_configs = []
+    active_reverse_proxy_config_id = ""
+    reverse_proxy_service_state = {
+        "enabled": False,
+        "active_id": "",
+        "active_config": None,
+        "runtime_host": "",
+        "runtime_port": "",
+        "docker_deployment": is_docker_deployment(),
+    }
+    try:
+        env_profiles, active_env_profile_id = list_profiles()
+    except Exception as exc:
+        logger.warning("Failed to load environment profiles for settings page: %s", exc)
+    try:
+        reverse_proxy_configs, active_reverse_proxy_config_id = list_reverse_proxy_configs()
+        reverse_proxy_service_state = get_reverse_proxy_service_state()
+    except Exception as exc:
+        logger.warning("Failed to load reverse proxy settings for settings page: %s", exc)
+    try:
+        env_values = read_env()
+    except Exception as exc:
+        logger.warning("Failed to load environment values for settings page: %s", exc)
+        env_values = {}
     kbdata_dir_display = env_values.get("KBDATA_DIR") or settings.KBDATA_DIR or "默认数据目录"
     redis = getattr(request.app.state, "redis", None)
     if redis:
@@ -421,7 +449,7 @@ async def settings_page(request: Request, user: dict = Depends(require_admin)):
         "active_reverse_proxy_config_id": active_reverse_proxy_config_id,
         "reverse_proxy_service_state": reverse_proxy_service_state,
         "kbdata_dir_display": kbdata_dir_display,
-        "has_management_password": _has_management_password(request, user["username"]),
+        "has_management_password": _has_management_password(request, user.get("username")),
     })
 
 
