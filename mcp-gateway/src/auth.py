@@ -25,6 +25,24 @@ class APIKeyAuth:
     def _hash_key(self, key: str) -> str:
         return hashlib.sha256(key.encode()).hexdigest()
 
+    def _parse_scope(self, raw_scope) -> list[str]:
+        if isinstance(raw_scope, list):
+            return [str(item) for item in raw_scope]
+        if raw_scope is None or raw_scope == "":
+            return ["read"]
+        if isinstance(raw_scope, bytes):
+            raw_scope = raw_scope.decode()
+        if isinstance(raw_scope, str):
+            try:
+                parsed = json.loads(raw_scope)
+                if isinstance(parsed, list):
+                    return [str(item) for item in parsed]
+                if isinstance(parsed, str):
+                    return [parsed]
+            except json.JSONDecodeError:
+                return [raw_scope]
+        return ["read"]
+
     def _load_keys_from_file(self) -> dict:
         if not os.path.exists(self.api_key_file):
             return {}
@@ -50,7 +68,7 @@ class APIKeyAuth:
                 "applicant": info.get("applicant", ""),
                 "applicant_note": info.get("applicant_note", ""),
                 "role": info.get("role", "user"),
-                "scope": info.get("scope", ["read"]) if isinstance(info.get("scope"), str) else json.dumps(info.get("scope", ["read"])),
+                "scope": json.dumps(self._parse_scope(info.get("scope", ["read"]))),
                 "rate_limit": str(info.get("rate_limit", 30)),
                 "status": info.get("status", "active"),
                 "duration": info.get("duration", "7d"),
@@ -148,7 +166,7 @@ class APIKeyAuth:
                 pass
 
         # 检查权限范围
-        scope = json.loads(info.get("scope", "[\"read\"]"))
+        scope = self._parse_scope(info.get("scope", "[\"read\"]"))
         if required_scope not in scope:
             logger.warning(f"API Key scope insufficient: key_prefix={info.get('key_prefix', '')}, required={required_scope}, got={scope}")
             raise HTTPException(
@@ -340,7 +358,7 @@ class APIKeyAuth:
                 "key_prefix": info.get("key_prefix", ""),
                 "applicant": info.get("applicant", ""),
                 "applicant_note": info.get("applicant_note", ""),
-                "scope": json.loads(info.get("scope", "[\"read\"]")),
+                "scope": self._parse_scope(info.get("scope", "[\"read\"]")),
                 "rate_limit": int(info.get("rate_limit", 30)),
                 "status": info.get("status", "active"),
                 "duration": info.get("duration", "7d"),
@@ -364,7 +382,7 @@ class APIKeyAuth:
             keys.append({
                 "key_hash": key_hash,
                 **{k: v for k, v in info.items() if k != "scope"},
-                "scope": info.get("scope", ["read"]),
+                "scope": self._parse_scope(info.get("scope", ["read"])),
                 "use_count": info.get("use_count", 0),
             })
 

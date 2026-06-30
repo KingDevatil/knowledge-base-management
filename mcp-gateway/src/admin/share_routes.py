@@ -10,6 +10,7 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import HTMLResponse
 
 from directory_tree import DirectoryTree
+from markdown_security import sanitize_markdown_html
 from .helpers import templates
 
 share_router = APIRouter()
@@ -74,6 +75,7 @@ async def share_view(request: Request, token: str):
     html_content = markdown.markdown(content, extensions=[
         "extra", "codehilite", "sane_lists", "toc", "admonition",
     ]) if content else ""
+    html_content = sanitize_markdown_html(html_content)
 
     return templates.TemplateResponse(request, "share_view.html", {
         "request": request,

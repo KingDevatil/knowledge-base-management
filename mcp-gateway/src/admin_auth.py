@@ -53,6 +53,23 @@ class AdminAuth:
     def hash_password(self, plain_password: str) -> str:
         return bcrypt.hashpw(plain_password.encode(), bcrypt.gensalt()).decode()
 
+    def _now_iso(self) -> str:
+        return datetime.now(timezone.utc).isoformat()
+
+    def _is_session_stale(self, payload: dict, account: dict) -> bool:
+        changed_at = account.get("password_changed_at", "")
+        if not changed_at:
+            return False
+        iat = payload.get("iat")
+        if not iat:
+            return True
+        try:
+            issued_at = datetime.fromtimestamp(iat, timezone.utc) if isinstance(iat, (int, float)) else datetime.fromisoformat(str(iat).replace("Z", "+00:00"))
+            changed = datetime.fromisoformat(str(changed_at).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return True
+        return issued_at < changed
+
     def ensure_bootstrap_admin(self, username: str = "admin", password: str = "123456") -> bool:
         """Create the first super admin when a fresh Docker data volume is empty."""
         accounts = self._load_accounts()
@@ -109,6 +126,9 @@ class AdminAuth:
             jti = payload.get("jti", "")
             paths_raw = payload.get("paths", "[]")
             authorized_paths = json.loads(paths_raw) if isinstance(paths_raw, str) else (paths_raw or [])
+            account = self._load_accounts().get(username or "", {})
+            if not account or self._is_session_stale(payload, account):
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session invalidated")
 
             blacklisted = await self.redis.get(f"session_blacklist:{jti}")
             if blacklisted:
@@ -141,6 +161,7 @@ class AdminAuth:
         if not self.verify_password(old_password, account["password_hash"]):
             return False, "当前密码错误"
         account["password_hash"] = self.hash_password(new_password)
+        account["password_changed_at"] = self._now_iso()
         if self._save_accounts(accounts):
             return True, "密码修改成功"
         return False, "保存失败，请稍后重试"
@@ -151,6 +172,7 @@ class AdminAuth:
         if not account:
             return False, f"用户 '{username}' 不存在"
         account["password_hash"] = self.hash_password(new_password)
+        account["password_changed_at"] = self._now_iso()
         if self._save_accounts(accounts):
             return True, f"用户 '{username}' 的密码已重置"
         return False, "保存失败"

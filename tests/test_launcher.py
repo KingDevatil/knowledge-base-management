@@ -15,17 +15,17 @@ passed = 0
 failed = 0
 errors = []
 
-def test(name: str):
+def run_case(name: str):
     """测试装饰器"""
     def decorator(fn):
         global passed, failed
         try:
             fn()
             passed += 1
-            print(f"  ✓ {name}")
+            print(f"  PASS {name}")
         except Exception as e:
             failed += 1
-            msg = f"  ✗ {name}: {e}"
+            msg = f"  FAIL {name}: {e}"
             errors.append(msg)
             print(msg)
             import traceback; traceback.print_exc()
@@ -34,7 +34,7 @@ def test(name: str):
 # ============================================================
 # 1. 模块级代码测试
 # ============================================================
-@test("模块导入无异常")
+@run_case("模块导入无异常")
 def test_import():
     import kb_launcher
     assert hasattr(kb_launcher, 'KBLauncher')
@@ -45,14 +45,14 @@ def test_import():
     assert hasattr(kb_launcher, 'find_process')
     assert hasattr(kb_launcher, 'kill_process')
 
-@test("SERVICES 包含 5 个服务")
+@run_case("SERVICES 包含 5 个服务")
 def test_services_count():
     import kb_launcher
     assert len(kb_launcher.SERVICES) == 5
     names = [s.name for s in kb_launcher.SERVICES]
     assert names == ["Ollama", "Redis", "Chroma", "MinIO", "MCP Gateway"]
 
-@test("ServiceDef 字段完整")
+@run_case("ServiceDef 字段完整")
 def test_service_fields():
     from kb_launcher import SERVICES
     for svc in SERVICES:
@@ -61,7 +61,7 @@ def test_service_fields():
         assert svc.status == "stopped", f"{svc.name} initial status wrong"
         assert svc.error_msg == "", f"{svc.name} initial error_msg not empty"
 
-@test("MCP Gateway 依赖链正确")
+@run_case("MCP Gateway 依赖链正确")
 def test_gateway_deps():
     from kb_launcher import SERVICES
     gw = next(s for s in SERVICES if s.name == "MCP Gateway")
@@ -70,13 +70,13 @@ def test_gateway_deps():
     assert "Chroma" in gw.requires
     assert "MinIO" in gw.requires
 
-@test("Chroma 依赖 Redis")
+@run_case("Chroma 依赖 Redis")
 def test_chroma_deps():
     from kb_launcher import SERVICES
     chroma = next(s for s in SERVICES if s.name == "Chroma")
     assert "Redis" in chroma.requires
 
-@test("Ollama/Redis/MinIO 无依赖")
+@run_case("Ollama/Redis/MinIO 无依赖")
 def test_no_deps():
     from kb_launcher import SERVICES
     for name in ["Ollama", "Redis", "MinIO"]:
@@ -86,13 +86,13 @@ def test_no_deps():
 # ============================================================
 # 2. 帮助函数测试
 # ============================================================
-@test("check_port: 未占用端口返回 False")
+@run_case("check_port: 未占用端口返回 False")
 def test_check_port_free():
     from kb_launcher import check_port
     # 选择极不可能被占用的端口
     assert check_port(19999) == False
 
-@test("check_port: 快速响应 (< 2s)")
+@run_case("check_port: 快速响应 (< 2s)")
 def test_check_port_fast():
     from kb_launcher import check_port
     t0 = time.time()
@@ -102,12 +102,12 @@ def test_check_port_fast():
     # Windows socket 连接有额外延迟，600ms 以内合理
     assert elapsed < 2.0, f"Too slow: {elapsed:.2f}s (expected < 2s for 2 checks)"
 
-@test("check_url: 不存在的服务返回 False")
+@run_case("check_url: 不存在的服务返回 False")
 def test_check_url_unreachable():
     from kb_launcher import check_url
     assert check_url("http://localhost:19999/health") == False
 
-@test("check_url: 快速超时 (< 3.5s)")
+@run_case("check_url: 快速超时 (< 3.5s)")
 def test_check_url_fast():
     from kb_launcher import check_url
     t0 = time.time()
@@ -115,20 +115,20 @@ def test_check_url_fast():
     elapsed = time.time() - t0
     assert elapsed < 3.5, f"Too slow: {elapsed:.2f}s"
 
-@test("find_process: py.exe 存在返回 True (gbk编码)")
+@run_case("find_process: py.exe 存在返回 True (gbk编码)")
 def test_find_process_running():
     from kb_launcher import find_process
     # python.exe 一定在运行（我们在用它）
     result = find_process("python")
     assert result == True, f"find_process('python') = {result}, expected True"
 
-@test("find_process: 不存在进程返回 False")
+@run_case("find_process: 不存在进程返回 False")
 def test_find_process_missing():
     from kb_launcher import find_process
     result = find_process("nonexistent_process_xyz_12345")
     assert result == False
 
-@test("find_process: 无异常抛出")
+@run_case("find_process: 无异常抛出")
 def test_find_process_no_exception():
     from kb_launcher import find_process
     try:
@@ -139,7 +139,7 @@ def test_find_process_no_exception():
 # ============================================================
 # 3. 依赖拓扑排序测试
 # ============================================================
-@test("拓扑排序: 结果包含全部 5 个服务")
+@run_case("拓扑排序: 结果包含全部 5 个服务")
 def test_topo_all_included():
     from kb_launcher import SERVICES
     started = set()
@@ -162,7 +162,7 @@ def test_topo_all_included():
     names = [s.name for s in result]
     assert set(names) == {"Ollama", "Redis", "Chroma", "MinIO", "MCP Gateway"}
 
-@test("拓扑排序: 依赖在前")
+@run_case("拓扑排序: 依赖在前")
 def test_topo_deps_first():
     from kb_launcher import SERVICES
     started = set()
@@ -191,7 +191,7 @@ def test_topo_deps_first():
 # ============================================================
 # 4. 服务检测逻辑测试
 # ============================================================
-@test("_is_service_running: 未运行服务返回 False (健康检查)")
+@run_case("_is_service_running: 未运行服务返回 False (健康检查)")
 def test_not_running_health():
     # 模拟一个指向不存在端口的服务
     class MockService:
@@ -210,7 +210,7 @@ def test_not_running_health():
                (find_process(svc.process_name)))
     assert running == False
 
-@test("_is_service_running: url 优先于 port")
+@run_case("_is_service_running: url 优先于 port")
 def test_url_before_port():
     from kb_launcher import check_url, check_port
 
@@ -224,7 +224,7 @@ def test_url_before_port():
 # ============================================================
 # 5. 边界条件测试
 # ============================================================
-@test("ServiceDef: requires=None 转为空列表")
+@run_case("ServiceDef: requires=None 转为空列表")
 def test_service_requires_none():
     from kb_launcher import ServiceDef
     svc = ServiceDef(
@@ -233,7 +233,7 @@ def test_service_requires_none():
     )
     assert svc.requires == []
 
-@test("ServiceDef: startup_delay 默认值")
+@run_case("ServiceDef: startup_delay 默认值")
 def test_service_default_delay():
     from kb_launcher import ServiceDef
     svc = ServiceDef(
@@ -244,14 +244,14 @@ def test_service_default_delay():
     assert svc.process_name == "test"
     assert svc.status == "stopped"
 
-@test("_content_hash: 相同内容哈希一致")
+@run_case("_content_hash: 相同内容哈希一致")
 def test_content_hash_consistent():
     import hashlib
     c1 = hashlib.sha256("hello world".encode()).hexdigest()
     c2 = hashlib.sha256("hello world".encode()).hexdigest()
     assert c1 == c2
 
-@test("_content_hash: 不同内容哈希不同")
+@run_case("_content_hash: 不同内容哈希不同")
 def test_content_hash_different():
     import hashlib
     c1 = hashlib.sha256("hello world".encode()).hexdigest()
@@ -261,7 +261,7 @@ def test_content_hash_different():
 # ============================================================
 # 6. 线程安全：polling 状态更新测试
 # ============================================================
-@test("轮询跳过 starting/stopping 状态")
+@run_case("轮询跳过 starting/stopping 状态")
 def test_poll_skips_transition():
     from kb_launcher import SERVICES
 
@@ -280,7 +280,7 @@ def test_poll_skips_transition():
     gw.status = orig_status  # 恢复
     assert skipped, "Should have skipped the starting service"
 
-@test("轮询 running 服务不做重复检查")
+@run_case("轮询 running 服务不做重复检查")
 def test_poll_skips_running():
     from kb_launcher import SERVICES
 
@@ -301,7 +301,7 @@ def test_poll_skips_running():
 # ============================================================
 # 7. 模块级常量测试
 # ============================================================
-@test("KBDATA_DIR 存在")
+@run_case("KBDATA_DIR 存在")
 def test_kbdata_exists():
     from kb_launcher import KBDATA_DIR
     assert KBDATA_DIR.exists()
@@ -309,7 +309,7 @@ def test_kbdata_exists():
     assert (KBDATA_DIR / "minio").exists()
     assert (KBDATA_DIR / "chroma").exists()
 
-@test("PROJECT_ROOT 正确")
+@run_case("PROJECT_ROOT 正确")
 def test_project_root():
     from kb_launcher import PROJECT_ROOT
     assert (PROJECT_ROOT / "kb_launcher.pyw").exists()

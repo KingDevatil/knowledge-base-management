@@ -22,6 +22,7 @@ logger = get_logger()
 from admin_auth import is_admin_role
 from kb_graph import KnowledgeGraphBuilder
 from consistency import KnowledgeBaseConsistencyChecker
+from markdown_security import sanitize_markdown_html
 from ddns import (
     DDNS_LEGACY_KEY,
     delete_service as ddns_delete_service,
@@ -306,8 +307,8 @@ async def document_view(request: Request, doc_id: str, user: dict = Depends(get_
     ], extension_configs={
         "toc": {"toc_depth": "2-4"},
     })
-    html_content = md.convert(content)
-    toc_html = md.toc
+    html_content = sanitize_markdown_html(md.convert(content))
+    toc_html = sanitize_markdown_html(md.toc)
     md.reset()
 
     breadcrumbs = DirectoryTree.get_breadcrumbs(doc_path)

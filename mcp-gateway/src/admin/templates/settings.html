@@ -724,13 +724,13 @@
             </div>
             <div>
                 <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">证书文件</label>
-                <input id="reverse-proxy-ssl-cert-file" class="setting-input" placeholder="certs/fullchain.pem">
-                <p class="mt-1.5 text-xs leading-5 text-slate-500 dark:text-slate-400">Nginx HTTPS 或 Caddy 手动证书模式使用。推荐使用项目相对路径或容器内挂载路径；留空时 Caddy 会尝试自动证书。</p>
+                <input id="reverse-proxy-ssl-cert-file" class="setting-input" placeholder="你的域名/fullchain.pem">
+                <p class="mt-1.5 text-xs leading-5 text-slate-500 dark:text-slate-400">Docker 内置 Nginx 会从 nginx/ssl 目录读取相对路径，例如 你的域名/fullchain.pem；也可填写容器内绝对路径。</p>
             </div>
             <div>
                 <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">私钥文件</label>
-                <input id="reverse-proxy-ssl-key-file" class="setting-input" placeholder="certs/privkey.pem">
-                <p class="mt-1.5 text-xs leading-5 text-slate-500 dark:text-slate-400">与证书文件配套的私钥路径。推荐使用项目相对路径或容器内挂载路径，请确保代理进程有读取权限。</p>
+                <input id="reverse-proxy-ssl-key-file" class="setting-input" placeholder="你的域名/privkey.pem">
+                <p class="mt-1.5 text-xs leading-5 text-slate-500 dark:text-slate-400">与证书文件配套的私钥路径。相对路径同样从 nginx/ssl 目录解析，例如 你的域名/privkey.pem。</p>
             </div>
             <div class="sm:col-span-2">
                 <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">生成的配置文本</label>

@@ -17,6 +17,20 @@ read_env_value() {
   printf '%s' "$value"
 }
 
+resolve_ssl_path() {
+  path="$1"
+  domain="$2"
+  fallback="$3"
+  if [ -z "$path" ]; then
+    printf '/etc/nginx/ssl/%s/%s' "$domain" "$fallback"
+    return 0
+  fi
+  case "$path" in
+    /*) printf '%s' "$path" ;;
+    *) printf '/etc/nginx/ssl/%s' "$path" ;;
+  esac
+}
+
 file_value="$(read_env_value EXTERNAL_DOMAIN)"; [ -n "$file_value" ] && EXTERNAL_DOMAIN="$file_value"
 file_value="$(read_env_value INTERNAL_DOMAIN)"; [ -n "$file_value" ] && INTERNAL_DOMAIN="$file_value"
 file_value="$(read_env_value REVERSE_PROXY_ENABLED)"; [ -n "$file_value" ] && REVERSE_PROXY_ENABLED="$file_value"
@@ -136,8 +150,8 @@ cat >> "$OUTPUT" <<'EOF'
 EOF
 
 if [ -n "$REVERSE_PROXY_DOMAIN" ]; then
-  CERT="${REVERSE_PROXY_SSL_CERT_FILE:-/etc/nginx/ssl/$REVERSE_PROXY_DOMAIN/fullchain.pem}"
-  KEY="${REVERSE_PROXY_SSL_KEY_FILE:-/etc/nginx/ssl/$REVERSE_PROXY_DOMAIN/privkey.pem}"
+  CERT="$(resolve_ssl_path "$REVERSE_PROXY_SSL_CERT_FILE" "$REVERSE_PROXY_DOMAIN" "fullchain.pem")"
+  KEY="$(resolve_ssl_path "$REVERSE_PROXY_SSL_KEY_FILE" "$REVERSE_PROXY_DOMAIN" "privkey.pem")"
   if [ -f "$CERT" ] && [ -f "$KEY" ]; then
     cat >> "$OUTPUT" <<EOF
 

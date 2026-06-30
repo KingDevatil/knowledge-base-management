@@ -21,6 +21,9 @@ from models import APIKeyInfo, AddDocumentRequest, UpdateDocumentRequest, MAX_CO
 from admin.routes_api import _validate_redirect_url
 from admin.archive_security import ArchiveValidationError, safe_extract_archive, validate_archive_size
 from admin.routes_documents_api import _upload_basename
+from admin_auth import AdminAuth
+from auth import APIKeyAuth
+from markdown_security import sanitize_markdown_html
 from mcp_auth_context import reset_mcp_api_key_info, set_mcp_api_key_info
 from server import MCP_TOOL_METADATA, require_mcp_tool_scope
 from api_routes import health_check
@@ -103,6 +106,58 @@ class TestMCPScopeGuards:
             require_mcp_tool_scope("add_document")
         finally:
             reset_mcp_api_key_info(token)
+
+
+class TestAPIKeyScopeParsing:
+    """Legacy API key scope formats should not break authentication."""
+
+    def test_plain_string_scope_is_accepted_as_single_scope(self):
+        auth = APIKeyAuth(redis_client=None, api_key_file="unused")  # type: ignore[arg-type]
+        assert auth._parse_scope("read") == ["read"]
+
+    def test_json_encoded_scope_is_accepted(self):
+        auth = APIKeyAuth(redis_client=None, api_key_file="unused")  # type: ignore[arg-type]
+        assert auth._parse_scope('["read", "write"]') == ["read", "write"]
+
+
+class TestMarkdownSanitizer:
+    """Rendered Markdown HTML must not execute scripts."""
+
+    def test_script_tags_and_event_handlers_are_removed(self):
+        html = '<h1 id="x">Title</h1><script>alert(1)</script><img src="https://example.com/a.png" onerror="alert(2)">'
+        cleaned = sanitize_markdown_html(html)
+        assert "<script" not in cleaned.lower()
+        assert "onerror" not in cleaned.lower()
+        assert '<h1 id="x">Title</h1>' in cleaned
+        assert 'src="https://example.com/a.png"' in cleaned
+
+    def test_javascript_links_are_stripped(self):
+        cleaned = sanitize_markdown_html('<a href="javascript:alert(1)">bad</a>')
+        assert "javascript:" not in cleaned.lower()
+        assert ">bad</a>" in cleaned
+
+
+class TestAdminSessionInvalidation:
+    """Password changes should invalidate older session tokens."""
+
+    @pytest.mark.asyncio
+    async def test_password_change_invalidates_existing_session(self, tmp_path):
+        class Redis:
+            async def get(self, key):
+                return None
+
+        accounts_file = tmp_path / "accounts.json"
+        auth = AdminAuth(Redis(), str(accounts_file), "x" * 32)
+        assert auth.ensure_bootstrap_admin("admin", "old-pass")
+        token = auth.create_session_token("admin", "super_admin")
+
+        ok, msg = await auth.change_password("admin", "old-pass", "new-pass")
+        assert ok, msg
+
+        request = SimpleNamespace(cookies={"session": token})
+        with pytest.raises(HTTPException) as exc:
+            await auth.verify_session(request)
+        assert exc.value.status_code == 401
 
 
 # ==================== Health Check Tests ====================
