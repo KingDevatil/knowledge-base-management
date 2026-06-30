@@ -15,6 +15,7 @@ PROFILES_KEY = "SERVICE_ENV_PROFILES_JSON"
 ACTIVE_PROFILE_KEY = "ACTIVE_SERVICE_ENV_PROFILE_ID"
 REVERSE_PROXY_CONFIGS_KEY = "REVERSE_PROXY_CONFIGS_JSON"
 ACTIVE_REVERSE_PROXY_CONFIG_KEY = "ACTIVE_REVERSE_PROXY_CONFIG_ID"
+REVERSE_PROXY_ENABLED_KEY = "REVERSE_PROXY_ENABLED"
 
 ENV_PROFILE_KEYS = {
     "DEPLOYMENT_MODE",
@@ -48,6 +49,16 @@ DEFAULT_REVERSE_PROXY_CONFIG = {
     "ssl_key_file": "",
     "force_https": True,
     "config_text": "",
+}
+
+REVERSE_PROXY_RUNTIME_KEYS = {
+    REVERSE_PROXY_ENABLED_KEY,
+    "REVERSE_PROXY_DOMAIN",
+    "REVERSE_PROXY_UPSTREAM_HOST",
+    "REVERSE_PROXY_UPSTREAM_PORT",
+    "REVERSE_PROXY_SSL_CERT_FILE",
+    "REVERSE_PROXY_SSL_KEY_FILE",
+    "REVERSE_PROXY_FORCE_HTTPS",
 }
 
 
@@ -102,6 +113,14 @@ def write_env_values(values: dict[str, Any]) -> None:
 
 def is_docker_deployment() -> bool:
     return os.environ.get("RUNNING_IN_DOCKER", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _bool_env(value: Any, default: bool = False) -> bool:
+    if value is None or value == "":
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on", "enabled"}
 
 
 def list_profiles() -> tuple[list[dict[str, Any]], str]:
@@ -209,12 +228,42 @@ def generate_reverse_proxy_config(config: dict[str, Any]) -> str:
             "server {\n"
             f"    listen {listen};\n"
             f"    server_name {domain};{ssl_lines}\n\n"
-            "    location / {\n"
+            "    location /mcp {\n"
             f"        proxy_pass http://{upstream};\n"
+            "        proxy_http_version 1.1;\n"
+            "        proxy_set_header Connection \"\";\n"
+            "        proxy_buffering off;\n"
+            "        proxy_cache off;\n"
+            "        proxy_read_timeout 3600s;\n"
             "        proxy_set_header Host $host;\n"
             "        proxy_set_header X-Real-IP $remote_addr;\n"
             "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
             "        proxy_set_header X-Forwarded-Proto $scheme;\n"
+            "        proxy_set_header X-API-Key $http_x_api_key;\n"
+            "    }\n\n"
+            "    location /sse {\n"
+            f"        proxy_pass http://{upstream};\n"
+            "        proxy_http_version 1.1;\n"
+            "        proxy_set_header Connection \"\";\n"
+            "        proxy_buffering off;\n"
+            "        proxy_cache off;\n"
+            "        proxy_read_timeout 3600s;\n"
+            "        proxy_set_header Host $host;\n"
+            "        proxy_set_header X-Real-IP $remote_addr;\n"
+            "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+            "        proxy_set_header X-Forwarded-Proto $scheme;\n"
+            "        proxy_set_header X-API-Key $http_x_api_key;\n"
+            "    }\n\n"
+            "    location / {\n"
+            f"        proxy_pass http://{upstream};\n"
+            "        proxy_http_version 1.1;\n"
+            "        proxy_set_header Upgrade $http_upgrade;\n"
+            "        proxy_set_header Connection \"upgrade\";\n"
+            "        proxy_set_header Host $host;\n"
+            "        proxy_set_header X-Real-IP $remote_addr;\n"
+            "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+            "        proxy_set_header X-Forwarded-Proto $scheme;\n"
+            "        proxy_read_timeout 3600s;\n"
             "    }\n"
             "}\n"
         )
@@ -247,6 +296,30 @@ def normalize_reverse_proxy_config(data: dict[str, Any], existing: dict[str, Any
     return config
 
 
+def _runtime_upstream_host(config: dict[str, Any]) -> str:
+    host = str(config.get("upstream_host") or "127.0.0.1").strip()
+    if is_docker_deployment() and host in {"127.0.0.1", "localhost"}:
+        return "mcp-gateway"
+    return host
+
+
+def reverse_proxy_runtime_env(config: dict[str, Any] | None, enabled: bool) -> dict[str, Any]:
+    values: dict[str, Any] = {REVERSE_PROXY_ENABLED_KEY: "true" if enabled else "false"}
+    if not enabled or not config:
+        for key in REVERSE_PROXY_RUNTIME_KEYS - {REVERSE_PROXY_ENABLED_KEY}:
+            values[key] = ""
+        return values
+    values.update({
+        "REVERSE_PROXY_DOMAIN": config.get("domain", ""),
+        "REVERSE_PROXY_UPSTREAM_HOST": _runtime_upstream_host(config),
+        "REVERSE_PROXY_UPSTREAM_PORT": config.get("upstream_port", "8000"),
+        "REVERSE_PROXY_SSL_CERT_FILE": config.get("ssl_cert_file", ""),
+        "REVERSE_PROXY_SSL_KEY_FILE": config.get("ssl_key_file", ""),
+        "REVERSE_PROXY_FORCE_HTTPS": "true" if _truthy(config.get("force_https")) else "false",
+    })
+    return values
+
+
 def list_reverse_proxy_configs() -> tuple[list[dict[str, Any]], str]:
     env = read_env()
     active_id = env.get(ACTIVE_REVERSE_PROXY_CONFIG_KEY, "")
@@ -262,6 +335,21 @@ def list_reverse_proxy_configs() -> tuple[list[dict[str, Any]], str]:
     return configs, active_id
 
 
+def get_reverse_proxy_service_state() -> dict[str, Any]:
+    env = read_env()
+    configs, active_id = list_reverse_proxy_configs()
+    active_config = next((item for item in configs if item["id"] == active_id), None)
+    enabled = _bool_env(env.get(REVERSE_PROXY_ENABLED_KEY), default=True)
+    return {
+        "enabled": enabled,
+        "active_id": active_id,
+        "active_config": active_config,
+        "runtime_host": _runtime_upstream_host(active_config) if active_config else "",
+        "runtime_port": active_config.get("upstream_port", "") if active_config else "",
+        "docker_deployment": is_docker_deployment(),
+    }
+
+
 def save_reverse_proxy_config(data: dict[str, Any]) -> dict[str, Any]:
     configs, active_id = list_reverse_proxy_configs()
     config_id = str(data.get("id") or "")
@@ -274,6 +362,8 @@ def save_reverse_proxy_config(data: dict[str, Any]) -> dict[str, Any]:
     values = {REVERSE_PROXY_CONFIGS_KEY: json.dumps(configs, ensure_ascii=False)}
     if not active_id:
         values[ACTIVE_REVERSE_PROXY_CONFIG_KEY] = config["id"]
+    elif active_id == config["id"] and get_reverse_proxy_service_state()["enabled"]:
+        values.update(reverse_proxy_runtime_env(config, True))
     write_env_values(values)
     return config
 
@@ -283,8 +373,30 @@ def activate_reverse_proxy_config(config_id: str) -> dict[str, Any]:
     config = next((item for item in configs if item["id"] == config_id), None)
     if not config:
         raise ValueError("反向代理配置不存在或已被删除。")
-    write_env_values({ACTIVE_REVERSE_PROXY_CONFIG_KEY: config_id})
+    values = {ACTIVE_REVERSE_PROXY_CONFIG_KEY: config_id}
+    if get_reverse_proxy_service_state()["enabled"]:
+        values.update(reverse_proxy_runtime_env(config, True))
+    write_env_values(values)
     return config
+
+
+def set_reverse_proxy_service_enabled(enabled: bool, config_id: str | None = None) -> dict[str, Any]:
+    configs, active_id = list_reverse_proxy_configs()
+    target_id = config_id or active_id
+    config = next((item for item in configs if item["id"] == target_id), None)
+    if enabled and not config:
+        raise ValueError("Please create and activate a reverse proxy config before enabling the service.")
+    values = {ACTIVE_REVERSE_PROXY_CONFIG_KEY: target_id or ""}
+    values.update(reverse_proxy_runtime_env(config, enabled))
+    write_env_values(values)
+    return get_reverse_proxy_service_state()
+
+
+def apply_reverse_proxy_config(data: dict[str, Any]) -> dict[str, Any]:
+    config = save_reverse_proxy_config({**data, "enabled": True})
+    activate_reverse_proxy_config(config["id"])
+    state = set_reverse_proxy_service_enabled(True, config["id"])
+    return {"config": config, "state": state}
 
 
 def delete_reverse_proxy_config(config_id: str) -> bool:
@@ -294,7 +406,9 @@ def delete_reverse_proxy_config(config_id: str) -> bool:
         return False
     values = {REVERSE_PROXY_CONFIGS_KEY: json.dumps(kept, ensure_ascii=False)}
     if active_id == config_id:
-        values[ACTIVE_REVERSE_PROXY_CONFIG_KEY] = kept[0]["id"] if kept else ""
+        next_config = kept[0] if kept else None
+        values[ACTIVE_REVERSE_PROXY_CONFIG_KEY] = next_config["id"] if next_config else ""
+        values.update(reverse_proxy_runtime_env(next_config, bool(next_config) and get_reverse_proxy_service_state()["enabled"]))
     write_env_values(values)
     return True
 

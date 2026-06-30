@@ -358,6 +358,25 @@
                             <i data-lucide="plus" class="w-4 h-4"></i>新增反代
                         </button>
                     </div>
+                    <div class="mb-5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 p-4">
+                        <div class="flex flex-wrap items-center justify-between gap-4">
+                            <div>
+                                <div class="flex items-center gap-2">
+                                    <p class="text-sm font-semibold text-slate-900 dark:text-white">内置反向代理服务</p>
+                                    <span id="reverse-proxy-service-badge" class="text-xs px-2 py-0.5 rounded-full bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300">checking</span>
+                                </div>
+                                <p id="reverse-proxy-service-desc" class="text-xs text-slate-500 dark:text-slate-400 mt-1">保存并启用后，Docker Nginx 会自动读取当前方案并 reload。</p>
+                            </div>
+                            <label class="inline-flex items-center gap-3 cursor-pointer select-none">
+                                <span class="text-sm text-slate-600 dark:text-slate-300">关闭</span>
+                                <input id="reverse-proxy-service-toggle" type="checkbox" class="sr-only" onchange="toggleReverseProxyService(this.checked)">
+                                <span id="reverse-proxy-service-toggle-track" class="relative inline-flex h-6 w-11 items-center rounded-full bg-slate-300 transition-colors dark:bg-slate-700">
+                                    <span id="reverse-proxy-service-toggle-knob" class="inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform translate-x-0.5"></span>
+                                </span>
+                                <span class="text-sm text-slate-600 dark:text-slate-300">启动</span>
+                            </label>
+                        </div>
+                    </div>
                     <div class="mb-5 rounded-xl border border-blue-200 dark:border-blue-500/20 bg-blue-50 dark:bg-blue-500/10 p-4 text-sm text-slate-700 dark:text-slate-300 space-y-2">
                         <p class="font-medium text-slate-900 dark:text-slate-100">配置说明</p>
                         <p>Caddy 配置更适合新部署，可在域名正确解析到本机且 80/443 端口可访问时自动申请证书。Nginx 配置适合已有 Nginx 的服务器，通常需要手动准备证书路径。</p>
@@ -721,6 +740,7 @@
             <div class="sm:col-span-2 flex justify-end gap-3 pt-2">
                 <button type="button" onclick="closeReverseProxyModal()" class="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-300">取消</button>
                 <button type="button" onclick="saveReverseProxyConfig()" class="px-4 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-sm font-medium text-white">保存</button>
+                <button type="button" onclick="applyReverseProxyConfig()" class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-sm font-medium text-white">保存并启用</button>
             </div>
             <p id="reverse-proxy-msg" class="sm:col-span-2 text-sm"></p>
         </div>
@@ -757,6 +777,7 @@ let envProfiles = {{ env_profiles|tojson }};
 let activeEnvProfileId = {{ active_env_profile_id|tojson }};
 let reverseProxyConfigs = {{ reverse_proxy_configs|tojson }};
 let activeReverseProxyConfigId = {{ active_reverse_proxy_config_id|tojson }};
+let reverseProxyServiceState = {{ reverse_proxy_service_state|tojson }};
 let hasManagementPassword = {{ has_management_password|tojson }};
 
 function activateSettingsTab(name) {
@@ -1085,11 +1106,44 @@ function reverseProxyTypeLabel(type) {
     return {caddy: 'Caddy', nginx: 'Nginx'}[type] || type;
 }
 
+function updateReverseProxyServiceState(state) {
+    if (state) reverseProxyServiceState = state;
+    const enabled = !!reverseProxyServiceState.enabled;
+    const toggle = document.getElementById('reverse-proxy-service-toggle');
+    const track = document.getElementById('reverse-proxy-service-toggle-track');
+    const knob = document.getElementById('reverse-proxy-service-toggle-knob');
+    const badge = document.getElementById('reverse-proxy-service-badge');
+    const desc = document.getElementById('reverse-proxy-service-desc');
+    if (!toggle || !track || !knob || !badge || !desc) return;
+    toggle.checked = enabled;
+    track.className = enabled
+        ? 'relative inline-flex h-6 w-11 items-center rounded-full bg-emerald-500 transition-colors'
+        : 'relative inline-flex h-6 w-11 items-center rounded-full bg-slate-300 transition-colors dark:bg-slate-700';
+    knob.className = enabled
+        ? 'inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform translate-x-5'
+        : 'inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform translate-x-0.5';
+    badge.textContent = enabled ? '运行中' : '已关闭';
+    badge.className = enabled
+        ? 'text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300'
+        : 'text-xs px-2 py-0.5 rounded-full bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300';
+    const active = reverseProxyConfigs.find(item => item.id === activeReverseProxyConfigId);
+    if (enabled && active) {
+        const host = reverseProxyServiceState.runtime_host || active.upstream_host || '127.0.0.1';
+        const port = reverseProxyServiceState.runtime_port || active.upstream_port || '8000';
+        desc.textContent = `当前生效：${active.domain || '-'} -> ${host}:${port}。Docker Nginx 会自动 reload 配置。`;
+    } else if (active) {
+        desc.textContent = `当前方案：${active.domain || '-'}。打开总开关后才会启用内置反代。`;
+    } else {
+        desc.textContent = '先新增一个反代方案，再点击“保存并启用”。';
+    }
+}
+
 function renderReverseProxyConfigs() {
     const tbody = document.getElementById('reverse-proxy-table');
     if (!tbody) return;
     if (!reverseProxyConfigs.length) {
         tbody.innerHTML = '<tr><td colspan="6" class="text-center text-slate-400 py-10">暂无反向代理配置</td></tr>';
+        updateReverseProxyServiceState();
         return;
     }
     tbody.innerHTML = reverseProxyConfigs.map(item => {
@@ -1113,6 +1167,7 @@ function renderReverseProxyConfigs() {
         </tr>`;
     }).join('');
     if (typeof lucide !== 'undefined') lucide.createIcons();
+    updateReverseProxyServiceState();
 }
 
 function openReverseProxyModal(id = '') {
@@ -1166,6 +1221,28 @@ async function saveReverseProxyConfig() {
         if (!result.success) throw new Error(result.error || '保存失败');
         reverseProxyConfigs = result.configs;
         activeReverseProxyConfigId = result.active_id;
+        updateReverseProxyServiceState(result.service_state);
+        renderReverseProxyConfigs();
+        closeReverseProxyModal();
+    } catch (err) {
+        msg.textContent = err.message || '请求失败';
+        msg.className = 'sm:col-span-2 text-sm text-red-600';
+    }
+}
+
+async function applyReverseProxyConfig() {
+    const msg = document.getElementById('reverse-proxy-msg');
+    try {
+        const resp = await fetch('/admin/api/reverse-proxy-configs/apply', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(reverseProxyPayload()),
+        });
+        const result = await resp.json();
+        if (!result.success) throw new Error(result.error || '启用失败');
+        reverseProxyConfigs = result.configs;
+        activeReverseProxyConfigId = result.active_id;
+        updateReverseProxyServiceState(result.service_state);
         renderReverseProxyConfigs();
         closeReverseProxyModal();
     } catch (err) {
@@ -1180,9 +1257,28 @@ async function activateReverseProxyConfig(id) {
     if (result.success) {
         reverseProxyConfigs = result.configs;
         activeReverseProxyConfigId = result.active_id;
+        updateReverseProxyServiceState(result.service_state);
         renderReverseProxyConfigs();
     } else {
         alert(result.error || '启用失败');
+    }
+}
+
+async function toggleReverseProxyService(enabled) {
+    const resp = await fetch('/admin/api/reverse-proxy-service', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({enabled, config_id: activeReverseProxyConfigId}),
+    });
+    const result = await resp.json();
+    if (result.success) {
+        reverseProxyConfigs = result.configs;
+        activeReverseProxyConfigId = result.active_id;
+        updateReverseProxyServiceState(result.service_state);
+        renderReverseProxyConfigs();
+    } else {
+        updateReverseProxyServiceState({...(reverseProxyServiceState || {}), enabled: !enabled});
+        alert(result.error || '切换失败');
     }
 }
 
@@ -1193,6 +1289,7 @@ async function deleteReverseProxyConfig(id) {
     if (result.success) {
         reverseProxyConfigs = result.configs;
         activeReverseProxyConfigId = result.active_id;
+        updateReverseProxyServiceState(result.service_state);
         renderReverseProxyConfigs();
     } else {
         alert(result.error || '删除失败');

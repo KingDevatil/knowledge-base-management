@@ -20,11 +20,14 @@ services:
       - ./nginx/nginx.conf.template:/etc/nginx/templates/nginx.conf.template:ro
       - ./nginx/render-nginx-conf.sh:/etc/nginx/templates/render-nginx-conf.sh:ro
       - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ${HOST_KBDATA_DIR:-./kbdata}:/app/data:ro
     environment:
       - EXTERNAL_DOMAIN=${EXTERNAL_DOMAIN:-}
       - INTERNAL_DOMAIN=${INTERNAL_DOMAIN:-localhost}
+      - SERVICE_ENV_FILE=/app/data/config/service.env
+      - REVERSE_PROXY_ENABLED=${REVERSE_PROXY_ENABLED:-true}
     command: >
-      /bin/sh -c "sh /etc/nginx/templates/render-nginx-conf.sh && nginx -g 'daemon off;'"
+      /bin/sh -c "sh /etc/nginx/templates/render-nginx-conf.sh && nginx && LAST=$$(cksum /app/data/config/service.env 2>/dev/null || echo missing); while sleep 5; do NOW=$$(cksum /app/data/config/service.env 2>/dev/null || echo missing); if [ \"$$NOW\" != \"$$LAST\" ]; then sh /etc/nginx/templates/render-nginx-conf.sh && nginx -s reload; LAST=\"$$NOW\"; fi; done"
     depends_on:
       mcp-gateway:
         condition: service_started

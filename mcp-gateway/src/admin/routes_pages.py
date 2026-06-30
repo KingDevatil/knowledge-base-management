@@ -34,14 +34,17 @@ from ddns import (
 from env_manager import (
     activate_profile,
     activate_reverse_proxy_config,
+    apply_reverse_proxy_config,
     delete_profile,
     delete_reverse_proxy_config,
+    get_reverse_proxy_service_state,
     list_profiles,
     list_reverse_proxy_configs,
     is_docker_deployment,
     restart_current_service,
     save_profile,
     save_reverse_proxy_config,
+    set_reverse_proxy_service_enabled,
     read_env,
 )
 
@@ -392,6 +395,7 @@ async def settings_page(request: Request, user: dict = Depends(require_admin)):
     ddns_services = []
     env_profiles, active_env_profile_id = list_profiles()
     reverse_proxy_configs, active_reverse_proxy_config_id = list_reverse_proxy_configs()
+    reverse_proxy_service_state = get_reverse_proxy_service_state()
     env_values = read_env()
     kbdata_dir_display = env_values.get("KBDATA_DIR") or settings.KBDATA_DIR or "默认数据目录"
     redis = getattr(request.app.state, "redis", None)
@@ -414,6 +418,7 @@ async def settings_page(request: Request, user: dict = Depends(require_admin)):
         "active_env_profile_id": active_env_profile_id,
         "reverse_proxy_configs": reverse_proxy_configs,
         "active_reverse_proxy_config_id": active_reverse_proxy_config_id,
+        "reverse_proxy_service_state": reverse_proxy_service_state,
         "kbdata_dir_display": kbdata_dir_display,
         "has_management_password": _has_management_password(request, user["username"]),
     })
@@ -591,7 +596,50 @@ async def save_reverse_proxy(request: Request, user: dict = Depends(require_admi
     except Exception as e:
         return JSONResponse({"success": False, "error": str(e)}, status_code=500)
     configs, active_id = list_reverse_proxy_configs()
-    return JSONResponse({"success": True, "config": config, "configs": configs, "active_id": active_id})
+    return JSONResponse({
+        "success": True,
+        "config": config,
+        "configs": configs,
+        "active_id": active_id,
+        "service_state": get_reverse_proxy_service_state(),
+    })
+
+
+@page_router.post("/api/reverse-proxy-configs/apply")
+async def apply_reverse_proxy(request: Request, user: dict = Depends(require_admin)):
+    try:
+        body = await request.json()
+        result = apply_reverse_proxy_config(body)
+    except ValueError as e:
+        return JSONResponse({"success": False, "error": str(e)}, status_code=400)
+    except Exception as e:
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+    configs, active_id = list_reverse_proxy_configs()
+    return JSONResponse({
+        "success": True,
+        "config": result["config"],
+        "configs": configs,
+        "active_id": active_id,
+        "service_state": result["state"],
+    })
+
+
+@page_router.post("/api/reverse-proxy-service")
+async def toggle_reverse_proxy_service(request: Request, user: dict = Depends(require_admin)):
+    try:
+        body = await request.json()
+        state = set_reverse_proxy_service_enabled(bool(body.get("enabled")), body.get("config_id"))
+    except ValueError as e:
+        return JSONResponse({"success": False, "error": str(e)}, status_code=400)
+    except Exception as e:
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+    configs, active_id = list_reverse_proxy_configs()
+    return JSONResponse({
+        "success": True,
+        "configs": configs,
+        "active_id": active_id,
+        "service_state": state,
+    })
 
 
 @page_router.post("/api/reverse-proxy-configs/{config_id}/activate")
@@ -603,7 +651,13 @@ async def activate_reverse_proxy(request: Request, config_id: str, user: dict = 
     except Exception as e:
         return JSONResponse({"success": False, "error": str(e)}, status_code=500)
     configs, active_id = list_reverse_proxy_configs()
-    return JSONResponse({"success": True, "config": config, "configs": configs, "active_id": active_id})
+    return JSONResponse({
+        "success": True,
+        "config": config,
+        "configs": configs,
+        "active_id": active_id,
+        "service_state": get_reverse_proxy_service_state(),
+    })
 
 
 @page_router.post("/api/reverse-proxy-configs/{config_id}/delete")
@@ -615,7 +669,12 @@ async def delete_reverse_proxy(request: Request, config_id: str, user: dict = De
     if not deleted:
         return JSONResponse({"success": False, "error": "反向代理配置不存在或已被删除。"}, status_code=404)
     configs, active_id = list_reverse_proxy_configs()
-    return JSONResponse({"success": True, "configs": configs, "active_id": active_id})
+    return JSONResponse({
+        "success": True,
+        "configs": configs,
+        "active_id": active_id,
+        "service_state": get_reverse_proxy_service_state(),
+    })
 
 
 @page_router.post("/api/management-password")
