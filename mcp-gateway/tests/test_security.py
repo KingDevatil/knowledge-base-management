@@ -25,6 +25,7 @@ from admin_auth import AdminAuth
 from auth import APIKeyAuth
 from markdown_security import sanitize_markdown_html
 from mcp_auth_context import reset_mcp_api_key_info, set_mcp_api_key_info
+from path_permissions import has_path_access, parse_allowed_paths
 from server import MCP_TOOL_METADATA, require_mcp_tool_scope
 from api_routes import health_check
 
@@ -118,6 +119,30 @@ class TestAPIKeyScopeParsing:
     def test_json_encoded_scope_is_accepted(self):
         auth = APIKeyAuth(redis_client=None, api_key_file="unused")  # type: ignore[arg-type]
         assert auth._parse_scope('["read", "write"]') == ["read", "write"]
+
+
+class TestAPIKeyPathPermissions:
+    def test_allowed_paths_parse_json_and_csv(self):
+        assert parse_allowed_paths('["team-a/docs", "/team-b"]') == ["team-a/docs", "team-b"]
+        assert parse_allowed_paths("team-a/docs, /team-b") == ["team-a/docs", "team-b"]
+
+    def test_all_mode_allows_every_path(self):
+        info = _api_key_info(["read"])
+        assert has_path_access(info, "any/path")
+
+    def test_restricted_mode_allows_descendants_only(self):
+        info = APIKeyInfo(
+            key_prefix="sk-test",
+            applicant="tester",
+            scope=["read"],
+            path_mode="restricted",
+            allowed_paths=["team-a/docs"],
+            created_at="2026-01-01T00:00:00Z",
+            expires_at="",
+        )
+        assert has_path_access(info, "team-a/docs")
+        assert has_path_access(info, "team-a/docs/specs")
+        assert not has_path_access(info, "team-a/private")
 
 
 class TestMarkdownSanitizer:

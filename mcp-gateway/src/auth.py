@@ -11,6 +11,7 @@ from fastapi import Request, HTTPException, status
 from config import get_settings
 from models import APIKeyInfo
 from logger import get_logger
+from path_permissions import parse_allowed_paths
 
 logger = get_logger()
 
@@ -43,6 +44,10 @@ class APIKeyAuth:
                 return [raw_scope]
         return ["read"]
 
+    def _path_mode(self, value) -> str:
+        value = str(value or "all").strip().lower()
+        return "restricted" if value == "restricted" else "all"
+
     def _load_keys_from_file(self) -> dict:
         if not os.path.exists(self.api_key_file):
             return {}
@@ -69,6 +74,8 @@ class APIKeyAuth:
                 "applicant_note": info.get("applicant_note", ""),
                 "role": info.get("role", "user"),
                 "scope": json.dumps(self._parse_scope(info.get("scope", ["read"]))),
+                "path_mode": self._path_mode(info.get("path_mode", "all")),
+                "allowed_paths": json.dumps(parse_allowed_paths(info.get("allowed_paths", [])), ensure_ascii=False),
                 "rate_limit": str(info.get("rate_limit", 30)),
                 "status": info.get("status", "active"),
                 "duration": info.get("duration", "7d"),
@@ -198,6 +205,8 @@ class APIKeyAuth:
             applicant_note=info.get("applicant_note", ""),
             role=info.get("role", "user"),
             scope=scope,
+            path_mode=self._path_mode(info.get("path_mode", "all")),
+            allowed_paths=parse_allowed_paths(info.get("allowed_paths", [])),
             rate_limit=rate_limit,
             status=status_val,  # type: ignore
             duration=info.get("duration", "7d"),
@@ -218,6 +227,8 @@ class APIKeyAuth:
         duration: str,
         created_by: str,
         rate_limit: int = 30,
+        path_mode: str = "all",
+        allowed_paths: list[str] | None = None,
     ) -> str:
         """创建新 Key，返回完整 Key（仅展示一次）"""
         settings = get_settings()
@@ -244,6 +255,8 @@ class APIKeyAuth:
             "applicant_note": applicant_note,
             "role": "user",
             "scope": json.dumps(scope),
+            "path_mode": self._path_mode(path_mode),
+            "allowed_paths": json.dumps(parse_allowed_paths(allowed_paths or []), ensure_ascii=False),
             "rate_limit": str(rate_limit),
             "status": "active",
             "duration": duration,
@@ -359,6 +372,8 @@ class APIKeyAuth:
                 "applicant": info.get("applicant", ""),
                 "applicant_note": info.get("applicant_note", ""),
                 "scope": self._parse_scope(info.get("scope", "[\"read\"]")),
+                "path_mode": self._path_mode(info.get("path_mode", "all")),
+                "allowed_paths": parse_allowed_paths(info.get("allowed_paths", [])),
                 "rate_limit": int(info.get("rate_limit", 30)),
                 "status": info.get("status", "active"),
                 "duration": info.get("duration", "7d"),
@@ -383,6 +398,8 @@ class APIKeyAuth:
                 "key_hash": key_hash,
                 **{k: v for k, v in info.items() if k != "scope"},
                 "scope": self._parse_scope(info.get("scope", ["read"])),
+                "path_mode": self._path_mode(info.get("path_mode", "all")),
+                "allowed_paths": parse_allowed_paths(info.get("allowed_paths", [])),
                 "use_count": info.get("use_count", 0),
             })
 

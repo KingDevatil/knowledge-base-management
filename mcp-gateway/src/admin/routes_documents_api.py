@@ -392,6 +392,46 @@ async def document_delete(
     return RedirectResponse(url="/admin/documents", status_code=302)
 
 
+@documents_router.get("/api/documents/{doc_id}/versions")
+async def api_document_versions(
+    request: Request, doc_id: str, user: dict = Depends(require_editor),
+):
+    kb = request.app.state.kb
+    doc = await kb._doc_index_get(doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if not check_path_access(user, doc.get("path", "")):
+        raise HTTPException(status_code=403, detail="No access to this document")
+    return JSONResponse(await request.app.state.tools.list_document_versions(doc_id))
+
+
+@documents_router.post("/api/documents/{doc_id}/versions/{version_id}/restore")
+async def api_document_version_restore(
+    request: Request, doc_id: str, version_id: str, user: dict = Depends(require_editor),
+):
+    kb = request.app.state.kb
+    doc = await kb._doc_index_get(doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if not check_path_access(user, doc.get("path", "")):
+        raise HTTPException(status_code=403, detail="No access to this document")
+    try:
+        version = request.app.state.tools.version_store.get_version(doc_id, version_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Document version not found")
+    if not check_path_access(user, version.get("path", "")):
+        raise HTTPException(status_code=403, detail="No access to this document version")
+    try:
+        result = await request.app.state.tools.restore_document_version(
+            doc_id=doc_id,
+            version_id=version_id,
+            restored_by=user["username"],
+        )
+    except WriteLockError:
+        raise HTTPException(status_code=423, detail="Write lock is busy")
+    return JSONResponse(result)
+
+
 # ---------- 文档重索引 (admin only) ----------
 
 @documents_router.post("/documents/{doc_id}/reindex")

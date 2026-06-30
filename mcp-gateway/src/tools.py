@@ -18,6 +18,8 @@ from helpers import content_hash, content_size_kb
 from tools_reader import KnowledgeToolsReader
 from logger import get_logger
 from ingestion import DocumentIngestionPipeline, IngestionResult
+from document_versions import DocumentVersionStore
+from audit_log import AuditLogger
 
 logger = get_logger()
 
@@ -41,8 +43,25 @@ class KnowledgeTools(KnowledgeToolsReader):
         self.ingestion_tasks: dict[str, dict] = {}
         self.ingestion_task_payloads: dict[str, dict] = {}
         self.cleanup_tasks: dict[str, dict] = {}
+        self.version_store = DocumentVersionStore(self.settings.KBDATA_DIR or "kbdata")
+        self.audit_logger = AuditLogger(self.settings.KBDATA_DIR or "kbdata")
 
     # ---------- 目录管理（需写锁）----------
+
+    async def _snapshot_document_version(self, doc_id: str, reason: str, created_by: str = "system") -> dict | None:
+        try:
+            detail = await self.get_document(doc_id)
+        except Exception:
+            return None
+        return self.version_store.save_version(
+            doc_id=doc_id,
+            title=detail.get("title", ""),
+            content=detail.get("content", ""),
+            path=detail.get("path", ""),
+            tags=detail.get("tags", []),
+            created_by=created_by,
+            reason=reason,
+        )
 
     async def rename_directory(self, old_path: str, new_path: str) -> dict:
         """重命名目录：移动所有子文档（需写锁保护），同步更新空目录记录"""
@@ -410,6 +429,7 @@ class KnowledgeTools(KnowledgeToolsReader):
             )
 
         tags = tags or []
+        await self._snapshot_document_version(doc_id, "before_update", updated_by)
         now = datetime.now(timezone.utc).isoformat()
         size_label = content_size_kb(content)
 
@@ -571,6 +591,7 @@ class KnowledgeTools(KnowledgeToolsReader):
         if not doc_id:
             raise HTTPException(status_code=400, detail="文档 ID 不能为空")
 
+        await self._snapshot_document_version(doc_id, "before_delete", deleted_by)
         chunks = await self.kb.get_document_chunks(doc_id)
         if not chunks:
             raise HTTPException(status_code=404, detail=f"文档 (doc_id={doc_id}) 不存在")
@@ -595,6 +616,109 @@ class KnowledgeTools(KnowledgeToolsReader):
             )
 
         return {"success": True, "doc_id": doc_id, "message": "文档删除成功"}
+
+    async def list_document_versions(self, doc_id: str) -> dict:
+        if not doc_id:
+            raise HTTPException(status_code=400, detail="文档 ID 不能为空")
+        return {"doc_id": doc_id, "versions": self.version_store.list_versions(doc_id)}
+
+    async def restore_document_version(self, doc_id: str, version_id: str, restored_by: str = "system") -> dict:
+        try:
+            version = self.version_store.get_version(doc_id, version_id)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="文档版本不存在")
+        await self._snapshot_document_version(doc_id, "before_restore", restored_by)
+        result = await self.update_document(
+            doc_id=doc_id,
+            title=version.get("title", ""),
+            content=version.get("content", ""),
+            path=version.get("path", ""),
+            tags=version.get("tags", []),
+            updated_by=restored_by,
+        )
+        result["restored_version_id"] = version_id
+        return result
+
+    async def find_similar_documents(self, title: str, content: str, path: str = "", top_k: int = 5) -> dict:
+        matches: list[dict] = []
+        content_sha = content_hash(content)
+        docs = await self.kb._doc_index_all()
+        for doc in docs:
+            reason = ""
+            similarity = 0.0
+            if path == doc.get("path", "") and title.strip().lower() == str(doc.get("title", "")).strip().lower():
+                reason = "title_path"
+                similarity = 1.0
+            if doc.get("content_hash") == content_sha:
+                reason = "content_hash"
+                similarity = 1.0
+            if similarity > 0:
+                matches.append({
+                    "doc_id": doc.get("doc_id", ""),
+                    "title": doc.get("title", ""),
+                    "path": doc.get("path", ""),
+                    "similarity": similarity,
+                    "reason": reason,
+                })
+        if content.strip():
+            try:
+                search = await self.search_knowledge(content[:1000], top_k=top_k, filter_path=path)
+                seen = {item["doc_id"] for item in matches}
+                for item in search.get("results", []):
+                    doc_id = item.get("doc_id", "")
+                    if doc_id and doc_id not in seen:
+                        seen.add(doc_id)
+                        matches.append({
+                            "doc_id": doc_id,
+                            "title": item.get("title", ""),
+                            "path": item.get("path", ""),
+                            "similarity": item.get("score", 0),
+                            "reason": "semantic",
+                        })
+            except Exception:
+                pass
+        matches.sort(key=lambda item: item.get("similarity", 0), reverse=True)
+        return {"matches": matches[:top_k], "total": min(len(matches), top_k)}
+
+    async def upsert_document(
+        self,
+        title: str,
+        content: str,
+        path: str = "",
+        tags: list[str] | None = None,
+        match_strategy: str = "title_path",
+        on_conflict: str = "update",
+        created_by: str = "system",
+    ) -> dict:
+        similar = await self.find_similar_documents(title, content, path, top_k=5)
+        matches = similar.get("matches", [])
+        target = None
+        for match in matches:
+            if match_strategy == "title_path" and match.get("reason") == "title_path":
+                target = match
+                break
+            if match_strategy == "hash" and match.get("reason") == "content_hash":
+                target = match
+                break
+            if match_strategy == "semantic" and float(match.get("similarity", 0)) >= 0.9:
+                target = match
+                break
+        if not target:
+            result = await self.add_document(title, content, path, tags or [], created_by)
+            result["action"] = "created"
+            result["similar_matches"] = matches
+            return result
+        if on_conflict == "skip":
+            return {"success": True, "action": "skipped", "doc_id": target.get("doc_id"), "similar_matches": matches}
+        if on_conflict == "create_new":
+            result = await self.add_document(title, content, path, tags or [], created_by)
+            result["action"] = "created_new"
+            result["similar_matches"] = matches
+            return result
+        result = await self.update_document(target.get("doc_id", ""), title, content, path, tags or [], created_by)
+        result["action"] = "updated"
+        result["similar_matches"] = matches
+        return result
 
     async def reindex_document(self, doc_id: str) -> dict:
         """重新切片 & 向量化单个文档"""

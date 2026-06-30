@@ -9,6 +9,8 @@ from config import get_settings
 from kb_graph import KnowledgeGraphBuilder
 from mcp_auth_context import get_mcp_api_key_info
 from tools import KnowledgeTools
+from path_permissions import has_path_access
+from audit_log import actor_from_api_key
 
 
 MCP_TOOL_METADATA = {
@@ -22,6 +24,10 @@ MCP_TOOL_METADATA = {
     "rename_directory": {"required_scope": "write", "category": "write", "risk_level": "high"},
     "delete_directory": {"required_scope": "write", "category": "write", "risk_level": "high"},
     "reindex_document": {"required_scope": "write", "category": "write", "risk_level": "medium"},
+    "list_document_versions": {"required_scope": "read", "category": "read", "risk_level": "low"},
+    "restore_document_version": {"required_scope": "write", "category": "write", "risk_level": "high"},
+    "find_similar_documents": {"required_scope": "read", "category": "read", "risk_level": "low"},
+    "upsert_document": {"required_scope": "write", "category": "write", "risk_level": "high"},
     "build_knowledge_graph": {"required_scope": "write", "category": "admin", "risk_level": "medium"},
 }
 
@@ -174,6 +180,57 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
                 },
             ),
             Tool(
+                name="list_document_versions",
+                description="List document version snapshots for rollback.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {"doc_id": {"type": "string", "description": "Document ID"}},
+                    "required": ["doc_id"],
+                },
+            ),
+            Tool(
+                name="restore_document_version",
+                description="Restore a document to a previous version snapshot.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "doc_id": {"type": "string", "description": "Document ID"},
+                        "version_id": {"type": "string", "description": "Version ID"},
+                    },
+                    "required": ["doc_id", "version_id"],
+                },
+            ),
+            Tool(
+                name="find_similar_documents",
+                description="Find same-title, same-content, or semantically similar documents before writing.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string"},
+                        "content": {"type": "string"},
+                        "path": {"type": "string", "default": ""},
+                        "top_k": {"type": "integer", "default": 5},
+                    },
+                    "required": ["title", "content"],
+                },
+            ),
+            Tool(
+                name="upsert_document",
+                description="Create or update a document, preferring existing same-path same-title documents.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string"},
+                        "content": {"type": "string"},
+                        "path": {"type": "string", "default": ""},
+                        "tags": {"type": "array", "items": {"type": "string"}, "default": []},
+                        "match_strategy": {"type": "string", "default": "title_path"},
+                        "on_conflict": {"type": "string", "default": "update"},
+                    },
+                    "required": ["title", "content"],
+                },
+            ),
+            Tool(
                 name="build_knowledge_graph",
                 description="构建知识图谱：分析文档关系（标签共享、目录结构、语义相似），生成交互式可视化图谱",
                 inputSchema={
@@ -217,23 +274,108 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
         ),
         "delete_directory": lambda a, t: t.delete_directory(path=a.get("path", "")),
         "reindex_document": lambda a, t: t.reindex_document(doc_id=a.get("doc_id", "")),
+        "list_document_versions": lambda a, t: t.list_document_versions(doc_id=a.get("doc_id", "")),
+        "restore_document_version": lambda a, t: t.restore_document_version(
+            doc_id=a.get("doc_id", ""), version_id=a.get("version_id", ""), restored_by="mcp"
+        ),
+        "find_similar_documents": lambda a, t: t.find_similar_documents(
+            title=a.get("title", ""), content=a.get("content", ""),
+            path=a.get("path", ""), top_k=a.get("top_k", 5),
+        ),
+        "upsert_document": lambda a, t: t.upsert_document(
+            title=a.get("title", ""), content=a.get("content", ""),
+            path=a.get("path", ""), tags=a.get("tags") or [],
+            match_strategy=a.get("match_strategy", "title_path"),
+            on_conflict=a.get("on_conflict", "update"), created_by="mcp",
+        ),
         "build_knowledge_graph": lambda a, t: KnowledgeGraphBuilder(
             kb=t.kb, embedder=getattr(t, "embedder", None)
         ).build(semantic_threshold=float(a.get("semantic_threshold", 0.0))),
     }
 
+    async def _require_mcp_path_access(name: str, arguments: dict, api_key_info) -> None:
+        if api_key_info is None:
+            return
+        path = ""
+        if name in {"search_knowledge", "list_documents", "add_document", "find_similar_documents", "upsert_document"}:
+            path = arguments.get("filter_path") or arguments.get("path") or ""
+        elif name == "update_document":
+            doc = await tools.kb._doc_index_get(arguments.get("doc_id", ""))
+            old_path = str((doc or {}).get("path", ""))
+            new_path = arguments.get("path") or old_path
+            if not has_path_access(api_key_info, old_path) or not has_path_access(api_key_info, new_path):
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="API Key has no access to this path")
+            return
+        elif name in {"get_document", "delete_document", "reindex_document", "list_document_versions", "restore_document_version"}:
+            doc = await tools.kb._doc_index_get(arguments.get("doc_id", ""))
+            path = str((doc or {}).get("path", ""))
+            if name == "restore_document_version":
+                try:
+                    version = tools.version_store.get_version(arguments.get("doc_id", ""), arguments.get("version_id", ""))
+                    version_path = str(version.get("path", ""))
+                except Exception:
+                    version_path = path
+                if not has_path_access(api_key_info, path) or not has_path_access(api_key_info, version_path):
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="API Key has no access to this path")
+                return
+        elif name in {"rename_directory", "delete_directory"}:
+            path = arguments.get("old_path") or arguments.get("path") or ""
+        if not has_path_access(api_key_info, path):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="API Key has no access to this path")
+
+    def _audit_arguments(arguments: dict) -> dict:
+        safe_args = dict(arguments)
+        for field in ("content", "markdown_content"):
+            if field in safe_args:
+                safe_args[f"{field}_length"] = len(str(safe_args.get(field) or ""))
+                safe_args[field] = "[redacted]"
+        return safe_args
+
     @server.call_tool()
     async def call_tool(name: str, arguments: Any) -> list[TextContent]:
+        arguments = arguments or {}
         handler = _DISPATCH.get(name)
         if handler is None:
             return _make_result({"error": f"未知工具: {name}"})
+        api_key_info = get_mcp_api_key_info()
+        actor_type, actor_id = actor_from_api_key(api_key_info)
         try:
             require_mcp_tool_scope(name)
+            await _require_mcp_path_access(name, arguments, api_key_info)
             result = await handler(arguments, tools)
+            meta = MCP_TOOL_METADATA.get(name, {})
+            if meta.get("category") != "read":
+                tools.audit_logger.log(
+                    action=f"mcp.{name}",
+                    actor_type=actor_type,
+                    actor=actor_id,
+                    target_type="mcp_tool",
+                    target_id=str(arguments.get("doc_id") or arguments.get("path") or arguments.get("title") or ""),
+                    detail={"arguments": _audit_arguments(arguments), "risk_level": meta.get("risk_level", "")},
+                    success=True,
+                )
             return _make_result(result)
         except HTTPException as e:
+            tools.audit_logger.log(
+                action=f"mcp.{name}",
+                actor_type=actor_type,
+                actor=actor_id,
+                target_type="mcp_tool",
+                target_id=str(arguments.get("doc_id") or arguments.get("path") or arguments.get("title") or ""),
+                detail={"arguments": _audit_arguments(arguments), "status_code": e.status_code, "error": e.detail},
+                success=False,
+            )
             return _make_result({"error": e.detail, "status_code": e.status_code})
         except Exception as e:
+            tools.audit_logger.log(
+                action=f"mcp.{name}",
+                actor_type=actor_type,
+                actor=actor_id,
+                target_type="mcp_tool",
+                target_id=str(arguments.get("doc_id") or arguments.get("path") or arguments.get("title") or ""),
+                detail={"arguments": _audit_arguments(arguments), "error": str(e)},
+                success=False,
+            )
             return _make_result({"error": str(e)})
 
     return server

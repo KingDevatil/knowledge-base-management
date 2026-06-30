@@ -14,6 +14,7 @@ from directory_tree import DirectoryTree
 from .helpers import templates, require_admin, settings
 from admin_auth import is_admin_role
 from backup_manager import BackupManager
+from path_permissions import parse_allowed_paths
 
 admin_misc_router = APIRouter()
 
@@ -73,6 +74,35 @@ async def api_dir_delete(request: Request, body: DeleteDirRequest, user: dict = 
 
 # ---------- API Key 管理 (admin only) ----------
 
+@admin_misc_router.get("/api/audit-logs")
+async def api_audit_logs(
+    request: Request,
+    action: str = "",
+    actor: str = "",
+    target_type: str = "",
+    success: str = "",
+    limit: int = 100,
+    offset: int = 0,
+    user: dict = Depends(require_admin),
+):
+    logger = getattr(request.app.state.tools, "audit_logger", None)
+    if not logger:
+        return JSONResponse({"logs": [], "total": 0, "limit": limit, "offset": offset})
+    success_filter = None
+    if success.lower() in {"true", "1", "yes"}:
+        success_filter = True
+    elif success.lower() in {"false", "0", "no"}:
+        success_filter = False
+    return JSONResponse(logger.list_logs(
+        action=action,
+        actor=actor,
+        target_type=target_type,
+        success=success_filter,
+        limit=limit,
+        offset=offset,
+    ))
+
+
 @admin_misc_router.post("/api-keys/create")
 async def api_key_create(
     request: Request,
@@ -80,6 +110,8 @@ async def api_key_create(
     applicant_note: str = Form(""),
     scope_read: bool = Form(False),
     scope_write: bool = Form(False),
+    path_mode: str = Form("all"),
+    allowed_paths: str = Form(""),
     duration: str = Form("30"),
     user: dict = Depends(require_admin),
 ):
@@ -94,6 +126,8 @@ async def api_key_create(
 
     if duration in ("forever", "permanent"):
         dur_value = "permanent"
+    elif duration.endswith("d") and duration[:-1].isdigit():
+        dur_value = duration
     else:
         try:
             days = int(duration)
@@ -106,6 +140,8 @@ async def api_key_create(
         applicant=applicant,
         applicant_note=applicant_note,
         scope=scope,
+        path_mode=path_mode,
+        allowed_paths=parse_allowed_paths(allowed_paths.replace("\n", ",")),
         duration=dur_value,
         created_by=user["username"],
     )
@@ -113,6 +149,8 @@ async def api_key_create(
     return templates.TemplateResponse(request, "api_key_create.html", {
         "request": request, "admin": user, "created_key": api_key, "applicant": applicant,
         "success": True, "scope": scope,
+        "path_mode": path_mode,
+        "allowed_paths": parse_allowed_paths(allowed_paths.replace("\n", ",")),
         "duration": "长期有效" if dur_value == "permanent" else
                     f"{dur_value[:-1]} 天" if dur_value.endswith("d") else
                     str(dur_value),

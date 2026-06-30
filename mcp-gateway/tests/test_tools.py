@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime, timezone
 
 from helpers import content_hash, content_size_kb
+from document_versions import DocumentVersionStore
 from tools_reader import KnowledgeToolsReader
 from tools import KnowledgeTools
 
@@ -653,6 +654,74 @@ class TestKnowledgeToolsUpdate:
         cleanup_result = tools.retry_cleanup_task(cleanup_task_id)
         assert cleanup_result["success"] is True
         assert tools.cleanup_tasks[cleanup_task_id]["status"] == "succeeded"
+
+
+class TestKnowledgeToolsVersionsAndUpsert:
+    @pytest.mark.asyncio
+    async def test_update_creates_version_and_restore_rolls_back(self, tmp_path):
+        tools, kb, store = _make_tools()
+        tools.version_store = DocumentVersionStore(str(tmp_path))
+        added = await tools.add_document(title="Versioned", content="# V1", path="docs", tags=["one"])
+
+        await tools.update_document(
+            doc_id=added["doc_id"],
+            title="Versioned",
+            content="# V2",
+            path="docs",
+            tags=["two"],
+            updated_by="tester",
+        )
+
+        versions = await tools.list_document_versions(added["doc_id"])
+        assert len(versions["versions"]) == 1
+        assert versions["versions"][0]["reason"] == "before_update"
+
+        restored = await tools.restore_document_version(
+            added["doc_id"],
+            versions["versions"][0]["version_id"],
+            restored_by="tester",
+        )
+        assert restored["success"] is True
+        doc = await tools.get_document(added["doc_id"])
+        assert doc["content"].strip() == "# V1"
+        assert doc["tags"] == ["one"]
+
+    @pytest.mark.asyncio
+    async def test_upsert_updates_existing_title_path_document(self, tmp_path):
+        tools, kb, store = _make_tools()
+        tools.version_store = DocumentVersionStore(str(tmp_path))
+        added = await tools.add_document(title="Same", content="# Old", path="docs")
+
+        result = await tools.upsert_document(
+            title="Same",
+            content="# New",
+            path="docs",
+            tags=["new"],
+            match_strategy="title_path",
+            on_conflict="update",
+            created_by="tester",
+        )
+
+        assert result["action"] == "updated"
+        assert result["doc_id"] == added["doc_id"]
+        doc = await tools.get_document(added["doc_id"])
+        assert doc["content"].strip() == "# New"
+        assert doc["tags"] == ["new"]
+
+    @pytest.mark.asyncio
+    async def test_search_result_has_citation_and_context(self):
+        tools, kb, store = _make_tools()
+        added = await tools.add_document(title="Cited", content="# Heading\n\nBody text", path="docs")
+
+        result = await tools.search_knowledge("Heading", top_k=1)
+
+        assert result["results"]
+        item = result["results"][0]
+        assert item["doc_id"] == added["doc_id"]
+        assert item["citation"] == "docs:Cited#chunk-0"
+        assert "excerpt" in item
+        assert "context_before" in item
+        assert "context_after" in item
 
 
 class TestKnowledgeToolsDelete:

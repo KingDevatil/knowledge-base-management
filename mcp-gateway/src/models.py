@@ -9,6 +9,8 @@ class APIKeyInfo(BaseModel):
     applicant_note: str = ""
     role: str = "user"
     scope: list[str] = Field(default_factory=lambda: ["read"])
+    path_mode: Literal["all", "restricted"] = "all"
+    allowed_paths: list[str] = Field(default_factory=list)
     rate_limit: int = 30
     status: Literal["active", "expired", "revoked"] = "active"
     duration: str = "7d"
@@ -68,6 +70,23 @@ class UpdateDocumentRequest(BaseModel):
     path: str = Field(default="", max_length=500)
     tags: list[str] = Field(default_factory=list)
     updated_by: str = Field(default="api", max_length=100)
+
+
+class SimilarDocumentsRequest(BaseModel):
+    title: str = Field(default="", max_length=500)
+    content: str = Field(..., min_length=1, max_length=MAX_CONTENT_LENGTH)
+    path: str = Field(default="", max_length=500)
+    top_k: int = Field(default=5, ge=1, le=20)
+
+
+class UpsertDocumentRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=500)
+    content: str = Field(..., min_length=1, max_length=MAX_CONTENT_LENGTH)
+    path: str = Field(default="", max_length=500)
+    tags: list[str] = Field(default_factory=list)
+    match_strategy: Literal["title_path", "hash", "semantic"] = "title_path"
+    on_conflict: Literal["update", "skip", "create_new"] = "update"
+    created_by: str = Field(default="api", max_length=100)
 
 
 class ReindexByPathRequest(BaseModel):

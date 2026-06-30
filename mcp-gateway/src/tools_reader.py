@@ -90,10 +90,34 @@ class KnowledgeToolsReader:
 
         return {
             "query": query,
-            "results": results,
+            "results": [await self._enrich_search_result(item) for item in results],
             "total": len(results),
             "retrieval_errors": self.retrieval_pipeline.last_errors,
         }
+
+    async def _enrich_search_result(self, item: dict) -> dict:
+        doc_id = item.get("doc_id", "")
+        chunk_index = int(item.get("chunk_index", 0) or 0)
+        chunks = []
+        doc_info = {}
+        if doc_id:
+            try:
+                chunks = await self.kb.get_document_chunks(doc_id)
+                doc_info = await self.kb._doc_index_get(doc_id) or {}
+            except Exception:
+                chunks = []
+        by_index = {
+            int((chunk.get("metadata") or {}).get("chunk_index", 0)): chunk
+            for chunk in chunks
+        }
+        enriched = dict(item)
+        enriched.setdefault("excerpt", item.get("content", ""))
+        enriched["context_before"] = by_index.get(chunk_index - 1, {}).get("content", "")
+        enriched["context_after"] = by_index.get(chunk_index + 1, {}).get("content", "")
+        enriched["updated_at"] = doc_info.get("updated_at", "")
+        enriched["tags"] = doc_info.get("tags", [])
+        enriched["citation"] = f"{item.get('path') or '/'}:{item.get('title', '')}#chunk-{chunk_index}"
+        return enriched
 
     async def list_documents(
         self,
