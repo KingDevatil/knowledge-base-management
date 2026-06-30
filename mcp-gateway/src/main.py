@@ -27,6 +27,7 @@ from middleware import request_logging_middleware, csrf_middleware
 from mcp_auth_context import set_mcp_api_key_info, reset_mcp_api_key_info
 from api_routes import api_router
 from ddns import ddns_update_loop
+from backup_manager import BackupManager, backup_scheduler_loop
 from mcp.server.sse import SseServerTransport
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
@@ -141,6 +142,12 @@ async def lifespan(app: FastAPI):
     app.state.ddns_task = asyncio.create_task(
         ddns_update_loop(app.state.redis, app.state.ddns_stop_event)
     )
+    backup_base = settings.KBDATA_DIR or os.path.join(os.getcwd(), "kbdata")
+    app.state.backup_manager = BackupManager(backup_base, settings.APP_VERSION, redis_client=app.state.redis)
+    app.state.backup_stop_event = asyncio.Event()
+    app.state.backup_task = asyncio.create_task(
+        backup_scheduler_loop(app.state.backup_manager, app.state.backup_stop_event)
+    )
 
     # 启动健康检查
     startup_checks = {}
@@ -190,6 +197,12 @@ async def lifespan(app: FastAPI):
     app.state.ddns_task.cancel()
     try:
         await app.state.ddns_task
+    except asyncio.CancelledError:
+        pass
+    app.state.backup_stop_event.set()
+    app.state.backup_task.cancel()
+    try:
+        await app.state.backup_task
     except asyncio.CancelledError:
         pass
     await app.state.redis.close()

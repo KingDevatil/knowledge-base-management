@@ -489,6 +489,105 @@
                         </div>
                     </div>
 
+                    <div class="setting-card p-6">
+                        <div class="flex flex-wrap items-start justify-between gap-3 mb-5">
+                            <div>
+                                <h2 class="text-lg font-semibold text-slate-900 dark:text-white mb-1">系统备份</h2>
+                                <p class="text-sm text-slate-500 dark:text-slate-400">分别备份配置、数据或完整系统，可手动执行，也可启用自动备份。</p>
+                            </div>
+                            <button type="button" onclick="loadBackups()" class="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-300">
+                                <i data-lucide="refresh-cw" class="w-4 h-4"></i>刷新
+                            </button>
+                        </div>
+
+                        <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5">
+                            <div>
+                                <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">备份类型</label>
+                                <select id="backup-kind" class="setting-input">
+                                    <option value="config">配置备份</option>
+                                    <option value="data">数据备份</option>
+                                    <option value="full">完整备份</option>
+                                </select>
+                            </div>
+                            <label class="flex items-center gap-3 mt-7">
+                                <input id="backup-include-secrets" type="checkbox" class="w-4 h-4 accent-brand-600" checked>
+                                <span class="text-sm text-slate-700 dark:text-slate-300">包含管理员账号、API Key、DDNS Token 等敏感配置</span>
+                            </label>
+                            <div class="flex items-end gap-2">
+                                <button type="button" onclick="createBackup()" class="inline-flex items-center gap-2 px-4 py-2.5 bg-brand-600 hover:bg-brand-700 text-white text-sm font-semibold rounded-xl">
+                                    <i data-lucide="archive" class="w-4 h-4"></i>立即备份
+                                </button>
+                            </div>
+                        </div>
+                        <p id="backup-msg" class="text-sm mb-4"></p>
+                        <div id="reindex-panel" class="hidden mb-5 rounded-xl border border-blue-200 dark:border-blue-500/20 bg-blue-50 dark:bg-blue-500/10 p-4">
+                            <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+                                <div>
+                                    <p class="text-sm font-semibold text-slate-900 dark:text-slate-100">向量索引重建</p>
+                                    <p id="reindex-detail" class="text-xs text-slate-500 dark:text-slate-400">恢复后可重新构建向量索引。</p>
+                                </div>
+                                <button type="button" onclick="startReindex()" class="inline-flex items-center gap-2 px-3 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-semibold rounded-lg">
+                                    <i data-lucide="refresh-cw" class="w-4 h-4"></i>立即重建索引
+                                </button>
+                            </div>
+                            <div class="flex items-center justify-between mb-2">
+                                <span id="reindex-stage" class="text-sm text-slate-700 dark:text-slate-300">等待开始</span>
+                                <span id="reindex-percent" class="text-sm text-slate-500">0%</span>
+                            </div>
+                            <div class="h-2 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
+                                <div id="reindex-progress-bar" class="h-full bg-brand-600 rounded-full" style="width:0%"></div>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 lg:grid-cols-6 gap-4 mb-5 rounded-xl border border-slate-200 dark:border-slate-700 p-4">
+                            <label class="flex items-center gap-3">
+                                <input id="backup-auto-enabled" type="checkbox" class="w-4 h-4 accent-brand-600">
+                                <span class="text-sm font-medium text-slate-700 dark:text-slate-300">自动备份</span>
+                            </label>
+                            <div class="space-y-2">
+                                <label class="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+                                    <input id="backup-config-enabled" type="checkbox" class="w-4 h-4 accent-brand-600" checked>配置
+                                </label>
+                                <label class="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+                                    <input id="backup-data-enabled" type="checkbox" class="w-4 h-4 accent-brand-600">数据
+                                </label>
+                                <label class="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+                                    <input id="backup-full-enabled" type="checkbox" class="w-4 h-4 accent-brand-600">完整
+                                </label>
+                            </div>
+                            <div>
+                                <label class="block text-xs text-slate-500 dark:text-slate-400 mb-1">配置间隔(小时)</label>
+                                <input id="backup-config-hours" type="number" min="1" class="setting-input" value="24">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-slate-500 dark:text-slate-400 mb-1">数据间隔(小时)</label>
+                                <input id="backup-data-hours" type="number" min="1" class="setting-input" value="168">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-slate-500 dark:text-slate-400 mb-1">保留份数</label>
+                                <input id="backup-retention-count" type="number" min="1" class="setting-input" value="7">
+                            </div>
+                            <div class="flex items-end">
+                                <button type="button" onclick="saveBackupPolicy()" class="w-full px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-300">保存策略</button>
+                            </div>
+                        </div>
+
+                        <div class="overflow-x-auto">
+                            <table class="ddns-table">
+                                <thead>
+                                    <tr>
+                                        <th>类型</th>
+                                        <th>创建时间</th>
+                                        <th>大小</th>
+                                        <th>敏感配置</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="backup-table"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
                     <div class="setting-card p-6 border-red-200 dark:border-red-500/20">
                         <h2 class="text-lg font-semibold text-red-700 dark:text-red-400 mb-1">危险操作</h2>
                         <p class="text-sm text-slate-500 dark:text-slate-400 mb-5">以下操作不可恢复，请谨慎使用</p>
@@ -503,6 +602,63 @@
                 </div>
             </section>
         </main>
+    </div>
+</div>
+
+<div id="restore-modal" class="ddns-modal fixed inset-0 z-50 items-center justify-center bg-slate-900/40 px-4">
+    <div class="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-2xl">
+        <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-800">
+            <h3 class="text-lg font-semibold text-slate-900 dark:text-white">恢复备份</h3>
+            <button type="button" onclick="closeRestoreModal()" class="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200">
+                <i data-lucide="x" class="w-5 h-5"></i>
+            </button>
+        </div>
+        <div class="p-6 space-y-5">
+            <input type="hidden" id="restore-backup-id">
+            <input type="hidden" id="restore-backup-kind">
+            <div class="rounded-xl border border-amber-200 bg-amber-50 dark:bg-amber-500/10 dark:border-amber-500/20 p-4 text-sm text-amber-800 dark:text-amber-200">
+                恢复前会先创建一份恢复前备份。配置恢复固定为覆盖替换；知识库数据可选择覆盖或合并。
+            </div>
+            <label class="flex items-center gap-3">
+                <input id="restore-config" type="checkbox" class="w-4 h-4 accent-brand-600" checked>
+                <span class="text-sm font-medium text-slate-700 dark:text-slate-300">恢复配置（固定覆盖替换）</span>
+            </label>
+            <div>
+                <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">知识库数据恢复方式</label>
+                <select id="restore-data-mode" class="setting-input">
+                    <option value="none">不恢复知识库数据</option>
+                    <option value="overwrite">覆盖当前知识库数据</option>
+                    <option value="merge" selected>合并到当前知识库数据</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">合并冲突处理</label>
+                <select id="restore-conflict-policy" class="setting-input">
+                    <option value="skip">跳过已有文件</option>
+                    <option value="overwrite">覆盖已有文件</option>
+                    <option value="rename">自动重命名</option>
+                </select>
+            </div>
+            <label class="flex items-center gap-3">
+                <input id="restore-pre-backup" type="checkbox" class="w-4 h-4 accent-brand-600" checked>
+                <span class="text-sm text-slate-700 dark:text-slate-300">恢复前自动创建保护备份</span>
+            </label>
+            <div id="restore-progress" class="hidden rounded-xl border border-slate-200 dark:border-slate-700 p-4">
+                <div class="flex items-center justify-between mb-2">
+                    <span id="restore-progress-title" class="text-sm font-medium text-slate-700 dark:text-slate-300">等待恢复</span>
+                    <span id="restore-progress-percent" class="text-sm text-slate-500">0%</span>
+                </div>
+                <div class="h-2 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
+                    <div id="restore-progress-bar" class="h-full bg-brand-600 rounded-full" style="width:0%"></div>
+                </div>
+                <p id="restore-progress-detail" class="mt-2 text-xs text-slate-500 dark:text-slate-400"></p>
+            </div>
+            <p id="restore-msg" class="text-sm"></p>
+            <div class="flex justify-end gap-3">
+                <button type="button" onclick="closeRestoreModal()" class="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-300">取消</button>
+                <button type="button" onclick="startRestore()" class="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-sm font-semibold">开始恢复</button>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -1359,7 +1515,274 @@ async function restartService() {
     }
 }
 
+function formatBackupSize(bytes) {
+    let value = Number(bytes || 0);
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let index = 0;
+    while (value >= 1024 && index < units.length - 1) {
+        value = value / 1024;
+        index += 1;
+    }
+    return `${value.toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
+}
+
+function backupKindLabel(kind) {
+    return {config: '配置', data: '数据', full: '完整'}[kind] || kind;
+}
+
+function renderBackupTable(backups) {
+    const tbody = document.getElementById('backup-table');
+    if (!tbody) return;
+    if (!backups.length) {
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center text-slate-400 py-6">暂无备份</td></tr>';
+        return;
+    }
+    tbody.innerHTML = backups.map(item => `
+        <tr>
+            <td class="text-slate-700 dark:text-slate-300">${backupKindLabel(item.kind)}</td>
+            <td class="text-slate-600 dark:text-slate-400">${item.created_at || '-'}</td>
+            <td class="text-slate-600 dark:text-slate-400">${formatBackupSize(item.size_bytes)}</td>
+            <td class="text-slate-600 dark:text-slate-400">${item.include_secrets ? '包含' : '不包含'}</td>
+            <td>
+                <div class="flex gap-2">
+                    <button type="button" onclick="openRestoreModal('${item.backup_id}', '${item.kind}')" class="text-emerald-600 hover:text-emerald-700 text-sm">恢复</button>
+                    <a href="/admin/api/backups/${item.backup_id}/download" class="text-brand-600 hover:text-brand-700 text-sm">下载</a>
+                    <button type="button" onclick="deleteBackup('${item.backup_id}')" class="text-red-600 hover:text-red-700 text-sm">删除</button>
+                </div>
+            </td>
+        </tr>
+    `).join('');
+}
+
+function applyBackupPolicy(policy) {
+    document.getElementById('backup-auto-enabled').checked = !!policy.enabled;
+    document.getElementById('backup-config-enabled').checked = policy.config_enabled !== false;
+    document.getElementById('backup-data-enabled').checked = !!policy.data_enabled;
+    document.getElementById('backup-full-enabled').checked = !!policy.full_enabled;
+    document.getElementById('backup-config-hours').value = policy.config_interval_hours || 24;
+    document.getElementById('backup-data-hours').value = policy.data_interval_hours || 168;
+    document.getElementById('backup-retention-count').value = policy.retention_count || 7;
+    document.getElementById('backup-include-secrets').checked = policy.include_secrets !== false;
+}
+
+async function loadBackups() {
+    const msg = document.getElementById('backup-msg');
+    try {
+        const [backupResp, policyResp] = await Promise.all([
+            fetch('/admin/api/backups'),
+            fetch('/admin/api/backups/policy'),
+        ]);
+        const backupResult = await backupResp.json();
+        const policy = await policyResp.json();
+        renderBackupTable(backupResult.backups || []);
+        applyBackupPolicy(policy);
+        if (msg && !msg.textContent) msg.className = 'text-sm mb-4';
+    } catch (err) {
+        if (msg) {
+            msg.textContent = `加载备份信息失败: ${err.message}`;
+            msg.className = 'text-sm mb-4 text-red-600';
+        }
+    }
+}
+
+async function createBackup() {
+    const msg = document.getElementById('backup-msg');
+    msg.textContent = '备份任务已提交...';
+    msg.className = 'text-sm mb-4 text-slate-500';
+    const resp = await fetch('/admin/api/backups', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            kind: document.getElementById('backup-kind').value,
+            include_secrets: document.getElementById('backup-include-secrets').checked,
+        }),
+    });
+    const task = await resp.json();
+    if (!resp.ok) {
+        msg.textContent = task.detail || '创建备份失败';
+        msg.className = 'text-sm mb-4 text-red-600';
+        return;
+    }
+    pollBackupTask(task.task_id);
+}
+
+async function pollBackupTask(taskId) {
+    const msg = document.getElementById('backup-msg');
+    const resp = await fetch(`/admin/api/backups/tasks/${taskId}`);
+    const task = await resp.json();
+    if (task.status === 'completed') {
+        msg.textContent = '备份完成';
+        msg.className = 'text-sm mb-4 text-emerald-600';
+        loadBackups();
+        return;
+    }
+    if (task.status === 'failed') {
+        msg.textContent = task.error || '备份失败';
+        msg.className = 'text-sm mb-4 text-red-600';
+        return;
+    }
+    msg.textContent = '备份进行中...';
+    setTimeout(() => pollBackupTask(taskId), 1500);
+}
+
+async function saveBackupPolicy() {
+    const msg = document.getElementById('backup-msg');
+    const resp = await fetch('/admin/api/backups/policy', {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            enabled: document.getElementById('backup-auto-enabled').checked,
+            config_enabled: document.getElementById('backup-config-enabled').checked,
+            data_enabled: document.getElementById('backup-data-enabled').checked,
+            full_enabled: document.getElementById('backup-full-enabled').checked,
+            config_interval_hours: document.getElementById('backup-config-hours').value,
+            data_interval_hours: document.getElementById('backup-data-hours').value,
+            retention_count: document.getElementById('backup-retention-count').value,
+            include_secrets: document.getElementById('backup-include-secrets').checked,
+        }),
+    });
+    const result = await resp.json();
+    if (resp.ok) {
+        applyBackupPolicy(result);
+        msg.textContent = '自动备份策略已保存';
+        msg.className = 'text-sm mb-4 text-emerald-600';
+    } else {
+        msg.textContent = result.detail || '保存策略失败';
+        msg.className = 'text-sm mb-4 text-red-600';
+    }
+}
+
+async function deleteBackup(backupId) {
+    if (!confirm('确定删除这个备份吗？')) return;
+    const resp = await fetch(`/admin/api/backups/${backupId}`, {method: 'DELETE'});
+    if (resp.ok) {
+        loadBackups();
+    } else {
+        alert('删除备份失败');
+    }
+}
+
+function openRestoreModal(backupId, kind) {
+    document.getElementById('restore-backup-id').value = backupId;
+    document.getElementById('restore-backup-kind').value = kind;
+    document.getElementById('restore-msg').textContent = '';
+    document.getElementById('restore-progress').classList.add('hidden');
+    document.getElementById('restore-config').checked = kind !== 'data';
+    document.getElementById('restore-config').disabled = kind === 'data';
+    document.getElementById('restore-data-mode').value = kind === 'config' ? 'none' : 'merge';
+    document.getElementById('restore-data-mode').disabled = kind === 'config';
+    document.getElementById('restore-modal').classList.add('open');
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+function closeRestoreModal() {
+    document.getElementById('restore-modal').classList.remove('open');
+}
+
+function updateRestoreProgress(task) {
+    document.getElementById('restore-progress').classList.remove('hidden');
+    const progress = task.progress || 0;
+    document.getElementById('restore-progress-bar').style.width = `${progress}%`;
+    document.getElementById('restore-progress-percent').textContent = `${progress}%`;
+    document.getElementById('restore-progress-title').textContent = `阶段：${task.stage || task.status}`;
+    document.getElementById('restore-progress-detail').textContent =
+        `已处理 ${task.processed || 0}/${task.total || 0}${task.current ? `，当前：${task.current}` : ''}`;
+}
+
+async function startRestore() {
+    const backupId = document.getElementById('restore-backup-id').value;
+    const dataMode = document.getElementById('restore-data-mode').value;
+    const msg = document.getElementById('restore-msg');
+    if (!document.getElementById('restore-config').checked && dataMode === 'none') {
+        msg.textContent = '请至少选择恢复配置或知识库数据';
+        msg.className = 'text-sm text-red-600';
+        return;
+    }
+    if (!confirm('恢复会修改当前配置或知识库数据。确认继续吗？')) return;
+    msg.textContent = '恢复任务已提交...';
+    msg.className = 'text-sm text-slate-500';
+    const resp = await fetch(`/admin/api/backups/${backupId}/restore`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            restore_config: document.getElementById('restore-config').checked,
+            restore_data: dataMode !== 'none',
+            data_mode: dataMode === 'none' ? 'merge' : dataMode,
+            conflict_policy: document.getElementById('restore-conflict-policy').value,
+            create_pre_restore_backup: document.getElementById('restore-pre-backup').checked,
+        }),
+    });
+    const task = await resp.json();
+    if (!resp.ok) {
+        msg.textContent = task.detail || '恢复失败';
+        msg.className = 'text-sm text-red-600';
+        return;
+    }
+    pollRestoreTask(task.task_id);
+}
+
+async function pollRestoreTask(taskId) {
+    const msg = document.getElementById('restore-msg');
+    const resp = await fetch(`/admin/api/restore/tasks/${taskId}`);
+    const task = await resp.json();
+    updateRestoreProgress(task);
+    if (task.status === 'completed') {
+        msg.textContent = task.requires_restart
+            ? '恢复完成。配置已覆盖，建议重启服务并重新登录。'
+            : '恢复完成。';
+        msg.className = 'text-sm text-emerald-600';
+        if (task.requires_reindex) {
+            document.getElementById('reindex-panel').classList.remove('hidden');
+            document.getElementById('reindex-detail').textContent = '知识库数据已合并，建议立即重建向量索引。';
+        }
+        loadBackups();
+        return;
+    }
+    if (task.status === 'failed') {
+        msg.textContent = task.error || '恢复失败';
+        msg.className = 'text-sm text-red-600';
+        return;
+    }
+    setTimeout(() => pollRestoreTask(taskId), 1500);
+}
+
+function updateReindexProgress(task) {
+    document.getElementById('reindex-panel').classList.remove('hidden');
+    const progress = task.progress || 0;
+    document.getElementById('reindex-progress-bar').style.width = `${progress}%`;
+    document.getElementById('reindex-percent').textContent = `${progress}%`;
+    document.getElementById('reindex-stage').textContent = `阶段：${task.stage || task.status}`;
+    document.getElementById('reindex-detail').textContent =
+        `已处理 ${task.processed || 0}/${task.total || 0}，成功 ${task.succeeded || 0}，失败 ${task.failed || 0}${task.current ? `，当前：${task.current}` : ''}`;
+}
+
+async function startReindex() {
+    const resp = await fetch('/admin/api/reindex', {method: 'POST'});
+    const task = await resp.json();
+    if (!resp.ok) {
+        alert(task.detail || '启动重建索引失败');
+        return;
+    }
+    pollReindexTask(task.task_id);
+}
+
+async function pollReindexTask(taskId) {
+    const resp = await fetch(`/admin/api/reindex/tasks/${taskId}`);
+    const task = await resp.json();
+    updateReindexProgress(task);
+    if (task.status === 'completed') {
+        document.getElementById('reindex-detail').textContent = `重建完成，成功 ${task.succeeded || 0} 个文档。`;
+        return;
+    }
+    if (task.status === 'failed') {
+        document.getElementById('reindex-detail').textContent = task.error || '重建索引失败';
+        return;
+    }
+    setTimeout(() => pollReindexTask(taskId), 1500);
+}
+
 renderEnvProfiles();
 renderReverseProxyConfigs();
+loadBackups();
 </script>
 {% endblock %}

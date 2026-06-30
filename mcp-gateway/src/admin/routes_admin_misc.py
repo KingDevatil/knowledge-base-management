@@ -1,5 +1,6 @@
 """Admin miscellaneous API routes — directories, API Keys, backup export, health."""
 import io
+import json
 import os
 import re
 import zipfile
@@ -7,11 +8,12 @@ from datetime import datetime, timezone
 
 from pydantic import BaseModel
 from fastapi import APIRouter, Request, Form, HTTPException, Depends
-from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse, StreamingResponse, FileResponse
 
 from directory_tree import DirectoryTree
 from .helpers import templates, require_admin, settings
 from admin_auth import is_admin_role
+from backup_manager import BackupManager
 
 admin_misc_router = APIRouter()
 
@@ -25,6 +27,19 @@ class RenameDirRequest(BaseModel):
 
 class DeleteDirRequest(BaseModel):
     path: str
+
+
+class BackupCreateRequest(BaseModel):
+    kind: str = "config"
+    include_secrets: bool = True
+
+
+class BackupRestoreRequest(BaseModel):
+    restore_config: bool = True
+    restore_data: bool = True
+    data_mode: str = "merge"
+    conflict_policy: str = "skip"
+    create_pre_restore_backup: bool = True
 
 
 @admin_misc_router.post("/api/directories/create")
@@ -277,10 +292,148 @@ async def api_health_cards(request: Request, user: dict = Depends(require_admin)
 
 # ---------- 备份导出 (admin only) ----------
 
+def _get_backup_manager(request: Request) -> BackupManager:
+    manager = getattr(request.app.state, "backup_manager", None)
+    if manager is None:
+        kbdata_dir = settings.KBDATA_DIR or os.path.join(os.getcwd(), "kbdata")
+        manager = BackupManager(kbdata_dir, settings.APP_VERSION)
+        request.app.state.backup_manager = manager
+    return manager
+
+
 def _sanitize_filename(name: str) -> str:
     """去除文件名中的非法字符，保留可读性"""
     sanitized = re.sub(r'[<>:"/\\|?*]', '_', name)
     return sanitized.strip(' ._') or 'untitled'
+
+
+@admin_misc_router.get("/api/backups")
+async def api_backups_list(request: Request, user: dict = Depends(require_admin)):
+    manager = _get_backup_manager(request)
+    return JSONResponse({
+        "backups": manager.list_backups(),
+        "tasks": [task.to_dict() for task in manager.tasks.values()],
+    })
+
+
+@admin_misc_router.post("/api/backups")
+async def api_backups_create(
+    request: Request,
+    body: BackupCreateRequest,
+    user: dict = Depends(require_admin),
+):
+    manager = _get_backup_manager(request)
+    try:
+        task = manager.start_backup(body.kind, body.include_secrets)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return JSONResponse(task.to_dict())
+
+
+@admin_misc_router.get("/api/backups/tasks/{task_id}")
+async def api_backup_task(request: Request, task_id: str, user: dict = Depends(require_admin)):
+    manager = _get_backup_manager(request)
+    task = manager.tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Backup task not found")
+    return JSONResponse(task.to_dict())
+
+
+@admin_misc_router.post("/api/backups/{backup_id}/restore")
+async def api_backup_restore(
+    request: Request,
+    backup_id: str,
+    body: BackupRestoreRequest,
+    user: dict = Depends(require_admin),
+):
+    manager = _get_backup_manager(request)
+    try:
+        task = manager.start_restore(
+            backup_id=backup_id,
+            restore_config=body.restore_config,
+            restore_data=body.restore_data,
+            data_mode=body.data_mode,
+            conflict_policy=body.conflict_policy,
+            create_pre_restore_backup=body.create_pre_restore_backup,
+        )
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return JSONResponse(task.to_dict())
+
+
+@admin_misc_router.get("/api/restore/tasks")
+async def api_restore_tasks(request: Request, user: dict = Depends(require_admin)):
+    manager = _get_backup_manager(request)
+    tasks = [task.to_dict() for task in manager.restore_tasks.values()]
+    tasks.sort(key=lambda item: item.get("created_at", ""), reverse=True)
+    return JSONResponse({"tasks": tasks})
+
+
+@admin_misc_router.get("/api/restore/tasks/{task_id}")
+async def api_restore_task(request: Request, task_id: str, user: dict = Depends(require_admin)):
+    manager = _get_backup_manager(request)
+    task = manager.restore_tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Restore task not found")
+    return JSONResponse(task.to_dict())
+
+
+@admin_misc_router.post("/api/reindex")
+async def api_reindex_all(request: Request, user: dict = Depends(require_admin)):
+    manager = _get_backup_manager(request)
+    task = manager.start_reindex(request.app.state.tools)
+    return JSONResponse(task.to_dict())
+
+
+@admin_misc_router.get("/api/reindex/tasks")
+async def api_reindex_tasks(request: Request, user: dict = Depends(require_admin)):
+    manager = _get_backup_manager(request)
+    tasks = [task.to_dict() for task in manager.reindex_tasks.values()]
+    tasks.sort(key=lambda item: item.get("created_at", ""), reverse=True)
+    return JSONResponse({"tasks": tasks})
+
+
+@admin_misc_router.get("/api/reindex/tasks/{task_id}")
+async def api_reindex_task(request: Request, task_id: str, user: dict = Depends(require_admin)):
+    manager = _get_backup_manager(request)
+    task = manager.reindex_tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Reindex task not found")
+    return JSONResponse(task.to_dict())
+
+
+@admin_misc_router.get("/api/backups/policy")
+async def api_backup_policy(request: Request, user: dict = Depends(require_admin)):
+    manager = _get_backup_manager(request)
+    return JSONResponse(manager.load_policy())
+
+
+@admin_misc_router.put("/api/backups/policy")
+async def api_backup_policy_save(request: Request, user: dict = Depends(require_admin)):
+    manager = _get_backup_manager(request)
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    return JSONResponse(manager.save_policy(body if isinstance(body, dict) else {}))
+
+
+@admin_misc_router.get("/api/backups/{backup_id}/download")
+async def api_backup_download(request: Request, backup_id: str, user: dict = Depends(require_admin)):
+    manager = _get_backup_manager(request)
+    try:
+        path = manager.get_backup_path(backup_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Backup not found")
+    return FileResponse(path, media_type="application/zip", filename=path.name)
+
+
+@admin_misc_router.delete("/api/backups/{backup_id}")
+async def api_backup_delete(request: Request, backup_id: str, user: dict = Depends(require_admin)):
+    manager = _get_backup_manager(request)
+    if not manager.delete_backup(backup_id):
+        raise HTTPException(status_code=404, detail="Backup not found")
+    return JSONResponse({"success": True})
 
 
 @admin_misc_router.get("/api/backup/export")
