@@ -235,6 +235,7 @@ $env:REDIS_URL = "redis://localhost:6379/0"
 $env:CHROMA_HOST = "localhost"
 $env:CHROMA_PORT = "8001"
 $env:OLLAMA_URL = "http://localhost:11434"
+if (-not $env:OLLAMA_NUM_PARALLEL) { $env:OLLAMA_NUM_PARALLEL = "8" }
 $env:MINIO_ENDPOINT = "localhost:9000"
 $env:MINIO_ACCESS_KEY = "minioadmin"
 $env:MINIO_SECRET_KEY = "minioadmin"

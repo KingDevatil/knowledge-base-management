@@ -1,8 +1,13 @@
-"""Read-only KnowledgeTools — search, list, get document operations (no write lock needed)."""
+"""Read-only KnowledgeTools: search, list, and get document operations."""
+
+import asyncio
+import hashlib
+import json
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
 
+from config import get_settings
 from knowledge_base import KnowledgeBase
 from source_store import SourceStore
 from embedding import OllamaEmbedder
@@ -19,9 +24,11 @@ from rag.keyword_index import KeywordInvertedIndex
 
 logger = get_logger()
 
+SEARCH_CACHE_VERSION_KEY = "kb:search_cache_version"
+
 
 class KnowledgeToolsReader:
-    """Read-only knowledge base operations — safe for concurrent access."""
+    """Read-only knowledge base operations safe for concurrent access."""
 
     def __init__(
         self,
@@ -34,7 +41,9 @@ class KnowledgeToolsReader:
         self.embedder = embedder
         self.source_store = source_store
         self.redis = redis_client
+        self.settings = get_settings()
         self.keyword_index = KeywordInvertedIndex()
+        self._keyword_index_refresh_lock = asyncio.Lock()
         self.retrieval_pipeline = RetrievalPipeline(
             channels=[
                 VectorChannel(kb, embedder),
@@ -45,6 +54,81 @@ class KnowledgeToolsReader:
             neighbor_window=1,
         )
 
+    async def refresh_keyword_index(self) -> None:
+        """Rebuild the in-memory keyword index outside the read path."""
+        async with self._keyword_index_refresh_lock:
+            await self.keyword_index.rebuild(self.kb)
+
+    async def refresh_keyword_index_safely(self, reason: str = "") -> None:
+        try:
+            await self.refresh_keyword_index()
+        except Exception as e:
+            suffix = f" after {reason}" if reason else ""
+            logger.warning(f"Failed to refresh keyword index{suffix}: {e}")
+        finally:
+            await self.invalidate_search_cache_safely(reason)
+
+    async def invalidate_search_cache(self) -> None:
+        if not self.redis:
+            return
+        try:
+            await self.redis.incr(SEARCH_CACHE_VERSION_KEY)
+        except Exception as e:
+            logger.warning(f"Failed to invalidate search cache: {e}")
+
+    async def invalidate_search_cache_safely(self, reason: str = "") -> None:
+        try:
+            await self.invalidate_search_cache()
+        except Exception as e:
+            suffix = f" after {reason}" if reason else ""
+            logger.warning(f"Failed to invalidate search cache{suffix}: {e}")
+
+    async def _search_cache_version(self) -> str:
+        if not self.redis:
+            return "0"
+        try:
+            return str(await self.redis.get(SEARCH_CACHE_VERSION_KEY) or "0")
+        except Exception as e:
+            logger.warning(f"Failed to read search cache version: {e}")
+            return "0"
+
+    async def _search_cache_key(
+        self,
+        query: str,
+        top_k: int,
+        filter_tags: list[str],
+        filter_path: str,
+    ) -> str:
+        payload = {
+            "version": await self._search_cache_version(),
+            "query": " ".join(query.strip().split()),
+            "top_k": top_k,
+            "filter_tags": sorted(filter_tags),
+            "filter_path": filter_path,
+        }
+        digest = hashlib.sha256(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        return f"kb:search_cache:{digest}"
+
+    async def _record_search_stats(self) -> None:
+        if not self.redis:
+            return
+        try:
+            now = datetime.now(timezone.utc)
+            today = now.strftime("%Y-%m-%d")
+            key = f"stats:search:{today}"
+            count = await self.redis.incr(key)
+            if count == 1:
+                await self.redis.expire(key, 86400 * 90)
+
+            hourly_key = f"stats:search:hourly:{now.strftime('%Y-%m-%d:%H')}"
+            hourly_count = await self.redis.incr(hourly_key)
+            if hourly_count == 1:
+                await self.redis.expire(hourly_key, 86400 * 8)
+        except Exception as e:
+            logger.warning(f"Failed to record search stats in Redis: {e}")
+
     async def search_knowledge(
         self,
         query: str,
@@ -52,48 +136,53 @@ class KnowledgeToolsReader:
         filter_tags: list[str] | None = None,
         filter_path: str = "",
     ) -> dict:
-        """Vector search the knowledge base."""
+        """Search the knowledge base."""
         if not query or not query.strip():
-            raise HTTPException(status_code=400, detail="查询内容不能为空")
+            raise HTTPException(status_code=400, detail="Query cannot be empty")
 
-        try:
-            await self.keyword_index.rebuild(self.kb)
-        except Exception as e:
-            logger.warning(f"Failed to rebuild keyword index, falling back to scan: {e}")
+        filter_tags = filter_tags or []
+        await self._record_search_stats()
+
+        cache_key = ""
+        if self.redis and self.settings.SEARCH_CACHE_TTL > 0:
+            cache_key = await self._search_cache_key(query, top_k, filter_tags, filter_path)
+            try:
+                cached = await self.redis.get(cache_key)
+                if cached:
+                    result = json.loads(cached)
+                    result["cache_hit"] = True
+                    return result
+            except Exception as e:
+                logger.warning(f"Failed to read search cache: {e}")
 
         results = await self.retrieval_pipeline.search(
             RetrievalQuery(
                 text=query,
                 top_k=top_k,
-                filter_tags=filter_tags or [],
+                filter_tags=filter_tags,
                 filter_path=filter_path,
             )
         )
 
-        # 异步记录检索次数（REST API 和 MCP 共享此计数）
-        if self.redis:
-            try:
-                now = datetime.now(timezone.utc)
-                today = now.strftime("%Y-%m-%d")
-                key = f"stats:search:{today}"
-                count = await self.redis.incr(key)
-                if count == 1:
-                    await self.redis.expire(key, 86400 * 90)
-
-                # 小时级统计（用于趋势图）
-                hourly_key = f"stats:search:hourly:{now.strftime('%Y-%m-%d:%H')}"
-                hourly_count = await self.redis.incr(hourly_key)
-                if hourly_count == 1:
-                    await self.redis.expire(hourly_key, 86400 * 8)
-            except Exception as e:
-                logger.warning(f"Failed to record search stats in Redis: {e}")
-
-        return {
+        result = {
             "query": query,
             "results": [await self._enrich_search_result(item) for item in results],
             "total": len(results),
             "retrieval_errors": self.retrieval_pipeline.last_errors,
+            "cache_hit": False,
         }
+
+        if cache_key and not result["retrieval_errors"]:
+            try:
+                await self.redis.set(
+                    cache_key,
+                    json.dumps(result, ensure_ascii=False),
+                    ex=self.settings.SEARCH_CACHE_TTL,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to write search cache: {e}")
+
+        return result
 
     async def _enrich_search_result(self, item: dict) -> dict:
         doc_id = item.get("doc_id", "")
@@ -161,13 +250,13 @@ class KnowledgeToolsReader:
     async def get_document(self, doc_id: str) -> dict:
         """Get full document info including content, tags, and chunks."""
         if not doc_id:
-            raise HTTPException(status_code=400, detail="文档 ID 不能为空")
+            raise HTTPException(status_code=400, detail="Document ID cannot be empty")
 
         doc_info = await self.kb._doc_index_get(doc_id)
         if not doc_info:
             raise HTTPException(
                 status_code=404,
-                detail=f"文档 (doc_id={doc_id}) 不存在，可能已被删除",
+                detail=f"Document not found: doc_id={doc_id}",
             )
 
         path = doc_info.get("path", "")
@@ -185,12 +274,8 @@ class KnowledgeToolsReader:
                 else:
                     content = self.source_store.get_source(doc_id, path) or ""
             except Exception as e:
-                logger.warning(
-                    f"Failed to read source content for doc_id={doc_id}: {e}"
-                )
-                content = "\n\n".join(
-                    ch.get("content", "") for ch in chunks
-                )
+                logger.warning(f"Failed to read source content for doc_id={doc_id}: {e}")
+                content = "\n\n".join(ch.get("content", "") for ch in chunks)
 
         chunk_list = []
         for ch in chunks:
@@ -206,7 +291,7 @@ class KnowledgeToolsReader:
 
         tags_raw = doc_info.get("tags", "")
         if isinstance(tags_raw, str) and tags_raw:
-            tags = [t.strip() for t in tags_raw.replace("，", ",").split(",") if t.strip()]
+            tags = [t.strip() for t in tags_raw.split(",") if t.strip()]
         elif isinstance(tags_raw, list):
             tags = tags_raw
         else:

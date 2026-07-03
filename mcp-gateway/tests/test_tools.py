@@ -1,4 +1,5 @@
 """Unit tests for helpers, KnowledgeToolsReader, and KnowledgeTools."""
+import asyncio
 import sys
 import os
 
@@ -42,6 +43,11 @@ class MockRedis:
 
     async def expire(self, key, ttl):
         return True
+
+    async def incr(self, key):
+        value = int(self._store.get(key, 0)) + 1
+        self._store[key] = str(value)
+        return value
 
     async def ping(self):
         return True
@@ -389,6 +395,56 @@ class TestKnowledgeToolsReader:
     async def test_search_knowledge_no_match(self, reader):
         result = await reader.search_knowledge("nonexistent", filter_path="other")
         assert result["total"] == 0
+
+    @pytest.mark.asyncio
+    async def test_search_knowledge_does_not_rebuild_keyword_index(self, reader):
+        reader.keyword_index.rebuild = AsyncMock(side_effect=AssertionError("unexpected rebuild"))
+
+        result = await reader.search_knowledge("test", top_k=5)
+
+        assert result["total"] > 0
+        reader.keyword_index.rebuild.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_twenty_concurrent_searches_do_not_rebuild_keyword_index(self, reader):
+        await reader.refresh_keyword_index()
+        reader.keyword_index.rebuild = AsyncMock(side_effect=AssertionError("unexpected rebuild"))
+
+        results = await asyncio.gather(*[
+            reader.search_knowledge("test", top_k=5)
+            for _ in range(20)
+        ])
+
+        assert len(results) == 20
+        assert all(result["total"] > 0 for result in results)
+        reader.keyword_index.rebuild.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_search_knowledge_uses_result_cache(self, reader):
+        reader.redis = MockRedis()
+
+        first = await reader.search_knowledge("test", top_k=5)
+        reader.retrieval_pipeline.search = AsyncMock(side_effect=AssertionError("unexpected search"))
+        second = await reader.search_knowledge("test", top_k=5)
+
+        assert first["cache_hit"] is False
+        assert second["cache_hit"] is True
+        assert second["total"] == first["total"]
+        reader.retrieval_pipeline.search.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_search_cache_invalidation_forces_new_search(self, reader):
+        reader.redis = MockRedis()
+
+        await reader.search_knowledge("test", top_k=5)
+        await reader.invalidate_search_cache()
+        reader.retrieval_pipeline.search = AsyncMock(return_value=[])
+
+        result = await reader.search_knowledge("test", top_k=5)
+
+        assert result["cache_hit"] is False
+        assert result["total"] == 0
+        reader.retrieval_pipeline.search.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_list_documents_pagination(self, reader):

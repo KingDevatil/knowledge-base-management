@@ -34,6 +34,7 @@ class Settings(BaseSettings):
 
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"
+    SEARCH_CACHE_TTL: int = 300
 
     # Chroma
     CHROMA_HOST: str = "localhost"

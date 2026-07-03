@@ -105,6 +105,7 @@ class KnowledgeTools(KnowledgeToolsReader):
                     new_dirs.append(d)
             _save_dirs(new_dirs)
 
+        await self.refresh_keyword_index_safely("rename_directory")
         return {"success": True, "moved": moved, "old_path": old_path, "new_path": new_path}
 
     async def delete_directory(self, path: str) -> dict:
@@ -137,6 +138,7 @@ class KnowledgeTools(KnowledgeToolsReader):
             dirs = [d for d in dirs if d != path and not d.startswith(path + "/")]
             _save_dirs(dirs)
 
+        await self.refresh_keyword_index_safely("delete_directory")
         return {"success": True, "moved_to_root": moved, "deleted_path": path}
 
     # ---------- 写操作（需锁保护）----------
@@ -219,6 +221,7 @@ class KnowledgeTools(KnowledgeToolsReader):
         """添加新文档"""
         tags = tags or []
         result = await self._import_document(title, content, path, tags, created_by)
+        await self.refresh_keyword_index_safely("add_document")
         return {
             "success": True,
             "doc_id": result.doc_id,
@@ -257,6 +260,7 @@ class KnowledgeTools(KnowledgeToolsReader):
             created_by=retried_by or payload.get("created_by", "system"),
             doc_id=payload.get("doc_id"),
         )
+        await self.refresh_keyword_index_safely("retry_ingestion_task")
         retry_task = result.task.to_dict()
         retry_task["retried_from"] = task_id
         self.ingestion_tasks[result.task.task_id] = retry_task
@@ -584,6 +588,8 @@ class KnowledgeTools(KnowledgeToolsReader):
             if staging_source_path:
                 self._cleanup_staging_source(staging_source_path)
 
+        await self.refresh_keyword_index_safely("update_document")
+
         return {"success": True, "doc_id": doc_id, "message": "文档更新成功"}
 
     async def delete_document(self, doc_id: str, deleted_by: str = "system") -> dict:
@@ -609,6 +615,7 @@ class KnowledgeTools(KnowledgeToolsReader):
                 else:
                     self.source_store.delete_source(doc_id, path)
                 logger.info(f"Document deleted: doc_id={doc_id}, title={title}")
+                await self.refresh_keyword_index_safely("delete_document")
         except WriteLockError:
             raise HTTPException(
                 status_code=423,
@@ -810,4 +817,5 @@ class KnowledgeTools(KnowledgeToolsReader):
             self._delete_staging_chunks(staging_doc_id)
 
         logger.info(f"Document reindexed: doc_id={doc_id}, title={title}, old={len(chunks)}, new={len(new_chunks)}")
+        await self.refresh_keyword_index_safely("reindex_document")
         return {"success": True, "doc_id": doc_id, "chunks_old": len(chunks), "chunks_new": len(new_chunks)}

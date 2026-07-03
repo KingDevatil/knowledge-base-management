@@ -28,8 +28,8 @@ class KeywordInvertedIndex:
         self._postings: dict[str, set[tuple[str, int]]] = {}
 
     async def rebuild(self, kb: Any) -> None:
-        self._chunks.clear()
-        self._postings.clear()
+        chunks: dict[tuple[str, int], IndexedChunk] = {}
+        postings: dict[str, set[tuple[str, int]]] = {}
         for doc in await kb._doc_index_all():
             doc_id = doc.get("doc_id", "")
             if not doc_id:
@@ -39,9 +39,12 @@ class KeywordInvertedIndex:
                 chunk_index = int(metadata.get("chunk_index", 0))
                 key = (doc_id, chunk_index)
                 indexed = IndexedChunk(doc=doc, chunk=chunk, terms=self._terms_for(doc, chunk))
-                self._chunks[key] = indexed
+                chunks[key] = indexed
                 for term in indexed.terms:
-                    self._postings.setdefault(term, set()).add(key)
+                    postings.setdefault(term, set()).add(key)
+
+        self._chunks = chunks
+        self._postings = postings
 
     def search(self, query: RetrievalQuery, top_k: int) -> list[RetrievalCandidate]:
         terms = tokenize_query(query.text)

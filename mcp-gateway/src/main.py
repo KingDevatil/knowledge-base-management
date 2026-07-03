@@ -127,6 +127,7 @@ async def lifespan(app: FastAPI):
         api_key_auth=app.state.api_key_auth,
         redis_client=app.state.redis,
     )
+    await app.state.tools.refresh_keyword_index_safely("startup")
     app.state.mcp_server = create_mcp_server(app.state.tools)
     app.state.sse_transport = SseServerTransport("/sse/messages/")
     # 官方 StreamableHTTP Session Manager —— 管理会话、transport 和消息路由
