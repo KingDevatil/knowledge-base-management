@@ -389,6 +389,7 @@
 var state = null;
 var pollTimer = null;
 var logExpanded = false;
+var lastGatewayStatus = null;
 
 function api() {
   if (window.pywebview && window.pywebview.api) return window.pywebview.api;
@@ -437,13 +438,24 @@ function renderUI(s) {
   btns.forEach(function(b) { b.disabled = !!s.busy; });
 
   // Admin URL
-  var adminUrl = s.adminUrl || 'http://127.0.0.1:8000/admin';
+  var adminUrl = s.adminUrl || 'http://localhost:8000/admin';
+  var gatewayStatus = null;
+  for (var gi = 0; gi < (s.services || []).length; gi++) {
+    if (s.services[gi].name === 'MCP Gateway') {
+      gatewayStatus = s.services[gi].status;
+      break;
+    }
+  }
 
-  // Load iframe once
+  // Load once, and reload after Gateway becomes available. If the iframe first
+  // loaded while the service was down, WebView keeps showing the connection
+  // error unless we explicitly navigate it again.
   var frame = document.getElementById('admin-frame');
-  if (frame.src === 'about:blank' || frame.src !== adminUrl) {
+  var gatewayJustStarted = gatewayStatus === 'running' && lastGatewayStatus !== 'running';
+  if (frame.src === 'about:blank' || frame.src !== adminUrl || gatewayJustStarted) {
     frame.src = adminUrl;
   }
+  lastGatewayStatus = gatewayStatus;
 
   // Services
   var list = document.getElementById('service-list');
