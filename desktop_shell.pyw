@@ -26,7 +26,7 @@ SHELL_HTML = PROJECT_ROOT / "desktop_shell.html"
 KBDATA_DIR = PROJECT_ROOT / "kbdata"
 LOGS_DIR = KBDATA_DIR / "logs"
 SHELL_LOG = LOGS_DIR / "desktop-shell.log"
-LOCAL_GATEWAY_BASE_URL = "http://localhost:8000"
+LOCAL_GATEWAY_BASE_URL = "http://127.0.0.1:8000"
 
 
 def _load_launcher_module():
