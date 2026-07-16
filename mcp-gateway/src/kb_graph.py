@@ -2,13 +2,20 @@
 import json
 import math
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 import networkx as nx
 
-from graphify.build import build_from_json
-from graphify.cluster import cluster
-from graphify.export import to_html, to_json
+try:
+    from graphify.build import build_from_json
+    from graphify.cluster import cluster
+    from graphify.export import to_html, to_json
+except ImportError:  # 允许基础检索在可选图谱依赖尚未安装时继续启动
+    build_from_json = None
+    cluster = None
+    to_html = None
+    to_json = None
 
 from config import get_settings
 from logger import get_logger
@@ -47,8 +54,16 @@ class KnowledgeGraphBuilder:
     def labels_path(self) -> Path:
         return self.graph_dir / ".graphify_labels.json"
 
+    @property
+    def retrieval_json_path(self) -> Path:
+        return self.graph_dir / "retrieval_index.json"
+
     async def build(self, semantic_threshold: float = 0.0) -> dict:
         """全量构建：获取文档 → 构造节点/边 → 建图 → 聚类 → 导出。"""
+        if not all((build_from_json, cluster, to_html, to_json)):
+            raise RuntimeError(
+                "知识图谱依赖未安装，请执行 pip install -r mcp-gateway/requirements.txt"
+            )
         # 1. 获取所有文档
         logger.info("Fetching all documents for graph build...")
         docs_result = await self.kb.list_documents(limit=10000, offset=0)
@@ -100,6 +115,22 @@ class KnowledgeGraphBuilder:
         to_json(G, communities, str(self.graph_json_path), force=True)
         logger.info(f"JSON exported: {self.graph_json_path}")
 
+        # 保存稳定、轻量的检索索引，避免检索链路依赖可视化库的 JSON 结构。
+        self.retrieval_json_path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "nodes": extraction["nodes"],
+                    "edges": extraction["edges"],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        logger.info(f"Retrieval graph exported: {self.retrieval_json_path}")
+
         # 9. 保存社区标签
         self.labels_path.write_text(
             json.dumps(community_labels, ensure_ascii=False, indent=2),
@@ -113,13 +144,15 @@ class KnowledgeGraphBuilder:
             "community_count": len(communities),
             "html_path": str(self.graph_html_path),
             "json_path": str(self.graph_json_path),
+            "retrieval_index_path": str(self.retrieval_json_path),
             "message": f"图谱构建完成: {node_count} 节点, {edge_count} 边, {len(communities)} 社区",
         }
 
     def _build_extraction(self, docs: list, semantic_threshold: float) -> dict:
         """构造 extraction dict。"""
         nodes: list[dict] = []
-        edges_set: set[tuple[str, str, str, str]] = set()
+        edges: list[dict] = []
+        edge_keys: set[tuple[str, str, str]] = set()
 
         # 节点：每篇文档一个
         for doc in docs:
@@ -133,13 +166,30 @@ class KnowledgeGraphBuilder:
                 "updated_at": doc.get("updated_at", ""),
             })
 
-        def _add_edge(src: str, tgt: str, relation: str, confidence: str):
-            key = (src, tgt, relation, confidence)
-            if key in edges_set or src == tgt:
+        def _add_edge(
+            src: str,
+            tgt: str,
+            relation: str,
+            confidence: str,
+            weight: float,
+            **attributes,
+        ):
+            if not src or not tgt or src == tgt:
                 return
-            rev = (tgt, src, relation, confidence)
-            if rev not in edges_set:
-                edges_set.add(key)
+            left, right = sorted((src, tgt))
+            key = (left, right, relation)
+            if key in edge_keys:
+                return
+            edge_keys.add(key)
+            edges.append({
+                "source": left,
+                "target": right,
+                "relation": relation,
+                "confidence": confidence,
+                "weight": round(min(max(float(weight), 0.0), 1.0), 4),
+                "source_file": "kb",
+                **attributes,
+            })
 
         # co_tag 边：共享标签
         tag_index: dict[str, list[str]] = {}
@@ -150,30 +200,65 @@ class KnowledgeGraphBuilder:
                 if t:
                     tag_index.setdefault(t, []).append(doc_id)
 
+        shared_tags: dict[tuple[str, str], list[str]] = {}
         for tag, ids in tag_index.items():
             if len(ids) < 2:
                 continue
-            for i in range(len(ids)):
-                for j in range(i + 1, len(ids)):
-                    _add_edge(ids[i], ids[j], "co_tag", "EXTRACTED")
+            for src, tgt in self._relation_pairs(ids):
+                pair = tuple(sorted((src, tgt)))
+                shared_tags.setdefault(pair, []).append(tag)
+        for (src, tgt), tags in shared_tags.items():
+            _add_edge(
+                src,
+                tgt,
+                "co_tag",
+                "EXTRACTED",
+                min(0.75, 0.45 + 0.10 * (len(tags) - 1)),
+                shared_tags=tags,
+            )
+
+        # same_directory 边：同一非根目录下的文档，补齐原设计中未落地的结构关系。
+        directory_index: dict[str, list[str]] = {}
+        for doc in docs:
+            path = str(doc.get("path", "")).strip()
+            doc_id = doc.get("doc_id") or doc.get("id", "")
+            if path and path != "/" and doc_id:
+                directory_index.setdefault(path, []).append(doc_id)
+        for path, ids in directory_index.items():
+            for src, tgt in self._relation_pairs(ids):
+                _add_edge(
+                    src, tgt, "same_directory", "EXTRACTED", 0.35,
+                    directory=path,
+                )
 
         # semantically_similar 边（可选）
         if semantic_threshold > 0.0:
             try:
                 semantic_edges = self._compute_semantic_edges(docs, semantic_threshold)
-                for src, tgt in semantic_edges:
-                    _add_edge(src, tgt, "semantically_similar", "INFERRED")
+                for src, tgt, similarity in semantic_edges:
+                    _add_edge(
+                        src, tgt, "semantically_similar", "INFERRED", similarity,
+                        similarity=round(similarity, 4),
+                    )
             except Exception as e:
                 logger.warning(f"Semantic similarity computation failed: {e}")
 
-        edges = [
-            {"source": s, "target": t, "relation": r, "confidence": c, "source_file": "kb"}
-            for s, t, r, c in edges_set
-        ]
-
         return {"nodes": nodes, "edges": edges}
 
-    def _compute_semantic_edges(self, docs: list, threshold: float) -> list[tuple[str, str]]:
+    @staticmethod
+    def _relation_pairs(ids: list[str], clique_limit: int = 50):
+        """Use a full clique for small groups and a two-hop sparse star for large ones."""
+        unique_ids = list(dict.fromkeys(doc_id for doc_id in ids if doc_id))
+        if len(unique_ids) <= clique_limit:
+            for i in range(len(unique_ids)):
+                for j in range(i + 1, len(unique_ids)):
+                    yield unique_ids[i], unique_ids[j]
+            return
+        hub = unique_ids[0]
+        for doc_id in unique_ids[1:]:
+            yield hub, doc_id
+
+    def _compute_semantic_edges(self, docs: list, threshold: float) -> list[tuple[str, str, float]]:
         """从 Chroma 取 embedding 计算文档间余弦相似度。"""
         doc_ids = [d.get("doc_id") or d.get("id", "") for d in docs]
         chunk_ids = [f"{did}#chunk-0" for did in doc_ids]
@@ -209,14 +294,14 @@ class KnowledgeGraphBuilder:
         if len(ids) < 2:
             return []
 
-        edges: list[tuple[str, str]] = []
+        edges: list[tuple[str, str, float]] = []
         logger.info(f"Computing semantic similarity for {len(ids)} docs (threshold={threshold})")
 
         for i in range(len(ids)):
             for j in range(i + 1, len(ids)):
                 sim = self._cosine_similarity(doc_emb[ids[i]], doc_emb[ids[j]])
                 if sim >= threshold:
-                    edges.append((ids[i], ids[j]))
+                    edges.append((ids[i], ids[j], sim))
 
         logger.info(f"Semantic edges: {len(edges)} above threshold {threshold}")
         return edges

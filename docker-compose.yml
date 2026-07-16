@@ -37,6 +37,27 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # 可选：无公网 IP 时启用 Cloudflare Tunnel。
+  # 先在 Cloudflare 控制台将 Public Hostname 的 Service 配为 http://nginx:80，
+  # 再执行 start.ps1 -Tunnel cloudflare 或 start.sh --tunnel cloudflare。
+  cloudflared:
+    profiles: ["tunnel"]
+    image: ${MIRROR_PREFIX:-}cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --loglevel info run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      nginx:
+        condition: service_started
+    networks:
+      - kb-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   redis:
     image: ${MIRROR_PREFIX:-}redis:7-alpine
     restart: always
@@ -150,6 +171,32 @@ services:
       - CHROMA_PORT=8000
       - OLLAMA_URL=http://ollama:11434
       - OLLAMA_MODEL=${OLLAMA_MODEL:-bge-m3}
+      - EMBEDDING_FALLBACKS=${EMBEDDING_FALLBACKS:-}
+      - EMBEDDING_HEALTH_CACHE_TTL=${EMBEDDING_HEALTH_CACHE_TTL:-30}
+      - EMBEDDING_FAILURE_THRESHOLD=${EMBEDDING_FAILURE_THRESHOLD:-3}
+      - EMBEDDING_CIRCUIT_COOLDOWN=${EMBEDDING_CIRCUIT_COOLDOWN:-30}
+      - EMBEDDING_REQUEST_TIMEOUT_SECONDS=${EMBEDDING_REQUEST_TIMEOUT_SECONDS:-120}
+      - EMBEDDING_HEALTH_TIMEOUT_SECONDS=${EMBEDDING_HEALTH_TIMEOUT_SECONDS:-5}
+      - EMBEDDING_MAX_CONNECTIONS=${EMBEDDING_MAX_CONNECTIONS:-24}
+      - EMBEDDING_MAX_KEEPALIVE_CONNECTIONS=${EMBEDDING_MAX_KEEPALIVE_CONNECTIONS:-8}
+      - EMBEDDING_MAX_BATCH_SIZE=${EMBEDDING_MAX_BATCH_SIZE:-200}
+      - SEARCH_CACHE_TTL=${SEARCH_CACHE_TTL:-300}
+      - SEARCH_TOTAL_TIMEOUT_MS=${SEARCH_TOTAL_TIMEOUT_MS:-10000}
+      - SEARCH_ENRICH_TIMEOUT_MS=${SEARCH_ENRICH_TIMEOUT_MS:-1500}
+      - SEARCH_VECTOR_TIMEOUT_MS=${SEARCH_VECTOR_TIMEOUT_MS:-7000}
+      - SEARCH_KEYWORD_TIMEOUT_MS=${SEARCH_KEYWORD_TIMEOUT_MS:-3000}
+      - SEARCH_STRUCTURE_TIMEOUT_MS=${SEARCH_STRUCTURE_TIMEOUT_MS:-2000}
+      - SEARCH_NEIGHBOR_TIMEOUT_MS=${SEARCH_NEIGHBOR_TIMEOUT_MS:-1000}
+      - SEARCH_MAX_CONCURRENCY=${SEARCH_MAX_CONCURRENCY:-12}
+      - SEARCH_QUEUE_TIMEOUT_MS=${SEARCH_QUEUE_TIMEOUT_MS:-2000}
+      - SEARCH_CONTEXT_MAX_CHARS=${SEARCH_CONTEXT_MAX_CHARS:-2000}
+      - GRAPH_RETRIEVAL_ENABLED=${GRAPH_RETRIEVAL_ENABLED:-true}
+      - GRAPH_RETRIEVAL_TIMEOUT_MS=${GRAPH_RETRIEVAL_TIMEOUT_MS:-800}
+      - GRAPH_RETRIEVAL_WEIGHT=${GRAPH_RETRIEVAL_WEIGHT:-0.35}
+      - GRAPH_RETRIEVAL_MAX_RESULTS=${GRAPH_RETRIEVAL_MAX_RESULTS:-3}
+      - GRAPH_RETRIEVAL_MAX_HOPS=${GRAPH_RETRIEVAL_MAX_HOPS:-2}
+      - GRAPH_RETRIEVAL_SEED_COUNT=${GRAPH_RETRIEVAL_SEED_COUNT:-3}
+      - GRAPH_RETRIEVAL_MIN_EDGE_WEIGHT=${GRAPH_RETRIEVAL_MIN_EDGE_WEIGHT:-0.25}
       - MINIO_ENDPOINT=minio:9000
       - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}
       - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
@@ -164,6 +211,11 @@ services:
       - API_KEY_FILE=${API_KEY_FILE:-/app/data/config/api_keys.json}
       - ADMIN_INITIAL_USERNAME=${ADMIN_INITIAL_USERNAME:-admin}
       - ADMIN_INITIAL_PASSWORD=${ADMIN_INITIAL_PASSWORD:-123456}
+      - CHUNK_SIZE=${CHUNK_SIZE:-512}
+      - CHUNK_OVERLAP=${CHUNK_OVERLAP:-50}
+      - WRITE_LOCK_KEY=${WRITE_LOCK_KEY:-kb:write_lock}
+      - WRITE_LOCK_TTL=${WRITE_LOCK_TTL:-30}
+      - RATE_LIMIT_DEFAULT=${RATE_LIMIT_DEFAULT:-30}
     depends_on:
       redis:
         condition: service_healthy

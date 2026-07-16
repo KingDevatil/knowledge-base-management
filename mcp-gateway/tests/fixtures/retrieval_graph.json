@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "nodes": [
+    {"id": "doc-1"},
+    {"id": "doc-2"},
+    {"id": "doc-3"}
+  ],
+  "edges": [
+    {
+      "source": "doc-1",
+      "target": "doc-2",
+      "relation": "semantically_similar",
+      "weight": 0.82
+    },
+    {
+      "source": "doc-2",
+      "target": "doc-3",
+      "relation": "same_directory",
+      "weight": 0.1
+    }
+  ]
+}

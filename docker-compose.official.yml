@@ -1,0 +1,31 @@
+# 官方源回退覆盖。
+# start.ps1/start.sh 仅在中国大陆镜像构建或拉取失败时自动追加本文件。
+services:
+  nginx:
+    image: nginx:1.27-alpine
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+
+  redis:
+    image: redis:7-alpine
+
+  chroma:
+    image: chromadb/chroma:1.5.9
+
+  minio:
+    image: minio/minio:RELEASE.2025-01-20T14-49-07Z
+
+  ollama:
+    image: ollama/ollama:0.6.0
+
+  ollama-model-init:
+    image: ollama/ollama:0.6.0
+
+  mcp-gateway:
+    build:
+      args:
+        MIRROR_PREFIX: ""
+        PIP_INDEX_URL: https://pypi.org/simple
+        PIP_TRUSTED_HOST: pypi.org
+        APT_MIRROR: deb.debian.org

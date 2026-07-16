@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 from time import monotonic
 
 from fastapi import HTTPException
@@ -15,6 +16,7 @@ from embedding import OllamaEmbedder
 from directory_tree import DirectoryTree
 from logger import get_logger
 from rag.retrieval import (
+    GraphAssociationExpander,
     KeywordChannel,
     RetrievalPipeline,
     RetrievalQuery,
@@ -49,12 +51,35 @@ class KnowledgeToolsReader:
         self._search_capacity = asyncio.Semaphore(max(1, self.settings.SEARCH_MAX_CONCURRENCY))
         self.retrieval_pipeline = RetrievalPipeline(
             channels=[
-                VectorChannel(kb, embedder),
-                KeywordChannel(kb, self.keyword_index),
-                StructureChannel(kb),
+                VectorChannel(
+                    kb,
+                    embedder,
+                    timeout_ms=self.settings.SEARCH_VECTOR_TIMEOUT_MS,
+                ),
+                KeywordChannel(
+                    kb,
+                    self.keyword_index,
+                    timeout_ms=self.settings.SEARCH_KEYWORD_TIMEOUT_MS,
+                ),
+                StructureChannel(
+                    kb,
+                    timeout_ms=self.settings.SEARCH_STRUCTURE_TIMEOUT_MS,
+                ),
             ],
             kb=kb,
             neighbor_window=1,
+            neighbor_timeout_ms=self.settings.SEARCH_NEIGHBOR_TIMEOUT_MS,
+            graph_expander=GraphAssociationExpander(
+                kb,
+                Path(self.settings.KBDATA_DIR or "kbdata") / "graph" / "retrieval_index.json",
+                enabled=self.settings.GRAPH_RETRIEVAL_ENABLED,
+                timeout_ms=self.settings.GRAPH_RETRIEVAL_TIMEOUT_MS,
+                weight=self.settings.GRAPH_RETRIEVAL_WEIGHT,
+                max_results=self.settings.GRAPH_RETRIEVAL_MAX_RESULTS,
+                max_hops=self.settings.GRAPH_RETRIEVAL_MAX_HOPS,
+                seed_count=self.settings.GRAPH_RETRIEVAL_SEED_COUNT,
+                min_edge_weight=self.settings.GRAPH_RETRIEVAL_MIN_EDGE_WEIGHT,
+            ),
         )
 
     async def refresh_keyword_index(self) -> None:
@@ -146,6 +171,7 @@ class KnowledgeToolsReader:
             "filter_path": filter_path,
             "include_context": include_context,
             "max_context_chars": max_context_chars,
+            "graph_version": self.retrieval_pipeline.graph_version,
         }
         digest = hashlib.sha256(
             json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")

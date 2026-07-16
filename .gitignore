@@ -5,6 +5,8 @@ __pycache__/
 dist/
 build/
 .pytest_cache/
+.pytest-local/
+pytest-cache-files-*/
 
 # Environment
 .env

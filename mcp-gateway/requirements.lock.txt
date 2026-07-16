@@ -18,4 +18,4 @@ Markdown==3.10.2
 bleach==6.2.0
 mcp==1.16.0
 starlette==1.0.0
-graphifyy>=0.8.22
+graphifyy==0.8.22

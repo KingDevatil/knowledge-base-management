@@ -1,9 +1,11 @@
 import asyncio
+from pathlib import Path
 
 import pytest
 
 from src.models import SearchResult
 from src.rag.retrieval import (
+    GraphAssociationExpander,
     KeywordChannel,
     RetrievalCandidate,
     RetrievalPipeline,
@@ -46,6 +48,9 @@ class MockKnowledgeBase:
 
     async def get_document_chunks(self, doc_id):
         return self.chunks.get(doc_id, [])
+
+    async def _doc_index_get(self, doc_id):
+        return next((doc for doc in self.docs if doc["doc_id"] == doc_id), None)
 
     async def search(self, query_embedding, top_k=5, filter_tags=None, filter_path=""):
         return [
@@ -310,3 +315,89 @@ async def test_pipeline_keeps_channel_hits_when_neighbor_expansion_times_out():
     assert pipeline.last_errors == [
         {"channel": "neighbor_expansion", "error": "timed out after 10ms"}
     ]
+
+
+@pytest.mark.asyncio
+async def test_pipeline_uses_weighted_graph_to_expand_related_documents():
+    class SingleHitChannel:
+        name = "single"
+        enabled = True
+        timeout_ms = 100
+
+        async def search(self, query):
+            return [RetrievalCandidate(
+                result=SearchResult(
+                    content="alpha hit",
+                    title="Alpha Manual",
+                    path="guides",
+                    doc_id="doc-1",
+                    chunk_index=0,
+                    score=0.9,
+                ),
+                channel=self.name,
+                raw_score=0.9,
+            )]
+
+    kb = MockKnowledgeBase()
+    graph_expander = GraphAssociationExpander(
+        kb,
+        "missing-retrieval-index.json",
+        weight=1.0,
+        max_results=2,
+        max_hops=1,
+    )
+    graph_expander._load_adjacency = lambda: {
+        "doc-1": [("doc-2", 0.9, "semantically_similar")],
+        "doc-2": [("doc-1", 0.9, "semantically_similar")],
+    }
+    pipeline = RetrievalPipeline(
+        channels=[SingleHitChannel()],
+        kb=kb,
+        graph_expander=graph_expander,
+    )
+
+    results = await pipeline.search(RetrievalQuery(text="alpha", top_k=2))
+
+    graph_results = [result for result in results if result["channel"] == "graph"]
+    assert [result["doc_id"] for result in graph_results] == ["doc-2"]
+    assert "semantically_similar" in graph_results[0]["association_reason"]
+
+
+@pytest.mark.asyncio
+async def test_graph_expansion_rechecks_live_document_filters():
+    kb = MockKnowledgeBase()
+    seed = RetrievalCandidate(
+        result=SearchResult(content="alpha", doc_id="doc-1", title="Alpha", score=0.9),
+        channel="vector",
+        raw_score=0.9,
+        final_score=0.9,
+    )
+    expander = GraphAssociationExpander(kb, "missing-retrieval-index.json", weight=1.0)
+    expander._load_adjacency = lambda: {
+        "doc-1": [("doc-2", 0.7, "co_tag")],
+        "doc-2": [("doc-1", 0.7, "co_tag")],
+    }
+
+    results = await expander.expand(
+        [seed],
+        RetrievalQuery(text="alpha", filter_path="guides"),
+    )
+
+    assert results == []
+
+
+def test_graph_loader_reads_weighted_edges_and_filters_weak_relations():
+    graph_path = Path(__file__).parent / "fixtures" / "retrieval_graph.json"
+    expander = GraphAssociationExpander(
+        MockKnowledgeBase(),
+        graph_path,
+        min_edge_weight=0.25,
+    )
+
+    adjacency = expander._load_adjacency()
+
+    assert adjacency == {
+        "doc-1": [("doc-2", 0.82, "semantically_similar")],
+        "doc-2": [("doc-1", 0.82, "semantically_similar")],
+    }
+    assert expander.version > 0

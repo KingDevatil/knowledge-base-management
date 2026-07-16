@@ -1,5 +1,8 @@
 .PHONY: help up down logs restart build backup health clean test pull-model
 
+# 可用档位：auto / minimum / recommended / high-performance
+PROFILE ?= auto
+
 # ── GPU 自动检测 ──
 # 有 NVIDIA GPU → 加载 docker-compose.gpu.yml
 # 无 GPU / Intel / AMD → 仅用 docker-compose.yml (CPU)
@@ -14,7 +17,7 @@ endif
 help:
 	@echo "企业中央知识库 + MCP Gateway 管理命令"
 	@echo ""
-	@echo "  make up      - 启动所有服务 (-d 后台运行)"
+	@echo "  make up PROFILE=recommended - 按硬件档位启动所有服务"
 	@echo "  make down    - 停止所有服务"
 	@echo "  make restart - 重启所有服务"
 	@echo "  make build   - 重新构建 Gateway 镜像"
@@ -31,7 +34,7 @@ help:
 
 # 启动服务
 up:
-	sh ./start.sh up
+	sh ./start.sh up --profile $(PROFILE)
 
 # 停止服务
 down:
@@ -40,7 +43,7 @@ down:
 # 重启服务
 restart:
 	sh ./start.sh down
-	sh ./start.sh up
+	sh ./start.sh up --profile $(PROFILE)
 
 # 重新构建
 build:

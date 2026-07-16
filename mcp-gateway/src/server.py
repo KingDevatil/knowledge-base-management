@@ -1,9 +1,8 @@
-import json
 from typing import Any
 
 from fastapi import HTTPException, status
 from mcp.server import Server
-from mcp.types import CallToolResult, TextContent, Tool
+from mcp.types import CallToolRequest, Tool
 
 from config import get_settings
 from kb_graph import KnowledgeGraphBuilder
@@ -234,7 +233,7 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
             ),
             Tool(
                 name="build_knowledge_graph",
-                description="构建知识图谱：分析文档关系（标签共享、目录结构、语义相似），生成交互式可视化图谱",
+                description="构建知识图谱与关联检索索引：分析标签共享、同目录和语义相似关系，并生成交互式可视化",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -243,22 +242,17 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
                             "minimum": 0.0,
                             "maximum": 1.0,
                             "default": 0.0,
-                            "description": "语义相似度阈值（0.0=关闭，0.7=推荐开启值）。开启后对所有文档计算向量相似度，超过阈值的文档对之间添加边。文档数较多时耗时较长。",
+                            "description": "语义相似度阈值（0.0=关闭，0.72=推荐起始值）。开启后对所有文档计算向量相似度，超过阈值的文档对之间添加加权边。文档数较多时耗时较长。",
                         },
                     },
                 },
             ),
         ]
 
-    def _make_error(result: dict) -> CallToolResult:
-        return CallToolResult(
-            content=[TextContent(
-                type="text",
-                text=json.dumps(result, ensure_ascii=False, indent=2),
-            )],
-            structuredContent=result,
-            isError=True,
-        )
+    def _make_error(result: dict) -> dict:
+        # Low-level MCP SDK normalizes dicts into structuredContent. Returning a
+        # CallToolResult here would be treated as an iterable and fail validation.
+        return result
 
     _DISPATCH = {
         "search_knowledge": lambda a, t: t.search_knowledge(
@@ -369,7 +363,7 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
         return safe_args
 
     @server.call_tool()
-    async def call_tool(name: str, arguments: Any) -> dict | CallToolResult:
+    async def call_tool(name: str, arguments: Any) -> dict:
         arguments = arguments or {}
         handler = _DISPATCH.get(name)
         if handler is None:
@@ -420,4 +414,15 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
             )
             return _make_error({"error": str(e)})
 
+    normalized_call_handler = server.request_handlers[CallToolRequest]
+
+    async def call_tool_with_error_flag(request: CallToolRequest):
+        response = await normalized_call_handler(request)
+        root = getattr(response, "root", None)
+        structured = getattr(root, "structuredContent", None)
+        if isinstance(structured, dict) and "error" in structured:
+            root.isError = True
+        return response
+
+    server.request_handlers[CallToolRequest] = call_tool_with_error_flag
     return server

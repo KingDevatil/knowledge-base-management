@@ -4,7 +4,7 @@ Docker deployment adapter for Windows.
 
 .DESCRIPTION
 Exposes the same interface as start.sh:
-  .\start.ps1 [up|down|status|logs|init] [-Gpu auto|cpu|gpu]
+  .\start.ps1 [up|down|status|logs|init] [-Gpu auto|cpu|gpu] [-Profile auto|minimum|recommended|high-performance] [-Tunnel off|cloudflare]
 #>
 
 [CmdletBinding()]
@@ -14,13 +14,20 @@ param(
     [string]$Command = "up",
 
     [ValidateSet("auto", "cpu", "gpu")]
-    [string]$Gpu = "auto"
+    [string]$Gpu = "auto",
+
+    [ValidateSet("auto", "minimum", "recommended", "high-performance")]
+    [string]$Profile = "auto",
+
+    [ValidateSet("off", "cloudflare")]
+    [string]$Tunnel = "off"
 )
 
 $ErrorActionPreference = "Stop"
 $RootDir = $PSScriptRoot
 $EnvFile = Join-Path $RootDir ".env"
 $script:ComposeFiles = @("-f", "docker-compose.yml")
+$script:ComposeOptions = @()
 
 Set-Location $RootDir
 
@@ -72,6 +79,25 @@ function Set-DotEnvValue([string]$Key, [string]$Value) {
     [System.IO.File]::WriteAllLines($EnvFile, $lines, $utf8WithoutBom)
 }
 
+function Set-HardwareProfile([string]$Name) {
+    if ([string]::IsNullOrWhiteSpace($Name) -or $Name -eq "auto") {
+        return
+    }
+    $profilePath = Join-Path $RootDir "deploy\profiles\$Name.env"
+    if (-not (Test-Path -LiteralPath $profilePath)) {
+        throw "硬件配置档位不存在：$profilePath"
+    }
+    foreach ($rawLine in [System.IO.File]::ReadAllLines($profilePath)) {
+        $line = $rawLine.Trim()
+        if (-not $line -or $line.StartsWith("#") -or -not $line.Contains("=")) {
+            continue
+        }
+        $parts = $line.Split(@('='), 2)
+        Set-DotEnvValue $parts[0].Trim() $parts[1].Trim()
+    }
+    Write-Step "[配置] 已应用硬件档位：$Name"
+}
+
 function Initialize-Environment {
     $created = $false
     if (-not (Test-Path -LiteralPath $EnvFile)) {
@@ -97,6 +123,12 @@ function Initialize-Environment {
     if ($created) {
         Set-DotEnvValue "EXTERNAL_DOMAIN" ""
         Set-DotEnvValue "INTERNAL_DOMAIN" "localhost"
+    }
+
+    if ($Profile -ne "auto") {
+        Set-HardwareProfile $Profile
+    } elseif ($created) {
+        Set-HardwareProfile "recommended"
     }
 }
 
@@ -134,11 +166,35 @@ function Select-ComposeFiles {
     }
 }
 
+function Select-Tunnel {
+    if ($Tunnel -eq "off") { return }
+    $token = Get-DotEnvValue "CLOUDFLARE_TUNNEL_TOKEN"
+    if ([string]::IsNullOrWhiteSpace($token)) {
+        throw "启用 Cloudflare Tunnel 前请在 .env 设置 CLOUDFLARE_TUNNEL_TOKEN。"
+    }
+    $script:ComposeOptions += @("--profile", "tunnel")
+    Write-Step "[穿透] Cloudflare Tunnel 已启用；Public Hostname 上游应配置为 http://nginx:80"
+}
+
 function Invoke-Compose([string[]]$Arguments) {
-    & docker compose @script:ComposeFiles @Arguments
+    & docker compose @script:ComposeFiles @script:ComposeOptions @Arguments
     if ($LASTEXITCODE -ne 0) {
         throw "docker compose 命令失败：$($Arguments -join ' ')"
     }
+}
+
+function Invoke-ComposeUpWithFallback {
+    & docker compose @script:ComposeFiles @script:ComposeOptions up -d --build
+    if ($LASTEXITCODE -eq 0) {
+        return
+    }
+
+    Write-Host "[回退] 中国大陆镜像拉取或构建失败，改用 Docker Hub、PyPI、Debian 官方源重试。" -ForegroundColor Yellow
+    $officialOverride = "docker-compose.official.yml"
+    if ($script:ComposeFiles -notcontains $officialOverride) {
+        $script:ComposeFiles += @("-f", $officialOverride)
+    }
+    Invoke-Compose @("up", "-d", "--build")
 }
 
 function Test-GatewayReady {
@@ -164,20 +220,23 @@ function Wait-Gateway {
     }
 
     Write-Host "[错误] 10 分钟内未就绪。以下是关键容器状态和日志：" -ForegroundColor Red
-    & docker compose @script:ComposeFiles ps
-    & docker compose @script:ComposeFiles logs --tail=80 ollama-model-init mcp-gateway
+    & docker compose @script:ComposeFiles @script:ComposeOptions ps
+    & docker compose @script:ComposeFiles @script:ComposeOptions logs --tail=80 ollama-model-init mcp-gateway
     throw "Gateway 启动超时"
 }
 
 function Show-Usage {
     @"
-用法: .\start.ps1 [up|down|status|logs|init] [-Gpu auto|cpu|gpu]
+用法: .\start.ps1 [up|down|status|logs|init] [-Gpu auto|cpu|gpu] [-Profile auto|minimum|recommended|high-performance] [-Tunnel off|cloudflare]
 
   up      初始化配置、构建并启动，等待模型和 Gateway 就绪（默认）
   down    停止 Docker 服务
   status  查看容器状态并检查 Gateway
   logs    跟踪所有容器日志
   init    仅创建/修复 .env，不启动服务
+
+  -Profile 显式覆盖硬件档位；auto 只在首次创建 .env 时应用 recommended
+  -Tunnel cloudflare 读取 .env 中的 Token 并启动可选内网穿透容器
 "@ | Write-Host
 }
 
@@ -190,23 +249,27 @@ switch ($Command) {
         Initialize-Environment
         Assert-DockerReady
         Select-ComposeFiles
+        Select-Tunnel
         Write-Step "[等待] Compose 将依次检查依赖、拉取模型并等待 Gateway 健康。"
-        Invoke-Compose @("up", "-d", "--build")
+        Invoke-ComposeUpWithFallback
         Wait-Gateway
         Write-Host ""
         Write-Host "部署完成：" -ForegroundColor Green
         Write-Host "  管理后台: http://localhost/admin"
         Write-Host "  MCP:      http://localhost/mcp"
         Write-Host "  局域网:   将 localhost 替换为本机 IP"
+        if ($Tunnel -eq "cloudflare") { Write-Host "  穿透:     Cloudflare Tunnel 已启动" }
     }
     "down" {
         Assert-DockerReady
         Select-ComposeFiles
-        Invoke-Compose @("down")
+        Select-Tunnel
+        Invoke-Compose @("down", "--remove-orphans")
     }
     "status" {
         Assert-DockerReady
         Select-ComposeFiles
+        Select-Tunnel
         Invoke-Compose @("ps")
         if (Test-GatewayReady) {
             Write-Host "[健康] Gateway 正常" -ForegroundColor Green
@@ -217,6 +280,7 @@ switch ($Command) {
     "logs" {
         Assert-DockerReady
         Select-ComposeFiles
+        Select-Tunnel
         Invoke-Compose @("logs", "-f")
     }
     "help" {

@@ -108,6 +108,11 @@ async def lifespan(app: FastAPI):
         health_cache_ttl=settings.EMBEDDING_HEALTH_CACHE_TTL,
         failure_threshold=settings.EMBEDDING_FAILURE_THRESHOLD,
         circuit_cooldown=settings.EMBEDDING_CIRCUIT_COOLDOWN,
+        request_timeout_seconds=settings.EMBEDDING_REQUEST_TIMEOUT_SECONDS,
+        health_timeout_seconds=settings.EMBEDDING_HEALTH_TIMEOUT_SECONDS,
+        max_connections=settings.EMBEDDING_MAX_CONNECTIONS,
+        max_keepalive_connections=settings.EMBEDDING_MAX_KEEPALIVE_CONNECTIONS,
+        max_batch_size=settings.EMBEDDING_MAX_BATCH_SIZE,
     )
     app.state.api_key_auth = APIKeyAuth(app.state.redis, settings.API_KEY_FILE)
     app.state.admin_auth = AdminAuth(

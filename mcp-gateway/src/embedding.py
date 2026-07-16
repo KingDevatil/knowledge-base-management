@@ -30,15 +30,35 @@ class OllamaEmbedder:
     """Ollama Embedding 客户端 — 使用 /api/embed 批量端点"""
 
     # 单次批量请求的最大文本数（按 512 字符/chunk 估算，200 条约 100KB 请求体）
-    MAX_BATCH_SIZE = 200
+    DEFAULT_MAX_BATCH_SIZE = 200
 
-    def __init__(self, base_url: str, model: str = "bge-m3"):
+    def __init__(
+        self,
+        base_url: str,
+        model: str = "bge-m3",
+        *,
+        request_timeout_seconds: float = 120.0,
+        health_timeout_seconds: float = 5.0,
+        max_connections: int = 20,
+        max_keepalive_connections: int = 8,
+        max_batch_size: int = DEFAULT_MAX_BATCH_SIZE,
+    ):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.name = f"ollama:{self.base_url}:{self.model}"
+        self.health_timeout_seconds = max(0.1, float(health_timeout_seconds))
+        self.max_batch_size = max(1, int(max_batch_size))
+        max_connections = max(1, int(max_connections))
+        max_keepalive_connections = max(
+            0,
+            min(int(max_keepalive_connections), max_connections),
+        )
         self.client = httpx.AsyncClient(
-            timeout=120.0,
-            limits=httpx.Limits(max_connections=20, max_keepalive_connections=5),
+            timeout=max(1.0, float(request_timeout_seconds)),
+            limits=httpx.Limits(
+                max_connections=max_connections,
+                max_keepalive_connections=max_keepalive_connections,
+            ),
         )
 
     async def embed(self, texts: Union[str, List[str]]) -> List[List[float]]:
@@ -62,12 +82,12 @@ class OllamaEmbedder:
         if not texts:
             return []
 
-        total_batches = (len(texts) + self.MAX_BATCH_SIZE - 1) // self.MAX_BATCH_SIZE
+        total_batches = (len(texts) + self.max_batch_size - 1) // self.max_batch_size
         all_embeddings = []
 
-        for i in range(0, len(texts), self.MAX_BATCH_SIZE):
-            batch_index = i // self.MAX_BATCH_SIZE
-            batch = texts[i : i + self.MAX_BATCH_SIZE]
+        for i in range(0, len(texts), self.max_batch_size):
+            batch_index = i // self.max_batch_size
+            batch = texts[i : i + self.max_batch_size]
 
             try:
                 batch_embeddings = await self._embed_batch(batch, batch_index, total_batches)
@@ -138,7 +158,10 @@ class OllamaEmbedder:
     async def health_check(self) -> bool:
         """检查 Ollama 服务是否可用"""
         try:
-            response = await self.client.get(f"{self.base_url}/api/tags", timeout=5.0)
+            response = await self.client.get(
+                f"{self.base_url}/api/tags",
+                timeout=self.health_timeout_seconds,
+            )
             return response.status_code == 200
         except Exception:
             return False
@@ -298,12 +321,24 @@ def build_embedding_provider(
     health_cache_ttl: int = 30,
     failure_threshold: int = 3,
     circuit_cooldown: int = 30,
+    request_timeout_seconds: float = 120.0,
+    health_timeout_seconds: float = 5.0,
+    max_connections: int = 20,
+    max_keepalive_connections: int = 8,
+    max_batch_size: int = OllamaEmbedder.DEFAULT_MAX_BATCH_SIZE,
 ) -> ResilientEmbeddingProvider:
+    provider_options = {
+        "request_timeout_seconds": request_timeout_seconds,
+        "health_timeout_seconds": health_timeout_seconds,
+        "max_connections": max_connections,
+        "max_keepalive_connections": max_keepalive_connections,
+        "max_batch_size": max_batch_size,
+    }
     providers: list[EmbeddingProvider] = [
-        OllamaEmbedder(primary_url, primary_model)
+        OllamaEmbedder(primary_url, primary_model, **provider_options)
     ]
     for spec in parse_embedding_fallbacks(fallback_specs):
-        providers.append(OllamaEmbedder(spec["url"], spec["model"]))
+        providers.append(OllamaEmbedder(spec["url"], spec["model"], **provider_options))
     return ResilientEmbeddingProvider(
         providers=providers,
         health_cache_ttl=health_cache_ttl,

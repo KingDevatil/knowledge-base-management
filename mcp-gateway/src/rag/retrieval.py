@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Protocol
 
 from models import SearchResult
@@ -27,6 +29,7 @@ class RetrievalCandidate:
     raw_score: float
     final_score: float = 0.0
     postprocess_reason: str = ""
+    association_reason: str = ""
 
 
 class RetrievalChannel(Protocol):
@@ -41,11 +44,11 @@ class RetrievalChannel(Protocol):
 class VectorChannel:
     name = "vector"
     enabled = True
-    timeout_ms = 5000
 
-    def __init__(self, kb: Any, embedder: Any):
+    def __init__(self, kb: Any, embedder: Any, timeout_ms: int = 5000):
         self.kb = kb
         self.embedder = embedder
+        self.timeout_ms = max(1, int(timeout_ms))
 
     async def search(self, query: RetrievalQuery) -> list[RetrievalCandidate]:
         embedding = await self.embedder.embed_single(query.text)
@@ -66,11 +69,16 @@ class VectorChannel:
 class KeywordChannel:
     name = "keyword"
     enabled = True
-    timeout_ms = 3000
 
-    def __init__(self, kb: Any, keyword_index: Any | None = None):
+    def __init__(
+        self,
+        kb: Any,
+        keyword_index: Any | None = None,
+        timeout_ms: int = 3000,
+    ):
         self.kb = kb
         self.keyword_index = keyword_index
+        self.timeout_ms = max(1, int(timeout_ms))
 
     async def search(self, query: RetrievalQuery) -> list[RetrievalCandidate]:
         terms = tokenize_keyword_terms(query.text)
@@ -104,10 +112,10 @@ class KeywordChannel:
 class StructureChannel:
     name = "structure"
     enabled = True
-    timeout_ms = 2000
 
-    def __init__(self, kb: Any):
+    def __init__(self, kb: Any, timeout_ms: int = 2000):
         self.kb = kb
+        self.timeout_ms = max(1, int(timeout_ms))
 
     async def search(self, query: RetrievalQuery) -> list[RetrievalCandidate]:
         query_text = query.text.strip().lower()
@@ -134,6 +142,198 @@ class StructureChannel:
         return sorted(candidates, key=lambda item: item.raw_score, reverse=True)[: query.top_k]
 
 
+class GraphAssociationExpander:
+    """Expand strong initial hits to related documents from the persisted graph.
+
+    The graph is optional and loaded lazily. A missing or stale graph never blocks the
+    vector/keyword/structure channels; document filters are rechecked against the live
+    document index before a graph candidate is returned.
+    """
+
+    name = "graph"
+
+    def __init__(
+        self,
+        kb: Any,
+        graph_path: str | Path,
+        *,
+        enabled: bool = True,
+        timeout_ms: int = 800,
+        weight: float = 0.35,
+        max_results: int = 3,
+        max_hops: int = 2,
+        seed_count: int = 3,
+        min_edge_weight: float = 0.25,
+    ):
+        self.kb = kb
+        self.graph_path = Path(graph_path)
+        self.enabled = bool(enabled)
+        self.timeout_ms = max(1, int(timeout_ms))
+        self.weight = min(max(float(weight), 0.0), 1.0)
+        self.max_results = max(0, int(max_results))
+        self.max_hops = min(max(1, int(max_hops)), 3)
+        self.seed_count = max(1, int(seed_count))
+        self.min_edge_weight = min(max(float(min_edge_weight), 0.0), 1.0)
+        self._cached_mtime_ns = -1
+        self._cached_adjacency: dict[str, list[tuple[str, float, str]]] = {}
+
+    @property
+    def version(self) -> int:
+        path = self._resolved_graph_path()
+        try:
+            return path.stat().st_mtime_ns
+        except OSError:
+            return 0
+
+    async def expand(
+        self,
+        candidates: list[RetrievalCandidate],
+        query: RetrievalQuery,
+    ) -> list[RetrievalCandidate]:
+        if not self.enabled or self.max_results == 0 or not candidates:
+            return []
+
+        adjacency = await asyncio.to_thread(self._load_adjacency)
+        if not adjacency:
+            return []
+
+        seeds: list[RetrievalCandidate] = []
+        existing_docs = {
+            candidate.result.doc_id for candidate in candidates if candidate.result.doc_id
+        }
+        seen_seed_docs: set[str] = set()
+        for candidate in sorted(
+            candidates,
+            key=lambda item: item.final_score or normalized_score(item),
+            reverse=True,
+        ):
+            doc_id = candidate.result.doc_id
+            if not doc_id or doc_id in seen_seed_docs:
+                continue
+            seen_seed_docs.add(doc_id)
+            seeds.append(candidate)
+            if len(seeds) >= self.seed_count:
+                break
+
+        related: dict[str, tuple[float, str]] = {}
+        for seed in seeds:
+            seed_id = seed.result.doc_id
+            seed_score = seed.final_score or normalized_score(seed)
+            frontier = [(seed_id, 1.0, [])]
+            best_seen = {seed_id: 1.0}
+            for hop in range(1, self.max_hops + 1):
+                next_frontier: list[tuple[str, float, list[str]]] = []
+                for current_id, path_weight, relations in frontier:
+                    for target_id, edge_weight, relation in adjacency.get(current_id, []):
+                        if target_id in seen_seed_docs:
+                            continue
+                        combined = path_weight * edge_weight
+                        if hop > 1:
+                            combined *= 0.75
+                        if combined <= best_seen.get(target_id, 0.0):
+                            continue
+                        best_seen[target_id] = combined
+                        path_relations = [*relations, relation]
+                        next_frontier.append((target_id, combined, path_relations))
+                        score = min(seed_score * combined * self.weight, 1.0)
+                        reason = (
+                            f"seed={seed_id}; hops={hop}; relations="
+                            f"{' -> '.join(path_relations)}; edge_score={combined:.4f}"
+                        )
+                        if (
+                            target_id not in existing_docs
+                            and score > related.get(target_id, (0.0, ""))[0]
+                        ):
+                            related[target_id] = (score, reason)
+                frontier_limit = max(50, self.max_results * 20)
+                frontier = sorted(
+                    next_frontier, key=lambda item: item[1], reverse=True
+                )[:frontier_limit]
+                if not frontier:
+                    break
+
+        expanded: list[RetrievalCandidate] = []
+        query_terms = tokenize_keyword_terms(query.text)
+        for doc_id, (score, reason) in sorted(
+            related.items(), key=lambda item: item[1][0], reverse=True
+        ):
+            doc = await self.kb._doc_index_get(doc_id)
+            if not doc or not doc_matches_filters(doc, query):
+                continue
+            chunks = await self.kb.get_document_chunks(doc_id)
+            if not chunks:
+                continue
+            chunk = max(
+                chunks,
+                key=lambda item: keyword_score(
+                    query_terms,
+                    doc,
+                    item.get("content", ""),
+                ),
+            )
+            expanded.append(
+                RetrievalCandidate(
+                    result=chunk_to_search_result(doc, chunk, score),
+                    channel=self.name,
+                    raw_score=score,
+                    association_reason=reason,
+                )
+            )
+            if len(expanded) >= self.max_results:
+                break
+        return expanded
+
+    def _resolved_graph_path(self) -> Path:
+        if self.graph_path.exists():
+            return self.graph_path
+        fallback = self.graph_path.with_name("graph.json")
+        return fallback if fallback.exists() else self.graph_path
+
+    def _load_adjacency(self) -> dict[str, list[tuple[str, float, str]]]:
+        path = self._resolved_graph_path()
+        try:
+            mtime_ns = path.stat().st_mtime_ns
+        except OSError:
+            self._cached_mtime_ns = -1
+            self._cached_adjacency = {}
+            return {}
+        if mtime_ns == self._cached_mtime_ns:
+            return self._cached_adjacency
+
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        edges = raw.get("edges", raw.get("links", []))
+        adjacency: dict[str, list[tuple[str, float, str]]] = {}
+        default_weights = {
+            "semantically_similar": 0.75,
+            "co_tag": 0.50,
+            "same_directory": 0.35,
+        }
+        for edge in edges:
+            source = edge.get("source", "")
+            target = edge.get("target", "")
+            if isinstance(source, dict):
+                source = source.get("id", "")
+            if isinstance(target, dict):
+                target = target.get("id", "")
+            source, target = str(source), str(target)
+            if not source or not target or source == target:
+                continue
+            relation = str(edge.get("relation") or edge.get("label") or "related")
+            try:
+                edge_weight = float(edge.get("weight", default_weights.get(relation, 0.30)))
+            except (TypeError, ValueError):
+                edge_weight = default_weights.get(relation, 0.30)
+            edge_weight = min(max(edge_weight, 0.0), 1.0)
+            if edge_weight < self.min_edge_weight:
+                continue
+            adjacency.setdefault(source, []).append((target, edge_weight, relation))
+            adjacency.setdefault(target, []).append((source, edge_weight, relation))
+
+        self._cached_mtime_ns = mtime_ns
+        self._cached_adjacency = adjacency
+        return adjacency
+
+
 class SearchResultPostProcessor:
     def process(
         self,
@@ -148,6 +348,8 @@ class SearchResultPostProcessor:
             candidate.postprocess_reason = (
                 f"channel={candidate.channel}; normalized; rerank={round(rerank_boost, 4)}"
             )
+            if candidate.association_reason:
+                candidate.postprocess_reason += f"; {candidate.association_reason}"
             current = best_by_chunk.get(key)
             if current is None or candidate.final_score > current.final_score:
                 best_by_chunk[key] = candidate
@@ -167,12 +369,14 @@ class RetrievalPipeline:
         kb: Any | None = None,
         neighbor_window: int = 0,
         neighbor_timeout_ms: int = 1000,
+        graph_expander: GraphAssociationExpander | None = None,
     ):
         self.channels = channels
         self.postprocessor = postprocessor or SearchResultPostProcessor()
         self.kb = kb
         self.neighbor_window = max(0, neighbor_window)
         self.neighbor_timeout_ms = max(1, neighbor_timeout_ms)
+        self.graph_expander = graph_expander
         self._last_errors: ContextVar[tuple[dict[str, str], ...]] = ContextVar(
             f"retrieval_errors_{id(self)}",
             default=(),
@@ -181,6 +385,10 @@ class RetrievalPipeline:
     @property
     def last_errors(self) -> list[dict[str, str]]:
         return list(self._last_errors.get())
+
+    @property
+    def graph_version(self) -> int:
+        return self.graph_expander.version if self.graph_expander else 0
 
     async def search(self, query: RetrievalQuery) -> list[dict[str, Any]]:
         query = rewrite_query(query)
@@ -229,6 +437,21 @@ class RetrievalPipeline:
                     "channel": "neighbor_expansion",
                     "error": str(exc),
                 })
+
+        if self.graph_expander and self.graph_expander.enabled:
+            try:
+                seed_candidates = self.postprocessor.process(list(candidates), query)
+                candidates.extend(await asyncio.wait_for(
+                    self.graph_expander.expand(seed_candidates, query),
+                    timeout=self.graph_expander.timeout_ms / 1000,
+                ))
+            except TimeoutError:
+                errors.append({
+                    "channel": "graph",
+                    "error": f"timed out after {self.graph_expander.timeout_ms}ms",
+                })
+            except Exception as exc:
+                errors.append({"channel": "graph", "error": str(exc)})
         self._last_errors.set(tuple(errors))
 
         processed = self.postprocessor.process(candidates, query)
@@ -378,6 +601,8 @@ def structure_score(query_text: str, doc: dict[str, Any]) -> float:
 def normalized_score(candidate: RetrievalCandidate) -> float:
     if candidate.channel == "vector":
         return candidate.raw_score
+    if candidate.channel == "graph":
+        return min(max(candidate.raw_score, 0.0), 1.0)
     if candidate.channel == "structure":
         return min(candidate.raw_score / 10.0, 1.0)
     return min(candidate.raw_score / 10.0, 1.0)
@@ -417,7 +642,7 @@ def chunk_to_search_result(doc: dict[str, Any], chunk: dict[str, Any], score: fl
 
 def candidate_to_debug_dict(candidate: RetrievalCandidate) -> dict[str, Any]:
     result = candidate.result
-    return {
+    item = {
         "content": result.content,
         "title": result.title,
         "path": result.path,
@@ -431,3 +656,6 @@ def candidate_to_debug_dict(candidate: RetrievalCandidate) -> dict[str, Any]:
         "final_score": round(candidate.final_score, 4),
         "postprocess_reason": candidate.postprocess_reason,
     }
+    if candidate.association_reason:
+        item["association_reason"] = candidate.association_reason
+    return item
