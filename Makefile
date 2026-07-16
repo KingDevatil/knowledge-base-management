@@ -25,24 +25,22 @@ help:
 	@echo "  make backup  - 备份 Chroma 和 MinIO 数据"
 	@echo "  make clean   - 清理所有数据和卷 (⚠️ 危险)"
 	@echo "  make test    - 运行基础连通性测试"
-	@echo "  make pull-model - 拉取 Ollama bge-m3 模型"
+	@echo "  make pull-model - 手动刷新 Ollama 模型（正常启动会自动拉取）"
 	@echo ""
 	@echo "GPU 检测: $$(if [ -n '$(NVIDIA_SMI)' ]; then echo '🟢 NVIDIA GPU 已启用'; else echo '🟡 CPU 模式'; fi)"
 
 # 启动服务
 up:
-	docker compose $(COMPOSE_FILES) up -d
-	@echo "服务启动中，约需 30-60 秒..."
-	@sleep 5
-	@make health
+	sh ./start.sh up
 
 # 停止服务
 down:
-	docker compose $(COMPOSE_FILES) down
+	sh ./start.sh down
 
 # 重启服务
 restart:
-	docker compose $(COMPOSE_FILES) restart
+	sh ./start.sh down
+	sh ./start.sh up
 
 # 重新构建
 build:
@@ -51,7 +49,7 @@ build:
 
 # 查看 Gateway 日志
 logs:
-	docker compose $(COMPOSE_FILES) logs -f mcp-gateway
+	sh ./start.sh logs
 
 # 查看所有日志
 logs-all:
@@ -59,8 +57,7 @@ logs-all:
 
 # 健康检查
 health:
-	@echo "=== 服务健康检查 ==="
-	@curl -s http://localhost:8000/health | python -m json.tool || echo "服务未就绪，请稍后再试"
+	sh ./start.sh status
 
 # 运行指标
 metrics:
@@ -92,6 +89,6 @@ test:
 	@echo "=== 测试服务连通性 ==="
 	@curl -s -o /dev/null -w "Nginx: %{http_code}\n" http://localhost:80/health || echo "Nginx: 未运行"
 	@curl -s -o /dev/null -w "Gateway: %{http_code}\n" http://localhost:8000/health || echo "Gateway: 未运行"
-	@curl -s -o /dev/null -w "Chroma: %{http_code}\n" http://localhost:8001/api/v1/heartbeat || echo "Chroma: 未运行"
+	@curl -s -o /dev/null -w "Chroma: %{http_code}\n" http://localhost:8001/api/v2/heartbeat || echo "Chroma: 未运行"
 	@curl -s -o /dev/null -w "MinIO: %{http_code}\n" http://localhost:9000/minio/health/live || echo "MinIO: 未运行"
 	@echo "Redis: $$(docker compose exec redis redis-cli ping 2>/dev/null || echo '未运行')"

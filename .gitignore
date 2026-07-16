@@ -8,6 +8,8 @@ build/
 
 # Environment
 .env
+.env.local
+.venv/
 *.log
 start-dev.log
 

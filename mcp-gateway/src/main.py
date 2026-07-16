@@ -44,6 +44,16 @@ def _create_local_source_store():
         bucket=settings.MINIO_BUCKET,
     ), fallback_base
 
+
+async def _initialize_document_catalog(kb, tools) -> None:
+    """Reconcile Redis document metadata before building the in-memory index."""
+    try:
+        rebuilt = await kb._doc_index_rebuild()
+        logger.info(f"Document catalog reconciled from Chroma: {rebuilt} documents")
+    except Exception as e:
+        logger.warning(f"Failed to reconcile document catalog at startup: {e}")
+    await tools.refresh_keyword_index_safely("startup")
+
 # Windows 系统代理会导致 httpx 走代理连接本地 ChromaDB 被拒
 import os as _os
 _no_proxy = _os.environ.get("NO_PROXY", "")
@@ -127,7 +137,7 @@ async def lifespan(app: FastAPI):
         api_key_auth=app.state.api_key_auth,
         redis_client=app.state.redis,
     )
-    await app.state.tools.refresh_keyword_index_safely("startup")
+    await _initialize_document_catalog(app.state.kb, app.state.tools)
     app.state.mcp_server = create_mcp_server(app.state.tools)
     app.state.sse_transport = SseServerTransport("/sse/messages/")
     # 官方 StreamableHTTP Session Manager —— 管理会话、transport 和消息路由

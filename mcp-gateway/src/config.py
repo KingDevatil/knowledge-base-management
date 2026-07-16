@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"
     SEARCH_CACHE_TTL: int = 300
+    SEARCH_TOTAL_TIMEOUT_MS: int = 8000
+    SEARCH_ENRICH_TIMEOUT_MS: int = 1500
+    SEARCH_MAX_CONCURRENCY: int = 8
+    SEARCH_QUEUE_TIMEOUT_MS: int = 250
+    SEARCH_CONTEXT_MAX_CHARS: int = 2000
 
     # Chroma
     CHROMA_HOST: str = "localhost"

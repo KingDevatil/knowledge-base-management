@@ -1,3 +1,4 @@
+import asyncio
 import json
 from typing import List, Optional
 import chromadb
@@ -75,17 +76,26 @@ class KnowledgeBase:
 
     async def _doc_index_rebuild(self) -> int:
         """从 Chroma 重建文档索引到 Redis（首调用时或数据不一致时使用）"""
-        results = self.collection.get(include=["metadatas"])
-        if not results["metadatas"]:
-            return 0
+        existing_docs: dict[str, dict] = {}
+        if self._redis:
+            existing_raw = await self._redis.hgetall(DOC_INDEX_KEY)
+            for doc_id, raw in existing_raw.items():
+                try:
+                    value = json.loads(raw)
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                if isinstance(value, dict):
+                    existing_docs[doc_id] = value
 
+        results = self.collection.get(include=["metadatas"])
         docs = {}
-        for meta in results["metadatas"]:
+        for meta in results.get("metadatas") or []:
             doc_id = meta.get("doc_id", "")
             if not doc_id:
                 continue
             if doc_id not in docs:
                 docs[doc_id] = {
+                    **existing_docs.get(doc_id, {}),
                     "doc_id": doc_id,
                     "title": meta.get("title", ""),
                     "path": meta.get("path", ""),
@@ -94,6 +104,7 @@ class KnowledgeBase:
                     "created_at": meta.get("created_at", ""),
                     "updated_at": meta.get("updated_at", ""),
                 }
+                docs[doc_id].pop("__write_status", None)
             docs[doc_id]["chunk_count"] += 1
             # 取最新 updated_at
             u = meta.get("updated_at", "")
@@ -101,6 +112,7 @@ class KnowledgeBase:
                 docs[doc_id]["updated_at"] = u
 
         if self._redis:
+            await self._redis.delete(DOC_INDEX_KEY)
             pipe = self._redis.pipeline()
             for doc_id, info in docs.items():
                 pipe.hset(DOC_INDEX_KEY, doc_id, json.dumps(info, ensure_ascii=False))
@@ -177,11 +189,12 @@ class KnowledgeBase:
 
         where = where_clause if where_clause else None
 
-        results = self.collection.query(
+        results = await asyncio.to_thread(
+            self.collection.query,
             query_embeddings=[query_embedding],
             n_results=top_k,
             where=where,
-            include=["documents", "metadatas", "distances"]
+            include=["documents", "metadatas", "distances"],
         )
 
         search_results = []
@@ -265,11 +278,19 @@ class KnowledgeBase:
         total = len(doc_list)
         return [DocumentInfo(**d) for d in doc_list[offset:offset + limit]], total
 
-    async def get_document_chunks(self, doc_id: str) -> List[dict]:
-        """获取某文档的所有切片"""
-        results = self.collection.get(
+    async def get_document_chunks(
+        self,
+        doc_id: str,
+        include_embeddings: bool = False,
+    ) -> List[dict]:
+        """获取某文档的所有切片，仅在回滚等写入场景按需携带向量。"""
+        include = ["documents", "metadatas"]
+        if include_embeddings:
+            include.append("embeddings")
+        results = await asyncio.to_thread(
+            self.collection.get,
             where={"doc_id": doc_id},
-            include=["documents", "metadatas", "embeddings"]
+            include=include,
         )
 
         chunks = []

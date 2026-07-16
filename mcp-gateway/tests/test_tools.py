@@ -9,6 +9,7 @@ os.environ["DEBUG"] = "true"
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 import pytest
+from fastapi import HTTPException
 from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime, timezone
 
@@ -16,6 +17,7 @@ from helpers import content_hash, content_size_kb
 from document_versions import DocumentVersionStore
 from tools_reader import KnowledgeToolsReader
 from tools import KnowledgeTools
+from lock import WriteLockError
 
 
 # ==================== Mock Services ====================
@@ -256,7 +258,7 @@ class MockKnowledgeBase:
             ))
         return results[:top_k]
 
-    async def get_document_chunks(self, doc_id):
+    async def get_document_chunks(self, doc_id, include_embeddings=False):
         if doc_id not in self.collection._docs:
             return []
         doc = self.collection._docs[doc_id]
@@ -397,6 +399,169 @@ class TestKnowledgeToolsReader:
         assert result["total"] == 0
 
     @pytest.mark.asyncio
+    async def test_search_knowledge_returns_degraded_result_at_total_deadline(self, reader):
+        object.__setattr__(reader.settings, "SEARCH_TOTAL_TIMEOUT_MS", 20)
+
+        async def slow_search(_query):
+            await asyncio.sleep(1)
+            return []
+
+        reader.retrieval_pipeline.search = slow_search
+
+        result = await asyncio.wait_for(
+            reader.search_knowledge("slow query"),
+            timeout=0.2,
+        )
+
+        assert result["status"] == "degraded"
+        assert result["timed_out"] is True
+        assert result["results"] == []
+        assert result["retrieval_errors"] == [
+            {"channel": "request", "error": "timed out after 20ms"}
+        ]
+        assert result["timings_ms"]["total"] >= 20
+
+    @pytest.mark.asyncio
+    async def test_search_knowledge_reports_health_and_stage_timings(self, reader):
+        result = await reader.search_knowledge("test", top_k=5)
+
+        assert result["status"] == "ok"
+        assert result["timed_out"] is False
+        assert {"retrieval", "enrichment", "total"} <= set(result["timings_ms"])
+        assert all(value >= 0 for value in result["timings_ms"].values())
+
+    @pytest.mark.asyncio
+    async def test_search_knowledge_keeps_hits_when_context_enrichment_times_out(self, reader):
+        object.__setattr__(reader.settings, "SEARCH_TOTAL_TIMEOUT_MS", 200)
+        object.__setattr__(reader.settings, "SEARCH_ENRICH_TIMEOUT_MS", 20)
+        reader.retrieval_pipeline.search = AsyncMock(return_value=[{
+            "doc_id": "doc_1",
+            "chunk_index": 0,
+            "content": "matched content",
+            "title": "Test Doc",
+            "path": "test/path",
+        }])
+
+        async def slow_enrichment(_items, **_kwargs):
+            await asyncio.sleep(1)
+            return []
+
+        reader._enrich_search_results = slow_enrichment
+
+        result = await reader.search_knowledge("test", top_k=1)
+
+        assert result["status"] == "degraded"
+        assert result["timed_out"] is True
+        assert result["total"] == 1
+        assert result["results"][0]["content"] == "matched content"
+        assert result["results"][0]["citation"] == "test/path:Test Doc#chunk-0"
+        assert result["retrieval_errors"] == [
+            {"channel": "enrichment", "error": "timed out after 20ms"}
+        ]
+
+    @pytest.mark.asyncio
+    async def test_search_knowledge_rejects_excess_work_instead_of_waiting_unbounded(self, reader):
+        object.__setattr__(reader.settings, "SEARCH_QUEUE_TIMEOUT_MS", 10)
+        reader._search_capacity = asyncio.Semaphore(1)
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def held_search(_query):
+            started.set()
+            await release.wait()
+            return []
+
+        reader.retrieval_pipeline.search = held_search
+        first = asyncio.create_task(reader.search_knowledge("first"))
+        await started.wait()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await reader.search_knowledge("second")
+
+        assert exc_info.value.status_code == 503
+        assert exc_info.value.detail["retry_after_ms"] == 10
+        release.set()
+        await first
+
+    @pytest.mark.asyncio
+    async def test_search_knowledge_prefetches_each_document_once(self, reader):
+        reader.retrieval_pipeline.search = AsyncMock(return_value=[
+            {
+                "doc_id": "doc_1", "chunk_index": 0, "content": "first",
+                "title": "Test Doc", "path": "test/path",
+            },
+            {
+                "doc_id": "doc_1", "chunk_index": 1, "content": "second",
+                "title": "Test Doc", "path": "test/path",
+            },
+        ])
+        reader.kb.get_document_chunks = AsyncMock(return_value=[
+            {"content": "first", "metadata": {"chunk_index": 0}},
+            {"content": "second", "metadata": {"chunk_index": 1}},
+        ])
+        reader.kb._doc_index_get = AsyncMock(return_value={
+            "updated_at": "2026-01-01", "tags": ["test"],
+        })
+
+        result = await reader.search_knowledge("test", top_k=2)
+
+        assert result["total"] == 2
+        reader.kb.get_document_chunks.assert_awaited_once_with("doc_1")
+        reader.kb._doc_index_get.assert_awaited_once_with("doc_1")
+
+    @pytest.mark.asyncio
+    async def test_search_knowledge_limits_neighbor_context_to_requested_budget(self, reader):
+        reader.retrieval_pipeline.search = AsyncMock(return_value=[{
+            "doc_id": "doc_1",
+            "chunk_index": 1,
+            "content": "matched",
+            "title": "Test Doc",
+            "path": "test/path",
+        }])
+        reader.kb.get_document_chunks = AsyncMock(return_value=[
+            {"content": "0123456789", "metadata": {"chunk_index": 0}},
+            {"content": "matched", "metadata": {"chunk_index": 1}},
+            {"content": "abcdefghij", "metadata": {"chunk_index": 2}},
+        ])
+        reader.kb._doc_index_get = AsyncMock(return_value={})
+
+        result = await reader.search_knowledge(
+            "test",
+            top_k=1,
+            max_context_chars=6,
+        )
+
+        hit = result["results"][0]
+        assert hit["context_before"] == "789"
+        assert hit["context_after"] == "abc"
+        assert hit["context_truncated"] is True
+
+    @pytest.mark.asyncio
+    async def test_search_knowledge_can_skip_neighbor_context_reads(self, reader):
+        reader.retrieval_pipeline.search = AsyncMock(return_value=[{
+            "doc_id": "doc_1",
+            "chunk_index": 0,
+            "content": "matched",
+            "title": "Test Doc",
+            "path": "test/path",
+        }])
+        reader.kb.get_document_chunks = AsyncMock(
+            side_effect=AssertionError("neighbor chunks should not be loaded")
+        )
+        reader.kb._doc_index_get = AsyncMock(return_value={})
+
+        result = await reader.search_knowledge(
+            "test",
+            top_k=1,
+            include_context=False,
+        )
+
+        hit = result["results"][0]
+        assert hit["context_before"] == ""
+        assert hit["context_after"] == ""
+        reader.kb.get_document_chunks.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_search_knowledge_does_not_rebuild_keyword_index(self, reader):
         reader.keyword_index.rebuild = AsyncMock(side_effect=AssertionError("unexpected rebuild"))
 
@@ -516,6 +681,62 @@ class TestKnowledgeToolsAdd:
         assert doc["path"] == "test"
 
     @pytest.mark.asyncio
+    async def test_add_document_reports_ingestion_progress(self):
+        tools, _kb, _store = _make_tools()
+        updates = []
+
+        async def report(progress, message):
+            updates.append((progress, message))
+
+        await tools.add_document(
+            title="Progress",
+            content="# Content",
+            progress_callback=report,
+        )
+
+        assert updates[0] == (5, "解析 Markdown")
+        assert (35, "生成向量") in updates
+        assert (65, "等待写入锁") in updates
+        assert updates[-1] == (100, "文档入库完成")
+        assert [progress for progress, _message in updates] == sorted(
+            progress for progress, _message in updates
+        )
+
+    @pytest.mark.asyncio
+    async def test_add_document_lock_conflict_includes_retry_hint(self):
+        class BusyWriteLock:
+            async def __aenter__(self):
+                raise WriteLockError("busy", retry_after_ms=750)
+
+            async def __aexit__(self, *args):
+                return None
+
+        tools, _kb, _store = _make_tools()
+        tools.write_lock = BusyWriteLock()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await tools.add_document(title="Busy", content="# Content")
+
+        assert exc_info.value.status_code == 423
+        assert exc_info.value.detail == {
+            "message": "知识库写入锁被占用，文档「Busy」暂时无法导入，请稍后重试",
+            "retry_after_ms": 750,
+        }
+
+    @pytest.mark.asyncio
+    async def test_add_document_updates_only_its_keyword_entries(self):
+        tools, kb, store = _make_tools()
+        tools.keyword_index.rebuild = AsyncMock(
+            side_effect=AssertionError("unexpected full rebuild")
+        )
+        tools.keyword_index.upsert_document = AsyncMock()
+
+        result = await tools.add_document(title="Incremental", content="# New term")
+
+        tools.keyword_index.upsert_document.assert_awaited_once_with(kb, result["doc_id"])
+        tools.keyword_index.rebuild.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_add_document_empty_title(self):
         tools, kb, store = _make_tools()
         with pytest.raises(Exception, match="标题不能为空"):
@@ -610,6 +831,27 @@ class TestKnowledgeToolsUpdate:
         assert result["success"] is True
         doc = await tools.get_document(doc_id)
         assert doc["title"] == "Updated"
+
+    @pytest.mark.asyncio
+    async def test_update_document_reports_long_running_stages(self):
+        tools, _kb, _store = _make_tools()
+        added = await tools.add_document(title="Original", content="# Original")
+        updates = []
+
+        async def report(progress, message):
+            updates.append((progress, message))
+
+        await tools.update_document(
+            doc_id=added["doc_id"],
+            title="Updated",
+            content="# Updated",
+            progress_callback=report,
+        )
+
+        assert updates[0] == (5, "读取现有文档")
+        assert (35, "生成向量") in updates
+        assert (65, "等待写入锁") in updates
+        assert updates[-1] == (100, "文档更新完成")
 
     @pytest.mark.asyncio
     async def test_update_document_not_found(self):
@@ -797,6 +1039,20 @@ class TestKnowledgeToolsDelete:
             await tools.get_document(doc_id)
 
     @pytest.mark.asyncio
+    async def test_delete_document_removes_only_its_keyword_entries(self):
+        tools, kb, store = _make_tools()
+        added = await tools.add_document(title="Remove Index", content="# Delete me")
+        tools.keyword_index.rebuild = AsyncMock(
+            side_effect=AssertionError("unexpected full rebuild")
+        )
+        tools.keyword_index.remove_document = MagicMock()
+
+        await tools.delete_document(added["doc_id"])
+
+        tools.keyword_index.remove_document.assert_called_once_with(added["doc_id"])
+        tools.keyword_index.rebuild.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_delete_document_not_found(self):
         tools, kb, store = _make_tools()
         with pytest.raises(Exception, match="不存在"):
@@ -824,6 +1080,25 @@ class TestKnowledgeToolsReindex:
         assert result["success"] is True
         assert result["chunks_old"] > 0
         assert result["chunks_new"] > 0
+
+    @pytest.mark.asyncio
+    async def test_reindex_document_reports_long_running_stages(self):
+        tools, _kb, _store = _make_tools()
+        added = await tools.add_document(title="To Reindex", content="# Original")
+        updates = []
+
+        async def report(progress, message):
+            updates.append((progress, message))
+
+        await tools.reindex_document(
+            added["doc_id"],
+            progress_callback=report,
+        )
+
+        assert updates[0] == (5, "读取现有文档")
+        assert (35, "生成向量") in updates
+        assert (65, "等待写入锁") in updates
+        assert updates[-1] == (100, "文档索引重建完成")
 
     @pytest.mark.asyncio
     async def test_reindex_document_not_found(self):

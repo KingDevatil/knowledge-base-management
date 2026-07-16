@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from src.models import SearchResult
@@ -135,6 +137,102 @@ async def test_pipeline_returns_debug_fields():
 
 
 @pytest.mark.asyncio
+async def test_pipeline_starts_enabled_channels_concurrently():
+    peer_started = asyncio.Event()
+
+    class WaitForPeerChannel:
+        name = "wait-for-peer"
+        enabled = True
+        timeout_ms = 100
+
+        async def search(self, query):
+            await asyncio.wait_for(peer_started.wait(), timeout=0.05)
+            return []
+
+    class SignalPeerChannel:
+        name = "signal-peer"
+        enabled = True
+        timeout_ms = 100
+
+        async def search(self, query):
+            peer_started.set()
+            return []
+
+    pipeline = RetrievalPipeline(channels=[WaitForPeerChannel(), SignalPeerChannel()])
+
+    await pipeline.search(RetrievalQuery(text="alpha"))
+
+    assert pipeline.last_errors == []
+
+
+@pytest.mark.asyncio
+async def test_pipeline_times_out_slow_channel_without_losing_fast_results():
+    class SlowChannel:
+        name = "slow"
+        enabled = True
+        timeout_ms = 10
+
+        async def search(self, query):
+            await asyncio.sleep(0.05)
+            return []
+
+    class FastChannel:
+        name = "fast"
+        enabled = True
+        timeout_ms = 100
+
+        async def search(self, query):
+            return [
+                RetrievalCandidate(
+                    result=SearchResult(
+                        content="fast result",
+                        title="Fast",
+                        doc_id="doc-fast",
+                        chunk_index=0,
+                        score=0.8,
+                    ),
+                    channel=self.name,
+                    raw_score=0.8,
+                )
+            ]
+
+    pipeline = RetrievalPipeline(channels=[SlowChannel(), FastChannel()])
+
+    results = await pipeline.search(RetrievalQuery(text="fast"))
+
+    assert [result["channel"] for result in results] == ["fast"]
+    assert pipeline.last_errors == [
+        {"channel": "slow", "error": "timed out after 10ms"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_pipeline_keeps_channel_errors_isolated_per_concurrent_request():
+    class QueryAwareChannel:
+        name = "query-aware"
+        enabled = True
+        timeout_ms = 100
+
+        async def search(self, query):
+            if query.text == "bad":
+                await asyncio.sleep(0.01)
+                raise RuntimeError("bad query")
+            await asyncio.sleep(0.02)
+            return []
+
+    pipeline = RetrievalPipeline(channels=[QueryAwareChannel()])
+
+    async def run(query):
+        await pipeline.search(RetrievalQuery(text=query))
+        return pipeline.last_errors
+
+    bad_errors, good_errors = await asyncio.gather(run("bad"), run("good"))
+
+    assert bad_errors == [{"channel": "query-aware", "error": "bad query"}]
+    assert good_errors == []
+
+
+@pytest.mark.asyncio
 async def test_pipeline_expands_neighbor_chunks_when_configured():
     class SingleHitChannel:
         name = "single"
@@ -170,3 +268,45 @@ async def test_pipeline_expands_neighbor_chunks_when_configured():
     assert neighbor
     assert neighbor[0]["chunk_index"] == 1
     assert "channel=single+neighbor; normalized" in neighbor[0]["postprocess_reason"]
+
+
+@pytest.mark.asyncio
+async def test_pipeline_keeps_channel_hits_when_neighbor_expansion_times_out():
+    class FastChannel:
+        name = "fast"
+        enabled = True
+        timeout_ms = 100
+
+        async def search(self, query):
+            return [
+                RetrievalCandidate(
+                    result=SearchResult(
+                        content="hit",
+                        title="Alpha Manual",
+                        doc_id="doc-1",
+                        chunk_index=0,
+                        score=0.8,
+                    ),
+                    channel=self.name,
+                    raw_score=0.8,
+                )
+            ]
+
+    class SlowNeighborKB:
+        async def get_document_chunks(self, doc_id):
+            await asyncio.sleep(1)
+            return []
+
+    pipeline = RetrievalPipeline(
+        channels=[FastChannel()],
+        kb=SlowNeighborKB(),
+        neighbor_window=1,
+        neighbor_timeout_ms=10,
+    )
+
+    results = await pipeline.search(RetrievalQuery(text="alpha", top_k=3))
+
+    assert [result["channel"] for result in results] == ["fast"]
+    assert pipeline.last_errors == [
+        {"channel": "neighbor_expansion", "error": "timed out after 10ms"}
+    ]

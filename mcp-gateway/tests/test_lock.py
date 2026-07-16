@@ -18,6 +18,7 @@ class MockRedis:
     def __init__(self):
         self._store: dict[str, str] = {}
         self._ttl: dict[str, float] = {}
+        self.renew_count = 0
 
     async def set(self, key: str, value: str, nx: bool = False, ex: int = 0) -> bool:
         if nx and key in self._store:
@@ -40,6 +41,12 @@ class MockRedis:
         """Simulate Lua atomic get+delete."""
         key = args[0]
         expected_value = args[1] if len(args) > 1 else ""
+        if "expire" in lua_script:
+            if self._store.get(key) == expected_value:
+                self._ttl[key] = int(args[2])
+                self.renew_count += 1
+                return 1
+            return 0
         if self._store.get(key) == expected_value:
             del self._store[key]
             return 1
@@ -89,6 +96,17 @@ class TestWriteLockUnit:
         assert acquired is False
 
     @pytest.mark.asyncio
+    async def test_failed_reacquire_on_same_instance_preserves_owner_token(self, lock):
+        assert await lock.acquire() is True
+        owner_token = lock._lock_id
+
+        assert await lock.acquire() is False
+
+        assert lock._lock_id == owner_token
+        await lock.release()
+        assert await lock.redis.get(lock.key) is None
+
+    @pytest.mark.asyncio
     async def test_release_lock_succeeds(self, lock):
         """Release should clear lock when called by owner."""
         await lock.acquire()
@@ -109,14 +127,27 @@ class TestWriteLockUnit:
         assert lock._lock_id is None
 
     @pytest.mark.asyncio
+    async def test_context_manager_renews_lease_while_work_is_running(self, redis):
+        lock = WriteLock(redis, key="renewing:lock", ttl=1, renew_interval=0.01)
+
+        async with lock:
+            await asyncio.sleep(0.035)
+            assert redis.renew_count >= 2
+            assert await redis.get(lock.key) == lock._lock_id
+
+        assert await redis.get(lock.key) is None
+
+    @pytest.mark.asyncio
     async def test_context_manager_raises_when_locked(self, lock):
         """async with should raise WriteLockError when lock is held."""
         await lock.acquire()
 
         lock2 = WriteLock(lock.redis, key=lock.key, ttl=5)
-        with pytest.raises(WriteLockError, match="获取写入锁失败"):
+        with pytest.raises(WriteLockError, match="获取写入锁失败") as exc_info:
             async with lock2:
                 pass
+
+        assert exc_info.value.retry_after_ms == 5000
 
     @pytest.mark.asyncio
     async def test_double_release_is_safe(self, lock):

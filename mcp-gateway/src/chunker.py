@@ -108,11 +108,14 @@ def chunk_markdown(content: str, chunk_size: int = 512, overlap: int = 50) -> Li
                             note2 = _make_note(heading, part_no, total_parts) if part_no > 0 and heading else ""
                             flush_buf(sub_buf, note2)
                             part_no += 1
-                        note3 = _make_note(heading, part_no, total_parts) if part_no > 0 and heading else ""
-                        flush_buf(item[:chunk_size], note3)
-                        part_no += 1
-                        rest = item[chunk_size:]
-                        sub_buf = rest[:overlap] if overlap > 0 else (rest[:60] if rest else "")
+                        step = max(1, chunk_size - max(0, overlap))
+                        start = 0
+                        while len(item) - start > chunk_size:
+                            note3 = _make_note(heading, part_no, total_parts) if part_no > 0 and heading else ""
+                            flush_buf(item[start:start + chunk_size], note3)
+                            part_no += 1
+                            start += step
+                        sub_buf = item[start:]
                 if sub_buf:
                     note4 = _make_note(heading, part_no, total_parts) if part_no > 0 and heading else ""
                     flush_buf(sub_buf, note4)

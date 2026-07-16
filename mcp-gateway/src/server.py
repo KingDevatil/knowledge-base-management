@@ -3,7 +3,7 @@ from typing import Any
 
 from fastapi import HTTPException, status
 from mcp.server import Server
-from mcp.types import TextContent, Tool
+from mcp.types import CallToolResult, TextContent, Tool
 
 from config import get_settings
 from kb_graph import KnowledgeGraphBuilder
@@ -61,14 +61,16 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
         return [
             Tool(
                 name="search_knowledge",
-                description="向量检索知识库，返回与查询最相关的文档片段",
+                description="混合检索知识库（向量、关键词、结构），返回与查询最相关且带引用上下文的文档片段",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string", "description": "查询内容"},
-                        "top_k": {"type": "integer", "default": 5, "description": "返回结果数量"},
+                        "query": {"type": "string", "minLength": 1, "description": "查询内容"},
+                        "top_k": {"type": "integer", "minimum": 1, "maximum": 50, "default": 5, "description": "返回结果数量"},
                         "filter_tags": {"type": "array", "items": {"type": "string"}, "default": [], "description": "按标签筛选"},
                         "filter_path": {"type": "string", "default": "", "description": "按目录路径筛选"},
+                        "include_context": {"type": "boolean", "default": True, "description": "是否返回命中切片前后的相邻上下文"},
+                        "max_context_chars": {"type": "integer", "minimum": 0, "maximum": 20000, "description": "每条结果的相邻上下文总字符预算；默认由服务配置决定"},
                     },
                     "required": ["query"],
                 },
@@ -79,8 +81,8 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "title": {"type": "string", "description": "文档标题"},
-                        "content": {"type": "string", "description": "文档内容（Markdown）"},
+                        "title": {"type": "string", "minLength": 1, "description": "文档标题"},
+                        "content": {"type": "string", "minLength": 1, "description": "文档内容（Markdown）"},
                         "path": {"type": "string", "default": "", "description": "所属目录路径"},
                         "tags": {"type": "array", "items": {"type": "string"}, "default": [], "description": "标签列表"},
                     },
@@ -93,7 +95,7 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "doc_id": {"type": "string", "description": "文档 ID"},
+                        "doc_id": {"type": "string", "minLength": 1, "description": "文档 ID"},
                     },
                     "required": ["doc_id"],
                 },
@@ -104,9 +106,9 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "doc_id": {"type": "string", "description": "文档 ID"},
-                        "title": {"type": "string", "description": "新标题"},
-                        "content": {"type": "string", "description": "新内容"},
+                        "doc_id": {"type": "string", "minLength": 1, "description": "文档 ID"},
+                        "title": {"type": "string", "minLength": 1, "description": "新标题"},
+                        "content": {"type": "string", "minLength": 1, "description": "新内容"},
                         "path": {"type": "string", "default": "", "description": "新目录路径（留空则保留原路径）"},
                         "tags": {"type": "array", "items": {"type": "string"}, "default": [], "description": "新标签列表"},
                     },
@@ -119,7 +121,7 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "doc_id": {"type": "string", "description": "文档 ID"},
+                        "doc_id": {"type": "string", "minLength": 1, "description": "文档 ID"},
                     },
                     "required": ["doc_id"],
                 },
@@ -132,8 +134,8 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
                     "properties": {
                         "tags": {"type": "array", "items": {"type": "string"}, "default": [], "description": "按标签筛选"},
                         "path": {"type": "string", "default": "", "description": "按目录路径筛选"},
-                        "limit": {"type": "integer", "default": 20, "description": "每页数量"},
-                        "offset": {"type": "integer", "default": 0, "description": "偏移量"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 20, "description": "每页数量"},
+                        "offset": {"type": "integer", "minimum": 0, "default": 0, "description": "偏移量"},
                     },
                 },
             ),
@@ -151,8 +153,8 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "old_path": {"type": "string", "description": "当前目录路径"},
-                        "new_path": {"type": "string", "description": "新目录路径"},
+                        "old_path": {"type": "string", "minLength": 1, "description": "当前目录路径"},
+                        "new_path": {"type": "string", "minLength": 1, "description": "新目录路径"},
                     },
                     "required": ["old_path", "new_path"],
                 },
@@ -163,7 +165,7 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "path": {"type": "string", "description": "要删除的目录路径"},
+                        "path": {"type": "string", "minLength": 1, "description": "要删除的目录路径"},
                     },
                     "required": ["path"],
                 },
@@ -174,7 +176,7 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "doc_id": {"type": "string", "description": "文档 ID"},
+                        "doc_id": {"type": "string", "minLength": 1, "description": "文档 ID"},
                     },
                     "required": ["doc_id"],
                 },
@@ -184,7 +186,7 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
                 description="List document version snapshots for rollback.",
                 inputSchema={
                     "type": "object",
-                    "properties": {"doc_id": {"type": "string", "description": "Document ID"}},
+                    "properties": {"doc_id": {"type": "string", "minLength": 1, "description": "Document ID"}},
                     "required": ["doc_id"],
                 },
             ),
@@ -194,8 +196,8 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "doc_id": {"type": "string", "description": "Document ID"},
-                        "version_id": {"type": "string", "description": "Version ID"},
+                        "doc_id": {"type": "string", "minLength": 1, "description": "Document ID"},
+                        "version_id": {"type": "string", "minLength": 1, "description": "Version ID"},
                     },
                     "required": ["doc_id", "version_id"],
                 },
@@ -206,10 +208,10 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "title": {"type": "string"},
-                        "content": {"type": "string"},
+                        "title": {"type": "string", "minLength": 1},
+                        "content": {"type": "string", "minLength": 1},
                         "path": {"type": "string", "default": ""},
-                        "top_k": {"type": "integer", "default": 5},
+                        "top_k": {"type": "integer", "minimum": 1, "maximum": 50, "default": 5},
                     },
                     "required": ["title", "content"],
                 },
@@ -220,12 +222,12 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "title": {"type": "string"},
-                        "content": {"type": "string"},
+                        "title": {"type": "string", "minLength": 1},
+                        "content": {"type": "string", "minLength": 1},
                         "path": {"type": "string", "default": ""},
                         "tags": {"type": "array", "items": {"type": "string"}, "default": []},
-                        "match_strategy": {"type": "string", "default": "title_path"},
-                        "on_conflict": {"type": "string", "default": "update"},
+                        "match_strategy": {"type": "string", "enum": ["title_path", "hash", "semantic"], "default": "title_path"},
+                        "on_conflict": {"type": "string", "enum": ["update", "skip", "create_new"], "default": "update"},
                     },
                     "required": ["title", "content"],
                 },
@@ -238,6 +240,8 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
                     "properties": {
                         "semantic_threshold": {
                             "type": "number",
+                            "minimum": 0.0,
+                            "maximum": 1.0,
                             "default": 0.0,
                             "description": "语义相似度阈值（0.0=关闭，0.7=推荐开启值）。开启后对所有文档计算向量相似度，超过阈值的文档对之间添加边。文档数较多时耗时较长。",
                         },
@@ -246,22 +250,33 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
             ),
         ]
 
-    def _make_result(result: dict) -> list[TextContent]:
-        return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
+    def _make_error(result: dict) -> CallToolResult:
+        return CallToolResult(
+            content=[TextContent(
+                type="text",
+                text=json.dumps(result, ensure_ascii=False, indent=2),
+            )],
+            structuredContent=result,
+            isError=True,
+        )
 
     _DISPATCH = {
         "search_knowledge": lambda a, t: t.search_knowledge(
             query=a.get("query", ""), top_k=a.get("top_k", 5),
             filter_tags=a.get("filter_tags") or [], filter_path=a.get("filter_path", ""),
+            include_context=a.get("include_context", True),
+            max_context_chars=a.get("max_context_chars"),
         ),
-        "add_document": lambda a, t: t.add_document(
+        "add_document": lambda a, t, progress: t.add_document(
             title=a.get("title", ""), content=a.get("content", ""),
             path=a.get("path", ""), tags=a.get("tags") or [],
+            progress_callback=progress,
         ),
         "get_document": lambda a, t: t.get_document(doc_id=a.get("doc_id", "")),
-        "update_document": lambda a, t: t.update_document(
+        "update_document": lambda a, t, progress: t.update_document(
             doc_id=a.get("doc_id", ""), title=a.get("title", ""),
             content=a.get("content", ""), path=a.get("path", ""), tags=a.get("tags") or [],
+            progress_callback=progress,
         ),
         "delete_document": lambda a, t: t.delete_document(doc_id=a.get("doc_id", "")),
         "list_documents": lambda a, t: t.list_documents(
@@ -273,7 +288,9 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
             old_path=a.get("old_path", ""), new_path=a.get("new_path", ""),
         ),
         "delete_directory": lambda a, t: t.delete_directory(path=a.get("path", "")),
-        "reindex_document": lambda a, t: t.reindex_document(doc_id=a.get("doc_id", "")),
+        "reindex_document": lambda a, t, progress: t.reindex_document(
+            doc_id=a.get("doc_id", ""), progress_callback=progress,
+        ),
         "list_document_versions": lambda a, t: t.list_document_versions(doc_id=a.get("doc_id", "")),
         "restore_document_version": lambda a, t: t.restore_document_version(
             doc_id=a.get("doc_id", ""), version_id=a.get("version_id", ""), restored_by="mcp"
@@ -292,6 +309,26 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
             kb=t.kb, embedder=getattr(t, "embedder", None)
         ).build(semantic_threshold=float(a.get("semantic_threshold", 0.0))),
     }
+    _PROGRESS_AWARE_TOOLS = {"add_document", "update_document", "reindex_document"}
+
+    async def _report_progress(progress: float, message: str) -> None:
+        try:
+            context = server.request_context
+        except LookupError:
+            return
+        progress_token = getattr(context.meta, "progressToken", None) if context.meta else None
+        if progress_token is None:
+            return
+        try:
+            await context.session.send_progress_notification(
+                progress_token=progress_token,
+                progress=progress,
+                total=100,
+                message=message,
+            )
+        except Exception:
+            # Progress is advisory; notification failures must not fail the tool call.
+            return
 
     async def _require_mcp_path_access(name: str, arguments: dict, api_key_info) -> None:
         if api_key_info is None:
@@ -332,17 +369,22 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
         return safe_args
 
     @server.call_tool()
-    async def call_tool(name: str, arguments: Any) -> list[TextContent]:
+    async def call_tool(name: str, arguments: Any) -> dict | CallToolResult:
         arguments = arguments or {}
         handler = _DISPATCH.get(name)
         if handler is None:
-            return _make_result({"error": f"未知工具: {name}"})
+            return _make_error({"error": f"未知工具: {name}"})
         api_key_info = get_mcp_api_key_info()
         actor_type, actor_id = actor_from_api_key(api_key_info)
         try:
             require_mcp_tool_scope(name)
             await _require_mcp_path_access(name, arguments, api_key_info)
-            result = await handler(arguments, tools)
+            if name in _PROGRESS_AWARE_TOOLS:
+                await _report_progress(0, f"开始执行 {name}")
+                result = await handler(arguments, tools, _report_progress)
+                await _report_progress(100, f"{name} 执行完成")
+            else:
+                result = await handler(arguments, tools)
             meta = MCP_TOOL_METADATA.get(name, {})
             if meta.get("category") != "read":
                 tools.audit_logger.log(
@@ -354,7 +396,7 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
                     detail={"arguments": _audit_arguments(arguments), "risk_level": meta.get("risk_level", "")},
                     success=True,
                 )
-            return _make_result(result)
+            return result
         except HTTPException as e:
             tools.audit_logger.log(
                 action=f"mcp.{name}",
@@ -365,7 +407,7 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
                 detail={"arguments": _audit_arguments(arguments), "status_code": e.status_code, "error": e.detail},
                 success=False,
             )
-            return _make_result({"error": e.detail, "status_code": e.status_code})
+            return _make_error({"error": e.detail, "status_code": e.status_code})
         except Exception as e:
             tools.audit_logger.log(
                 action=f"mcp.{name}",
@@ -376,6 +418,6 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
                 detail={"arguments": _audit_arguments(arguments), "error": str(e)},
                 success=False,
             )
-            return _make_result({"error": str(e)})
+            return _make_error({"error": str(e)})
 
     return server

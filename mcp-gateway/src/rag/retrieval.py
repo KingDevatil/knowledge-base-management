@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -71,13 +73,13 @@ class KeywordChannel:
         self.keyword_index = keyword_index
 
     async def search(self, query: RetrievalQuery) -> list[RetrievalCandidate]:
-        terms = tokenize_query(query.text)
+        terms = tokenize_keyword_terms(query.text)
         if not terms:
             return []
 
         if self.keyword_index is not None:
             indexed = self.keyword_index.search(query, query.top_k)
-            if indexed:
+            if self.keyword_index.ready:
                 return indexed
 
         candidates: list[RetrievalCandidate] = []
@@ -164,30 +166,70 @@ class RetrievalPipeline:
         postprocessor: SearchResultPostProcessor | None = None,
         kb: Any | None = None,
         neighbor_window: int = 0,
+        neighbor_timeout_ms: int = 1000,
     ):
         self.channels = channels
         self.postprocessor = postprocessor or SearchResultPostProcessor()
         self.kb = kb
         self.neighbor_window = max(0, neighbor_window)
-        self.last_errors: list[dict[str, str]] = []
+        self.neighbor_timeout_ms = max(1, neighbor_timeout_ms)
+        self._last_errors: ContextVar[tuple[dict[str, str], ...]] = ContextVar(
+            f"retrieval_errors_{id(self)}",
+            default=(),
+        )
+
+    @property
+    def last_errors(self) -> list[dict[str, str]]:
+        return list(self._last_errors.get())
 
     async def search(self, query: RetrievalQuery) -> list[dict[str, Any]]:
         query = rewrite_query(query)
         candidates: list[RetrievalCandidate] = []
-        self.last_errors = []
-        for channel in self.channels:
-            if not channel.enabled:
-                continue
-            try:
-                candidates.extend(await channel.search(query))
-            except Exception as exc:
-                self.last_errors.append({
+        errors: list[dict[str, str]] = []
+        self._last_errors.set(())
+        enabled_channels = [channel for channel in self.channels if channel.enabled]
+        outcomes = await asyncio.gather(
+            *(
+                asyncio.wait_for(
+                    channel.search(query),
+                    timeout=max(1, channel.timeout_ms) / 1000,
+                )
+                for channel in enabled_channels
+            ),
+            return_exceptions=True,
+        )
+        for channel, outcome in zip(enabled_channels, outcomes):
+            if isinstance(outcome, TimeoutError):
+                errors.append({
                     "channel": channel.name,
+                    "error": f"timed out after {channel.timeout_ms}ms",
+                })
+            elif isinstance(outcome, Exception):
+                errors.append({
+                    "channel": channel.name,
+                    "error": str(outcome),
+                })
+            elif isinstance(outcome, BaseException):
+                raise outcome
+            else:
+                candidates.extend(outcome)
+        if self.kb and self.neighbor_window > 0:
+            try:
+                candidates.extend(await asyncio.wait_for(
+                    self._expand_neighbors(candidates),
+                    timeout=self.neighbor_timeout_ms / 1000,
+                ))
+            except TimeoutError:
+                errors.append({
+                    "channel": "neighbor_expansion",
+                    "error": f"timed out after {self.neighbor_timeout_ms}ms",
+                })
+            except Exception as exc:
+                errors.append({
+                    "channel": "neighbor_expansion",
                     "error": str(exc),
                 })
-
-        if self.kb and self.neighbor_window > 0:
-            candidates.extend(await self._expand_neighbors(candidates))
+        self._last_errors.set(tuple(errors))
 
         processed = self.postprocessor.process(candidates, query)
         return [candidate_to_debug_dict(candidate) for candidate in processed]
@@ -243,6 +285,24 @@ def tokenize_query(query: str) -> list[str]:
         for token in re.split(r"\s+|[,，。；;：:、]+", query.strip())
         if token.strip()
     ]
+
+
+def tokenize_keyword_terms(query: str) -> list[str]:
+    """Tokenize exact terms and add CJK bigrams for partial phrase recall."""
+    terms: list[str] = []
+    seen: set[str] = set()
+    for token in tokenize_query(query):
+        if token not in seen:
+            seen.add(token)
+            terms.append(token)
+        for cjk_run in re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+", token):
+            for index in range(len(cjk_run) - 1):
+                bigram = cjk_run[index:index + 2]
+                if bigram in seen:
+                    continue
+                seen.add(bigram)
+                terms.append(bigram)
+    return terms
 
 
 def rewrite_query(query: RetrievalQuery) -> RetrievalQuery:

@@ -1,6 +1,7 @@
 """Unit tests for KnowledgeBase (Chroma wrapper + Redis doc index)."""
 import sys
 import os
+import threading
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 import pytest
@@ -298,6 +299,33 @@ class TestKnowledgeBase:
         assert entry["path"] == "游戏/武将"
 
     @pytest.mark.asyncio
+    async def test_doc_index_rebuild_reconciles_stale_entries_and_preserves_extra_fields(self, kb):
+        await kb._doc_index_set("stale", {
+            "doc_id": "stale", "title": "Stale", "chunk_count": 1,
+        })
+        await kb._doc_index_set("live", {
+            "doc_id": "live", "title": "Old title", "content_hash": "sha256-live",
+        })
+        kb.collection.add(
+            ids=["live#chunk-0", "live#chunk-1"],
+            documents=["first", "second"],
+            metadatas=[
+                {"doc_id": "live", "title": "Live", "path": "docs", "chunk_index": 0},
+                {"doc_id": "live", "title": "Live", "path": "docs", "chunk_index": 1},
+            ],
+        )
+
+        rebuilt = await kb._doc_index_rebuild()
+
+        assert rebuilt == 1
+        assert await kb._doc_index_get("stale") is None
+        live = await kb._doc_index_get("live")
+        assert live["title"] == "Live"
+        assert live["chunk_count"] == 2
+        assert live["content_hash"] == "sha256-live"
+        assert "__write_status" not in live
+
+    @pytest.mark.asyncio
     async def test_list_documents(self, kb):
         """Listing documents should return DocumentInfo objects."""
         await kb._doc_index_set("d1", {"doc_id": "d1", "title": "Doc 1", "path": "a", "tags": [], "chunk_count": 2, "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"})
@@ -362,7 +390,44 @@ class TestKnowledgeBase:
         assert chunks[0]["metadata"]["chunk_index"] == 0
         assert chunks[1]["metadata"]["chunk_index"] == 1
         assert chunks[2]["metadata"]["chunk_index"] == 2
-        assert chunks[0]["embedding"] == [0.0]
+        assert "embedding" not in chunks[0]
+
+        chunks_with_embeddings = await kb.get_document_chunks(
+            "doc-chunks", include_embeddings=True
+        )
+        assert chunks_with_embeddings[0]["embedding"] == [0.0]
+
+    @pytest.mark.asyncio
+    async def test_chroma_read_calls_run_outside_the_event_loop_thread(self, kb):
+        await kb.add_document_chunks(
+            doc_id="doc-threaded",
+            title="Threaded",
+            chunks=["content"],
+            embeddings=[[0.5]],
+            metadata={"path": ""},
+        )
+        event_loop_thread = threading.get_ident()
+        get_threads = []
+        query_threads = []
+        original_get = kb.collection.get
+        original_query = kb.collection.query
+
+        def tracked_get(*args, **kwargs):
+            get_threads.append(threading.get_ident())
+            return original_get(*args, **kwargs)
+
+        def tracked_query(*args, **kwargs):
+            query_threads.append(threading.get_ident())
+            return original_query(*args, **kwargs)
+
+        with patch.object(kb.collection, "get", side_effect=tracked_get), patch.object(
+            kb.collection, "query", side_effect=tracked_query
+        ):
+            await kb.get_document_chunks("doc-threaded")
+            await kb.search(query_embedding=[0.5], top_k=1)
+
+        assert get_threads and get_threads[0] != event_loop_thread
+        assert query_threads and query_threads[0] != event_loop_thread
 
     @pytest.mark.asyncio
     async def test_search_returns_results(self, kb):

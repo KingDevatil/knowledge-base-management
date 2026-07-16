@@ -17,7 +17,7 @@ from auth import APIKeyAuth
 from helpers import content_hash, content_size_kb
 from tools_reader import KnowledgeToolsReader
 from logger import get_logger
-from ingestion import DocumentIngestionPipeline, IngestionResult
+from ingestion import DocumentIngestionPipeline, IngestionResult, ProgressCallback
 from document_versions import DocumentVersionStore
 from audit_log import AuditLogger
 
@@ -45,6 +45,29 @@ class KnowledgeTools(KnowledgeToolsReader):
         self.cleanup_tasks: dict[str, dict] = {}
         self.version_store = DocumentVersionStore(self.settings.KBDATA_DIR or "kbdata")
         self.audit_logger = AuditLogger(self.settings.KBDATA_DIR or "kbdata")
+
+    @staticmethod
+    def _write_lock_conflict(message: str, error: WriteLockError) -> HTTPException:
+        return HTTPException(
+            status_code=423,
+            detail={
+                "message": message,
+                "retry_after_ms": error.retry_after_ms,
+            },
+        )
+
+    @staticmethod
+    async def _notify_progress(
+        progress_callback: ProgressCallback | None,
+        progress: float,
+        message: str,
+    ) -> None:
+        if progress_callback is None:
+            return
+        try:
+            await progress_callback(progress, message)
+        except Exception:
+            return
 
     # ---------- 目录管理（需写锁）----------
 
@@ -151,6 +174,7 @@ class KnowledgeTools(KnowledgeToolsReader):
         tags: list[str],
         created_by: str = "system",
         doc_id: str | None = None,
+        progress_callback: ProgressCallback | None = None,
     ) -> IngestionResult:
         """内部方法：通过入库 Pipeline 导入文档。"""
         payload = {
@@ -177,8 +201,9 @@ class KnowledgeTools(KnowledgeToolsReader):
                 tags=tags,
                 created_by=created_by,
                 doc_id=doc_id,
+                progress_callback=progress_callback,
             )
-        except WriteLockError:
+        except WriteLockError as exc:
             if pipeline.latest_task:
                 self.ingestion_tasks[pipeline.latest_task.task_id] = pipeline.latest_task.to_dict()
                 self.ingestion_task_payloads[pipeline.latest_task.task_id] = {
@@ -186,9 +211,9 @@ class KnowledgeTools(KnowledgeToolsReader):
                     "doc_id": pipeline.latest_task.doc_id,
                 }
             logger.warning(f"Write lock busy when importing: title={title}, size={content_size_kb(content)}")
-            raise HTTPException(
-                status_code=423,
-                detail=f"知识库写入锁被占用，文档「{title}」暂时无法导入，请稍后重试",
+            raise self._write_lock_conflict(
+                f"知识库写入锁被占用，文档「{title}」暂时无法导入，请稍后重试",
+                exc,
             )
         except Exception:
             if pipeline.latest_task:
@@ -217,11 +242,19 @@ class KnowledgeTools(KnowledgeToolsReader):
         path: str = "",
         tags: list[str] | None = None,
         created_by: str = "system",
+        progress_callback: ProgressCallback | None = None,
     ) -> dict:
         """添加新文档"""
         tags = tags or []
-        result = await self._import_document(title, content, path, tags, created_by)
-        await self.refresh_keyword_index_safely("add_document")
+        result = await self._import_document(
+            title,
+            content,
+            path,
+            tags,
+            created_by,
+            progress_callback=progress_callback,
+        )
+        await self.refresh_keyword_document_safely(result.doc_id, "add_document")
         return {
             "success": True,
             "doc_id": result.doc_id,
@@ -260,7 +293,7 @@ class KnowledgeTools(KnowledgeToolsReader):
             created_by=retried_by or payload.get("created_by", "system"),
             doc_id=payload.get("doc_id"),
         )
-        await self.refresh_keyword_index_safely("retry_ingestion_task")
+        await self.refresh_keyword_document_safely(result.doc_id, "retry_ingestion_task")
         retry_task = result.task.to_dict()
         retry_task["retried_from"] = task_id
         self.ingestion_tasks[result.task.task_id] = retry_task
@@ -422,6 +455,7 @@ class KnowledgeTools(KnowledgeToolsReader):
         path: str = "",
         tags: list[str] | None = None,
         updated_by: str = "system",
+        progress_callback: ProgressCallback | None = None,
     ) -> dict:
         """更新已有文档"""
         if not doc_id:
@@ -432,12 +466,13 @@ class KnowledgeTools(KnowledgeToolsReader):
                 detail=f"文档 (doc_id={doc_id}) 标题不能为空",
             )
 
+        await self._notify_progress(progress_callback, 5, "读取现有文档")
         tags = tags or []
         await self._snapshot_document_version(doc_id, "before_update", updated_by)
         now = datetime.now(timezone.utc).isoformat()
         size_label = content_size_kb(content)
 
-        old_chunks = await self.kb.get_document_chunks(doc_id)
+        old_chunks = await self.kb.get_document_chunks(doc_id, include_embeddings=True)
         if not old_chunks:
             raise HTTPException(
                 status_code=404,
@@ -478,6 +513,7 @@ class KnowledgeTools(KnowledgeToolsReader):
 
         if changeless:
             logger.info(f"Document unchanged, skip: doc_id={doc_id}, title={title}")
+            await self._notify_progress(progress_callback, 100, "文档内容无变化")
             return {
                 "success": True, "doc_id": doc_id,
                 "message": "内容无变化，已跳过更新",
@@ -502,6 +538,7 @@ class KnowledgeTools(KnowledgeToolsReader):
                 f"内容大小: {size_label}",
             )
 
+        await self._notify_progress(progress_callback, 35, "生成向量")
         try:
             embeddings = await self.embedder.embed(chunks)
         except EmbeddingError as e:
@@ -518,6 +555,7 @@ class KnowledgeTools(KnowledgeToolsReader):
         deleted_old = False
 
         try:
+            await self._notify_progress(progress_callback, 55, "准备暂存数据")
             staging_source_path = self.source_store.save_source(staging_doc_id, content, new_path)
             self._add_staging_chunks(
                 staging_doc_id=staging_doc_id,
@@ -537,7 +575,9 @@ class KnowledgeTools(KnowledgeToolsReader):
                 },
             )
 
+            await self._notify_progress(progress_callback, 65, "等待写入锁")
             async with self.write_lock:
+                await self._notify_progress(progress_callback, 75, "替换文档索引")
                 try:
                     if old_path and old_path != new_path:
                         self.source_store.move_source(doc_id, old_path, new_path)
@@ -578,17 +618,18 @@ class KnowledgeTools(KnowledgeToolsReader):
                     f"Document updated: doc_id={doc_id}, title={title}, "
                     f"path={new_path}, chunks={len(chunks)} (was {len(old_chunks)})"
                 )
-        except WriteLockError:
-            raise HTTPException(
-                status_code=423,
-                detail=f"写入锁被占用，文档「{title}」暂时无法更新，请稍后重试",
+        except WriteLockError as exc:
+            raise self._write_lock_conflict(
+                f"写入锁被占用，文档「{title}」暂时无法更新，请稍后重试",
+                exc,
             )
         finally:
             self._delete_staging_chunks(staging_doc_id)
             if staging_source_path:
                 self._cleanup_staging_source(staging_source_path)
 
-        await self.refresh_keyword_index_safely("update_document")
+        await self.refresh_keyword_document_safely(doc_id, "update_document")
+        await self._notify_progress(progress_callback, 100, "文档更新完成")
 
         return {"success": True, "doc_id": doc_id, "message": "文档更新成功"}
 
@@ -615,13 +656,13 @@ class KnowledgeTools(KnowledgeToolsReader):
                 else:
                     self.source_store.delete_source(doc_id, path)
                 logger.info(f"Document deleted: doc_id={doc_id}, title={title}")
-                await self.refresh_keyword_index_safely("delete_document")
-        except WriteLockError:
-            raise HTTPException(
-                status_code=423,
-                detail=f"写入锁被占用，文档「{title}」暂时无法删除",
+        except WriteLockError as exc:
+            raise self._write_lock_conflict(
+                f"写入锁被占用，文档「{title}」暂时无法删除",
+                exc,
             )
 
+        await self.remove_keyword_document_safely(doc_id, "delete_document")
         return {"success": True, "doc_id": doc_id, "message": "文档删除成功"}
 
     async def list_document_versions(self, doc_id: str) -> dict:
@@ -727,9 +768,14 @@ class KnowledgeTools(KnowledgeToolsReader):
         result["similar_matches"] = matches
         return result
 
-    async def reindex_document(self, doc_id: str) -> dict:
+    async def reindex_document(
+        self,
+        doc_id: str,
+        progress_callback: ProgressCallback | None = None,
+    ) -> dict:
         """重新切片 & 向量化单个文档"""
-        chunks = await self.kb.get_document_chunks(doc_id)
+        await self._notify_progress(progress_callback, 5, "读取现有文档")
+        chunks = await self.kb.get_document_chunks(doc_id, include_embeddings=True)
         if not chunks:
             raise HTTPException(status_code=404, detail=f"文档 (doc_id={doc_id}) 不存在")
 
@@ -764,6 +810,7 @@ class KnowledgeTools(KnowledgeToolsReader):
         if not new_chunks:
             raise HTTPException(status_code=400, detail=f"文档「{title}」重新切片结果为空")
 
+        await self._notify_progress(progress_callback, 35, "生成向量")
         try:
             embeddings = await self.embedder.embed(new_chunks)
         except EmbeddingError as e:
@@ -775,6 +822,7 @@ class KnowledgeTools(KnowledgeToolsReader):
         deleted_old = False
 
         try:
+            await self._notify_progress(progress_callback, 55, "准备暂存数据")
             now = datetime.now(timezone.utc).isoformat()
             staging_metadata = {
                 "path": path, "tags": tags, "source_path": source_path,
@@ -792,7 +840,9 @@ class KnowledgeTools(KnowledgeToolsReader):
                 embeddings=embeddings,
                 metadata=staging_metadata,
             )
+            await self._notify_progress(progress_callback, 65, "等待写入锁")
             async with self.write_lock:
+                await self._notify_progress(progress_callback, 75, "替换文档索引")
                 await self.kb.mark_doc_updating(doc_id)
                 await self.kb.delete_document(doc_id)
                 deleted_old = True
@@ -811,11 +861,15 @@ class KnowledgeTools(KnowledgeToolsReader):
                     except Exception:
                         logger.exception(f"Document restore failed after reindex write failure: doc_id={doc_id}")
                     raise
-        except WriteLockError:
-            raise HTTPException(status_code=423, detail=f"写入锁被占用，文档「{title}」暂时无法重建索引")
+        except WriteLockError as exc:
+            raise self._write_lock_conflict(
+                f"写入锁被占用，文档「{title}」暂时无法重建索引",
+                exc,
+            )
         finally:
             self._delete_staging_chunks(staging_doc_id)
 
         logger.info(f"Document reindexed: doc_id={doc_id}, title={title}, old={len(chunks)}, new={len(new_chunks)}")
-        await self.refresh_keyword_index_safely("reindex_document")
+        await self.refresh_keyword_document_safely(doc_id, "reindex_document")
+        await self._notify_progress(progress_callback, 100, "文档索引重建完成")
         return {"success": True, "doc_id": doc_id, "chunks_old": len(chunks), "chunks_new": len(new_chunks)}

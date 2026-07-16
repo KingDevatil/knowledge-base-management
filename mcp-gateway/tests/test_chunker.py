@@ -104,3 +104,13 @@ def test_tagged_chunks_contain_keywords():
     assert "2016年武将" in all_text  # heading should appear somewhere
     assert "吕布" in all_text
     assert "大乔" in all_text
+
+
+def test_long_unbroken_paragraph_preserves_tail():
+    """没有自然断句的超长段落也不能丢失 chunk_size 之后的内容。"""
+    content = "中" * 1500 + "尾"
+
+    chunks = chunk_markdown(content, chunk_size=512, overlap=50)
+
+    assert len(chunks) >= 3
+    assert "尾" in "".join(chunks)

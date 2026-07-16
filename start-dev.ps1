@@ -18,51 +18,63 @@ function Write-Info  { Write-Host "[INFO] $args" -Foreground Cyan }
 function Write-Ok   { Write-Host "[OK]   $args" -Foreground Green }
 function Write-Warn { Write-Host "[WARN] $args" -Foreground Yellow }
 function Write-Err  { Write-Host "[ERR]  $args" -Foreground Red }
-function Write-Err  { Write-Host "[ERR]  $args" -Foreground Red }
 
-# ---------- Stop mode: kill all services ----------
+function Pause-IfInteractive([string]$Message = "Press Enter to exit") {
+    if (-not $Quiet) { Read-Host $Message | Out-Null }
+}
+
+function Import-DotEnv([string]$Path) {
+    foreach ($rawLine in [System.IO.File]::ReadAllLines($Path)) {
+        $line = $rawLine.Trim()
+        if (-not $line -or $line.StartsWith("#")) { continue }
+        $parts = $line.Split(@('='), 2)
+        if ($parts.Count -ne 2) { continue }
+        $name = $parts[0].Trim()
+        $value = $parts[1].Trim().Trim('"').Trim("'")
+        [Environment]::SetEnvironmentVariable($name, $value, "Process")
+    }
+}
+
+function Test-PythonDependencies([string]$PythonCommand) {
+    & $PythonCommand -c "import fastapi, uvicorn, chromadb, redis, minio, mcp, markdown, bleach" *> $null
+    return $LASTEXITCODE -eq 0
+}
+
+$localEnvFile = "$PSScriptRoot\.env.local"
+if (-not (Test-Path -LiteralPath $localEnvFile)) {
+    Copy-Item -LiteralPath "$PSScriptRoot\.env.example.local" -Destination $localEnvFile
+    Write-Info "Created .env.local from .env.example.local"
+}
+Import-DotEnv $localEnvFile
+if (-not $env:KBDATA_DIR) {
+    $env:KBDATA_DIR = "$PSScriptRoot\kbdata"
+} elseif (-not [System.IO.Path]::IsPathRooted($env:KBDATA_DIR)) {
+    $env:KBDATA_DIR = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot $env:KBDATA_DIR))
+}
+New-Item -ItemType Directory -Path $env:KBDATA_DIR -Force | Out-Null
+
+# ---------- Stop mode: stop only listeners owned by this dev stack ----------
 if ($Stop) {
-    Write-Info "Stopping all services..."
-    $targets = @(
-        @{Name="mcp-gateway";   Process="python"}
-        @{Name="Chroma";        Process="chroma"}
-        @{Name="MinIO";         Process="minio"}
-        @{Name="Memurai/Redis"; Process="memurai"}
-        @{Name="Ollama";        Process="ollama"}
-    )
+    Write-Info "Stopping project Gateway, Chroma and MinIO listeners..."
     $count = 0
-    foreach ($t in $targets) {
-        # Memurai/Redis might be a Windows service — handle specially
-        if ($t.Process -eq "memurai") {
-            $svc = Get-Service -Name "Memurai" -ErrorAction SilentlyContinue
-            if ($svc -and $svc.Status -eq "Running") {
-                try {
-                    Stop-Service -Name "Memurai" -Force -ErrorAction Stop
-                    $count++
-                    Write-Ok "  $($t.Name) (Windows service) x 1"
-                    Log "Stopped $($t.Name) (Windows service)"
-                    continue
-                } catch {
-                    Write-Warn "  $($t.Name) service stop failed (no admin?), trying taskkill..."
-                    Log "Memurai service stop failed: $_"
-                }
-            }
-        }
-        $procs = Get-Process -Name $t.Process -ErrorAction SilentlyContinue
-        if ($procs) {
-            $procs | Stop-Process -Force -ErrorAction SilentlyContinue
-            $count += $procs.Count
-            Write-Ok "  $($t.Name) ($($t.Process).exe) x $($procs.Count)"
-            Log "Stopped $($t.Name) ($($t.Process))"
-        } else {
-            Write-Info "  $($t.Name) - not running"
+    $candidatePids = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+        Where-Object { $_.LocalPort -in @(8000, 8001, 9000, 9001) } |
+        Select-Object -ExpandProperty OwningProcess -Unique
+    foreach ($candidatePid in $candidatePids) {
+        $processInfo = Get-CimInstance Win32_Process -Filter "ProcessId = $candidatePid" -ErrorAction SilentlyContinue
+        if ($processInfo.CommandLine -match "uvicorn.+src\.main:app|chroma.+run|minio.+server") {
+            Stop-Process -Id $candidatePid -Force -ErrorAction SilentlyContinue
+            $count++
+            Write-Ok "  stopped PID $candidatePid"
+            Log "Stopped project listener PID $candidatePid"
         }
     }
     if ($count -eq 0) {
-        Write-Warn "No services were running."
+        Write-Warn "No project listeners were running."
     } else {
         Write-Ok "Stopped $count process(es)."
     }
+    Write-Info "Shared Ollama and Redis/Memurai processes were left running."
     exit 0
 }
 
@@ -71,7 +83,7 @@ if ($Stop) {
 Write-Info "Step 1/7 - Checking Python..."
 Log "Check Python"
 $python = $null
-foreach ($c in @("python3", "python")) {
+foreach ($c in @("python3", "python", "py")) {
     try {
         $v = & $c --version 2>&1
         Log "Try $c : $v"
@@ -81,7 +93,7 @@ foreach ($c in @("python3", "python")) {
 if (-not $python) {
     Write-Err "Python not found, install: https://www.python.org/downloads/"
     Log "Python not found"
-    Read-Host "Press Enter to exit"
+    Pause-IfInteractive
     exit 1
 }
 Write-Ok "$(& $python --version)"
@@ -94,19 +106,26 @@ $reqFile = "$PSScriptRoot\mcp-gateway\requirements.txt"
 if (-not (Test-Path $reqFile)) {
     Write-Err "requirements.txt not found at: $reqFile"
     Log "requirements.txt missing"
-    Read-Host "Press Enter to exit"
+    Pause-IfInteractive
     exit 1
 }
 Log "requirements.txt: $reqFile"
-try {
-    & $python -m pip install -r "$reqFile" -q 2>&1 | Out-Null
-    Write-Ok "Python deps ready"
+$depsReady = Test-PythonDependencies $python
+if ($Install -or -not $depsReady) {
+    Write-Info "Installing Python dependencies (first run or -Install requested)..."
+    $pipArgs = @("-m", "pip", "install", "-r", $reqFile)
+    if ($Quiet) { $pipArgs += "-q" }
+    & $python @pipArgs
+    if ($LASTEXITCODE -ne 0 -or -not (Test-PythonDependencies $python)) {
+        Write-Err "Python dependency installation failed."
+        Pause-IfInteractive
+        exit 1
+    }
     Log "pip install done"
-} catch {
-    Write-Warn "pip install failed, retrying..."
-    Log "pip first fail: $_"
-    try { & $python -m pip install -r "$reqFile" } catch { Log "pip second fail: $_" }
+} else {
+    Write-Ok "Python deps already installed; skipped pip install"
 }
+Write-Ok "Python deps ready"
 
 # ---------- Step 3: Ollama ----------
 Write-Info "Step 3/7 - Checking Ollama..."
@@ -120,9 +139,12 @@ if (-not $ollamaCmd) {
     foreach ($p in $ollamaPaths) { if (Test-Path $p) { $ollamaCmd = $p; break } }
 }
 if (-not $ollamaCmd) {
-    Write-Warn "Ollama not installed -> https://ollama.com/download/windows"
+    Write-Err "Ollama not installed -> https://ollama.com/download/windows"
     Log "Ollama not found"
+    Pause-IfInteractive
+    exit 1
 } else {
+    $ollamaExe = if ($ollamaCmd -is [string]) { $ollamaCmd } else { $ollamaCmd.Source }
     $running = $false
     try {
         $r = Invoke-WebRequest "http://localhost:11434/api/tags" -Method GET -TimeoutSec 2 -UseBasicParsing
@@ -131,7 +153,34 @@ if (-not $ollamaCmd) {
     if (-not $running) {
         Write-Info "Starting Ollama..."
         Log "Start Ollama"
-        try { Start-Process -FilePath $ollamaCmd -ArgumentList "serve" -WindowStyle Hidden; Start-Sleep -Seconds 3 } catch { Log "Ollama start fail: $_" }
+        try { Start-Process -FilePath $ollamaExe -ArgumentList "serve" -WindowStyle Hidden } catch { Log "Ollama start fail: $_" }
+        for ($attempt = 0; $attempt -lt 15 -and -not $running; $attempt++) {
+            Start-Sleep -Seconds 1
+            try {
+                $r = Invoke-WebRequest "http://localhost:11434/api/tags" -Method GET -TimeoutSec 2 -UseBasicParsing
+                $running = $r.StatusCode -eq 200
+            } catch { }
+        }
+    }
+    if (-not $running) {
+        Write-Err "Ollama did not become ready."
+        Pause-IfInteractive
+        exit 1
+    }
+
+    $ollamaModel = if ($env:OLLAMA_MODEL) { $env:OLLAMA_MODEL } else { "bge-m3" }
+    $tags = Invoke-RestMethod "http://localhost:11434/api/tags" -Method GET -TimeoutSec 5
+    $modelInstalled = $tags.models | Where-Object {
+        $_.name -eq $ollamaModel -or $_.name -like "${ollamaModel}:*"
+    }
+    if (-not $modelInstalled) {
+        Write-Info "Pulling Ollama model $ollamaModel (first run only)..."
+        & $ollamaExe pull $ollamaModel
+        if ($LASTEXITCODE -ne 0) {
+            Write-Err "Failed to pull Ollama model $ollamaModel."
+            Pause-IfInteractive
+            exit 1
+        }
     }
     Write-Ok "Ollama ready"
     Log "Ollama ready"
@@ -164,8 +213,13 @@ if (-not $redisOk) {
     Log "Redis 6379 ok"
 }
 
-# 中央数据目录
-$env:KBDATA_DIR = "$PSScriptRoot\kbdata"
+$redisOk = $false
+try { $check = netstat -an 2>$null | Select-String ":6379"; if ($check) { $redisOk = $true } } catch { }
+if (-not $redisOk) {
+    Write-Err "Redis/Memurai is required but not available. Install Memurai or use the Docker deployment."
+    Pause-IfInteractive
+    exit 1
+}
 
 # ---------- Step 5: Chroma ----------
 Write-Info "Step 5/7 - Checking Chroma..."
@@ -176,17 +230,32 @@ try {
     if ($r.StatusCode -eq 200) { $chromaOk = $true }
 } catch { Log "Chroma not running: $_" }
 if (-not $chromaOk) {
-    Write-Info "Installing/starting Chroma..."
-    Log "pip install chromadb"
-    try { & $python -m pip install chromadb -q } catch { Log "chromadb install fail: $_" }
+    Write-Info "Starting Chroma..."
+    $pythonScripts = (& $python -c "import sysconfig; print(sysconfig.get_path('scripts'))").Trim()
+    $chromaExe = Join-Path $pythonScripts "chroma.exe"
+    if (-not (Test-Path -LiteralPath $chromaExe)) {
+        $chromaCommand = Get-Command "chroma" -ErrorAction SilentlyContinue
+        if ($chromaCommand) { $chromaExe = $chromaCommand.Source }
+    }
+    if (-not (Test-Path -LiteralPath $chromaExe)) {
+        Write-Err "Chroma executable not found after dependency installation."
+        Pause-IfInteractive
+        exit 1
+    }
     Write-Info "  -> Starting Chroma process (wait 10s)..."
     Log "Start Chroma process"
     try {
-        $p = Start-Process -FilePath "chroma" -ArgumentList "run --host localhost --port 8001 --path $env:KBDATA_DIR\chroma" -WindowStyle Hidden -PassThru
+        $chromaArgs = "run --host localhost --port 8001 --path `"$env:KBDATA_DIR\chroma`""
+        $p = Start-Process -FilePath $chromaExe -ArgumentList $chromaArgs -WindowStyle Hidden -PassThru
         Start-Sleep -Seconds 8
         try { $r = Invoke-WebRequest "http://localhost:8001/api/v2/heartbeat" -Method GET -TimeoutSec 3 -UseBasicParsing; if ($r.StatusCode -eq 200) { $chromaOk = $true; Write-Ok "Chroma started" } } catch { Log "Chroma still not reachable: $_" }
     } catch { Log "Chroma process start fail: $_" }
-    if (-not $chromaOk) { Write-Warn "Chroma auto-start failed, manual: chroma run --host localhost --port 8001"; Log "Chroma start failed" }
+    if (-not $chromaOk) {
+        Write-Err "Chroma auto-start failed. Manual command: chroma run --host localhost --port 8001"
+        Log "Chroma start failed"
+        Pause-IfInteractive
+        exit 1
+    }
 } else {
     Write-Ok "Chroma port 8001 ready"
     Log "Chroma 8001 ok"
@@ -217,7 +286,8 @@ if (-not $minioOk) {
         Write-Info "Starting MinIO..."
         Log "Start MinIO: $($minioExe.Source)"
         try {
-            $env:MINIO_ROOT_USER = "minioadmin"; $env:MINIO_ROOT_PASSWORD = "minioadmin"
+            if (-not $env:MINIO_ROOT_USER) { $env:MINIO_ROOT_USER = if ($env:MINIO_ACCESS_KEY) { $env:MINIO_ACCESS_KEY } else { "minioadmin" } }
+            if (-not $env:MINIO_ROOT_PASSWORD) { $env:MINIO_ROOT_PASSWORD = if ($env:MINIO_SECRET_KEY) { $env:MINIO_SECRET_KEY } else { "minioadmin" } }
             $proc = Start-Process -FilePath $minioExe.Source -ArgumentList "server $dataDir --console-address :9001" -WindowStyle Hidden -PassThru -WorkingDirectory "$PSScriptRoot"
             Start-Sleep -Seconds 3; Write-Ok "MinIO started"
         } catch { Log "MinIO start fail: $_" }
@@ -231,23 +301,22 @@ if (-not $minioOk) {
 Write-Info "Step 7/7 - Starting mcp-gateway..."
 Log "Start mcp-gateway"
 $env:PYTHONPATH = "$PSScriptRoot\mcp-gateway\src"
-$env:REDIS_URL = "redis://localhost:6379/0"
-$env:CHROMA_HOST = "localhost"
-$env:CHROMA_PORT = "8001"
-$env:OLLAMA_URL = "http://localhost:11434"
+if (-not $env:REDIS_URL) { $env:REDIS_URL = "redis://localhost:6379/0" }
+if (-not $env:CHROMA_HOST) { $env:CHROMA_HOST = "localhost" }
+if (-not $env:CHROMA_PORT) { $env:CHROMA_PORT = "8001" }
+if (-not $env:OLLAMA_URL) { $env:OLLAMA_URL = "http://localhost:11434" }
 if (-not $env:OLLAMA_NUM_PARALLEL) { $env:OLLAMA_NUM_PARALLEL = "8" }
-$env:MINIO_ENDPOINT = "localhost:9000"
-$env:MINIO_ACCESS_KEY = "minioadmin"
-$env:MINIO_SECRET_KEY = "minioadmin"
-$env:MINIO_BUCKET = "kb-sources"
-$env:MINIO_SECURE = "false"
-$env:DEBUG = "true"
-$env:CORS_ORIGINS = "*"
-# 中央数据目录（所有运行时数据统一存放）
-$env:KBDATA_DIR = "$PSScriptRoot\kbdata"
+if (-not $env:MINIO_ENDPOINT) { $env:MINIO_ENDPOINT = "localhost:9000" }
+if (-not $env:MINIO_ACCESS_KEY) { $env:MINIO_ACCESS_KEY = "minioadmin" }
+if (-not $env:MINIO_SECRET_KEY) { $env:MINIO_SECRET_KEY = "minioadmin" }
+if (-not $env:MINIO_BUCKET) { $env:MINIO_BUCKET = "kb-sources" }
+if (-not $env:MINIO_SECURE) { $env:MINIO_SECURE = "false" }
+if (-not $env:DEBUG) { $env:DEBUG = "true" }
+if (-not $env:CORS_ORIGINS) { $env:CORS_ORIGINS = "*" }
+if (-not $env:BIND_HOST) { $env:BIND_HOST = "0.0.0.0" }
 # 配置文件路径（Docker 默认路径不适用于 Windows）
-$env:ADMIN_ACCOUNTS_FILE = "$env:KBDATA_DIR\config\admin_accounts.json"
-$env:API_KEY_FILE = "$env:KBDATA_DIR\config\api_keys.json"
+if (-not $env:ADMIN_ACCOUNTS_FILE) { $env:ADMIN_ACCOUNTS_FILE = "$env:KBDATA_DIR\config\admin_accounts.json" }
+if (-not $env:API_KEY_FILE) { $env:API_KEY_FILE = "$env:KBDATA_DIR\config\api_keys.json" }
 Log "PYTHONPATH=$env:PYTHONPATH"
 Log "REDIS_URL=$env:REDIS_URL"
 Write-Info ""
@@ -263,10 +332,10 @@ Write-Info ""
 Log "Starting uvicorn"
 try {
     Set-Location "$PSScriptRoot\mcp-gateway"
-    & $python -m uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
+    & $python -m uvicorn src.main:app --host $env:BIND_HOST --port 8000 --reload
 } catch {
     Log "uvicorn start fail: $_"
     Write-Err "Start failed, check log: $logFile"
-    Read-Host "Press Enter to exit"
+    Pause-IfInteractive
 }
-Read-Host "mcp-gateway stopped, press Enter to exit"
+Pause-IfInteractive "mcp-gateway stopped, press Enter to exit"

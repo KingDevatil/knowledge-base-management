@@ -7,7 +7,7 @@ import inspect
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from time import monotonic
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from fastapi import HTTPException
 
@@ -15,6 +15,19 @@ from chunker import chunk_markdown
 from directory_tree import DirectoryTree
 from embedding import EmbeddingError
 from helpers import content_hash, content_size_kb
+
+
+ProgressCallback = Callable[[float, str], Awaitable[None]]
+
+INGESTION_PROGRESS = {
+    "parse_markdown": (5, "解析 Markdown"),
+    "normalize_content": (10, "规范化内容"),
+    "chunk": (20, "切分文档"),
+    "embedding": (35, "生成向量"),
+    "persist_source": (70, "保存原文"),
+    "persist_vector": (80, "准备向量元数据"),
+    "commit_index": (90, "写入向量索引"),
+}
 
 
 @dataclass
@@ -79,6 +92,7 @@ class DocumentIngestionPipeline:
         tags: list[str],
         created_by: str = "system",
         doc_id: str | None = None,
+        progress_callback: ProgressCallback | None = None,
     ) -> IngestionResult:
         doc_id = doc_id or str(uuid.uuid4())
         task = IngestionTaskRecord(
@@ -100,15 +114,16 @@ class DocumentIngestionPipeline:
         }
 
         try:
-            await self._run_node(task, "parse_markdown", self._parse_markdown, context)
-            await self._run_node(task, "normalize_content", self._normalize_content, context)
-            await self._run_node(task, "chunk", self._chunk, context)
-            await self._run_node(task, "embedding", self._embedding, context)
+            await self._run_node(task, "parse_markdown", self._parse_markdown, context, progress_callback)
+            await self._run_node(task, "normalize_content", self._normalize_content, context, progress_callback)
+            await self._run_node(task, "chunk", self._chunk, context, progress_callback)
+            await self._run_node(task, "embedding", self._embedding, context, progress_callback)
+            await self._notify_progress(progress_callback, 65, "等待写入锁")
             async with self.write_lock:
                 context["now"] = datetime.now(timezone.utc).isoformat()
-                await self._run_node(task, "persist_source", self._persist_source, context)
-                await self._run_node(task, "persist_vector", self._persist_vector, context)
-                await self._run_node(task, "commit_index", self._commit_index, context)
+                await self._run_node(task, "persist_source", self._persist_source, context, progress_callback)
+                await self._run_node(task, "persist_vector", self._persist_vector, context, progress_callback)
+                await self._run_node(task, "commit_index", self._commit_index, context, progress_callback)
         except Exception as exc:
             task.status = "failed"
             task.error = str(exc)
@@ -119,6 +134,7 @@ class DocumentIngestionPipeline:
         task.status = "succeeded"
         task.current_node = ""
         task.finished_at = datetime.now(timezone.utc).isoformat()
+        await self._notify_progress(progress_callback, 100, "文档入库完成")
         return IngestionResult(
             doc_id=doc_id,
             task=task,
@@ -126,8 +142,17 @@ class DocumentIngestionPipeline:
             source_path=context["source_path"],
         )
 
-    async def _run_node(self, task: IngestionTaskRecord, node: str, handler, context: dict[str, Any]) -> None:
+    async def _run_node(
+        self,
+        task: IngestionTaskRecord,
+        node: str,
+        handler,
+        context: dict[str, Any],
+        progress_callback: ProgressCallback | None = None,
+    ) -> None:
         task.current_node = node
+        progress, message = INGESTION_PROGRESS.get(node, (0, node))
+        await self._notify_progress(progress_callback, progress, message)
         event = IngestionNodeEvent(
             node=node,
             status="running",
@@ -149,6 +174,20 @@ class DocumentIngestionPipeline:
             raise
         finally:
             event.duration_ms = round((monotonic() - started) * 1000, 3)
+
+    @staticmethod
+    async def _notify_progress(
+        progress_callback: ProgressCallback | None,
+        progress: float,
+        message: str,
+    ) -> None:
+        if progress_callback is None:
+            return
+        try:
+            await progress_callback(progress, message)
+        except Exception:
+            # Progress is advisory and must never fail the ingestion itself.
+            return
 
     def _parse_markdown(self, context: dict[str, Any]) -> None:
         title = context.get("title", "")
