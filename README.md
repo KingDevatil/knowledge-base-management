@@ -108,7 +108,7 @@ sh ./start.sh up
 # 已安装 make 时也可执行 make up
 ```
 
-首次向导会询问硬件档位、GPU、镜像源、访问方式、数据目录、Embedding 模型和管理员账号，然后依次完成：
+首次向导会询问硬件档位、GPU、镜像源、访问方式、数据目录、Embedding 模型和管理员账号。访问方式以复选项展示，可同时启用“仅本机、局域网、公网、Cloudflare Tunnel”，然后只进入已勾选方式的具体配置。向导随后依次完成：
 
 1. 从 `.env.example` 创建 `.env`，写入向导选项，并替换 `SESSION_SECRET` 和 MinIO 密码占位值。
 2. 按 `minimum`、`recommended` 或 `high-performance` 档位写入并发、超时和图谱参数。
@@ -118,7 +118,9 @@ sh ./start.sh up
 6. 等待 Gateway 健康检查通过再报告完成；等待期间每 30 秒显示一次进度，超时会自动打印关键容器状态和日志。
 7. 交互式部署可选择把 `knowbase` 注册到当前用户 PATH；自动化部署可使用 Windows 的 `-InstallCli` 或 Linux 的 `--install-cli`。
 
-配置会持久化在 `.env`。局域网向导会自动检测计算机名和有效 IPv4，并以逗号列表作为默认值；通常直接回车即可同时支持 `http://<计算机名>/mcp` 和 `http://<本机IP>/mcp`，多网卡时可删除不需要的候选地址。以后只想修改部分选项时运行：
+配置会持久化在 `.env`。选择访问方式时输入一个或多个编号并用逗号分隔，例如 `2,3,4` 会同时启用局域网、公网直连和 Cloudflare Tunnel；按 Enter 保留当前勾选项。局域网具体配置会自动检测计算机名和有效 IPv4，并以逗号列表作为默认值；通常直接回车即可同时支持 `http://<计算机名>/mcp` 和 `http://<本机IP>/mcp`，多网卡时可删除不需要的候选地址。
+
+以后只想修改部分选项时运行：
 
 ```powershell
 # Windows
@@ -132,7 +134,7 @@ sh ./start.sh configure
 # 或 make configure
 ```
 
-重配菜单可单独修改“硬件/GPU、镜像源、访问方式、数据/模型、初始管理员”，按 Enter 保留当前值；修改完成后重新执行 `up` 即可应用。首次向导中途退出时，已填内容会保留，下次 `up` 会继续完整配置。初始管理员配置只在账号库尚未创建账号时生效，已有管理员请在后台修改密码。`init` 保留为自动化使用的非交互初始化命令，CI 或无人值守部署可组合 `-NonInteractive` / `--non-interactive` 与原有参数。
+重配菜单可单独修改“硬件/GPU、镜像源、访问方式、数据/模型、初始管理员”。重新选择访问方式后，“具体配置”会依次进入局域网名称/IP、公网域名、Cloudflare Hostname/Token 等已选项目；未选项目不会被追问，公网域名和 Tunnel 配置会保留供以后重新启用。修改完成后重新执行 `up` 即可应用。首次向导中途退出时，已填内容会保留，下次 `up` 会继续完整配置。初始管理员配置只在账号库尚未创建账号时生效，已有管理员请在后台修改密码。`init` 保留为自动化使用的非交互初始化命令，CI 或无人值守部署可组合 `-NonInteractive` / `--non-interactive` 与原有参数。
 
 ### 常用部署命令
 
@@ -202,9 +204,11 @@ Docker 默认把 Gateway、Chroma、Redis、MinIO、Ollama 的宿主机端口绑
 
 ### 域名、DDNS 与内网穿透
 
-- 有公网 IP：在 `configure` 中选择“公网域名”，将域名解析到服务器公网 IP，在路由器/安全组开放 80、443，并把证书放到 `nginx/ssl/<域名>/fullchain.pem` 和 `privkey.pem`。后台“设置”页也可保存 DDNS 与反向代理方案。
+- 配置向导中的四个访问方式是复选项，并非互斥模式；例如输入 `2,3,4` 可让同一部署同时接受局域网、公网直连和 Cloudflare Tunnel 访问。
+- 有公网 IP：勾选“公网”，将域名解析到服务器公网 IP，在路由器/安全组开放 80、443，并把证书放到 `nginx/ssl/<域名>/fullchain.pem` 和 `privkey.pem`。后台“设置”页也可保存 DDNS 与反向代理方案。
 - 动态公网 IP：后台 DDNS 支持 Cloudflare 等 Provider，负责更新 A/AAAA 记录；仍需确认运营商未使用 CGNAT，并配置端口转发。
-- 无公网 IP/CGNAT：Docker 已内置 Cloudflare Tunnel profile。在 Cloudflare 控制台创建 remotely-managed tunnel，把 Public Hostname 的 Service 设为 `http://nginx:80`，然后在 `configure` 中选择 Cloudflare Tunnel 并输入域名和 Token。后续所有生命周期命令都会从 `.env` 自动复用 Tunnel 模式，不必重复传参数。
+- 无公网 IP/CGNAT：勾选“Cloudflare Tunnel”。在 Cloudflare 控制台创建 remotely-managed tunnel，把 Public Hostname 的 Service 设为 `http://nginx:80`，再输入 Hostname 和 Token。
+- 公网直连与 Tunnel 同时启用时应使用两个不同主机名，例如 `kb.example.com` 与 `tunnel.kb.example.com`。向导分别保存两者，并根据所选入口生成运行域名和 CORS 配置；后续生命周期命令会从 `.env` 复用全部访问方式。
 
 无论哪种方式，都只应公开 Nginx/Gateway 入口，不要把 Redis、Chroma、MinIO 或 Ollama 端口暴露到公网。完整步骤见 [部署与容量配置指南](./部署与容量配置指南.md)。
 
@@ -415,7 +419,8 @@ python src/consistency_cli.py
 | `DEPLOY_CONFIGURED` | `true`（向导完成后） | 标记首次配置是否完整；中途退出时下次继续向导 |
 | `DEPLOY_GPU_MODE` | `auto` | `auto` / `cpu` / `gpu`；由所有部署命令自动复用 |
 | `DEPLOY_IMAGE_SOURCE` | `mainland` | `mainland` 国内镜像优先并自动回退，或 `official` |
-| `DEPLOY_ACCESS_MODE` | `lan` | `local` / `lan` / `domain` / `cloudflare` |
+| `DEPLOY_ACCESS_MODES` | `lan` | 组合访问方式，逗号分隔 `local` / `lan` / `domain` / `cloudflare` |
+| `DEPLOY_ACCESS_MODE` | `lan` | 旧版本兼容字段；由启动器派生，多种方式时为 `hybrid` |
 | `DEPLOY_TUNNEL_MODE` | `off` | `off` / `cloudflare`；启用后自动加载 Compose profile |
 | `HOST_KBDATA_DIR` | `./kbdata` | Docker 宿主机数据目录 |
 | `KBDATA_DIR` | Docker 内固定 `/app/data` | 本地运行时的数据根目录 |
@@ -443,7 +448,9 @@ python src/consistency_cli.py
 | `WRITE_LOCK_TTL` | `30` | Redis 写锁过期秒数 |
 | `RATE_LIMIT_DEFAULT` | `30` | API Key 每分钟默认 HTTP 请求数 |
 | `MINIO_ENDPOINT` / `MINIO_BUCKET` | `localhost:9000` / `kb-sources` | 源文件对象存储 |
-| `EXTERNAL_DOMAIN` | 可为空 | 外网/HTTPS 入口；纯内网 Demo 留空 |
+| `PUBLIC_DOMAIN` | 可为空 | 公网直连的 HTTPS 域名，未勾选公网时保留但不启用 |
+| `CLOUDFLARE_PUBLIC_HOSTNAME` | 可为空 | Cloudflare Tunnel 的 Public Hostname，可与公网直连同时保存 |
+| `EXTERNAL_DOMAIN` | 可为空 | 向导派生的当前运行域名；兼容 Nginx 和旧配置，不建议手工作为组合模式来源 |
 | `INTERNAL_DOMAIN` | `主机名,192.168.1.100` | Nginx 内网 server name 列表；逗号分隔，可由向导自动检测 |
 | `CORS_ORIGINS` | `*` | Demo 可用；对外部署时应收紧 |
 
@@ -534,6 +541,7 @@ knowledge-base-management/
 │   ├── knowbase.ps1 / knowbase.sh  # Windows/Linux CLI 命令路由
 │   ├── install-cli.ps1 / .sh       # 用户级 PATH 安装、检查和卸载
 │   ├── network-detection.ps1 / .sh # 自动检测计算机名和局域网 IPv4
+│   ├── access-modes.ps1 / .sh      # 访问方式规范化、迁移和组合开关
 │   ├── init-config.bat             # Docker 交互配置向导
 │   ├── stop-dev.bat                # 停止 Windows 原生服务
 │   ├── start-desktop-shell.bat     # Windows 桌面壳入口

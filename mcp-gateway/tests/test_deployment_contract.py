@@ -29,9 +29,11 @@ GLOBAL_CLI_FILES = (
     "scripts/install-cli.ps1",
     "scripts/install-cli.sh",
 )
-NETWORK_DETECTION_FILES = (
+DEPLOYMENT_HELPER_FILES = (
     "scripts/network-detection.ps1",
     "scripts/network-detection.sh",
+    "scripts/access-modes.ps1",
+    "scripts/access-modes.sh",
 )
 
 
@@ -44,7 +46,7 @@ def _copy_launcher_fixture(tmp_path: Path, launcher: str) -> Path:
     shutil.copy2(ROOT / ".env.example", tmp_path / ".env.example")
     scripts_dir = tmp_path / "scripts"
     scripts_dir.mkdir()
-    for helper in NETWORK_DETECTION_FILES:
+    for helper in DEPLOYMENT_HELPER_FILES:
         shutil.copy2(ROOT / helper, scripts_dir / Path(helper).name)
     profiles_dir = tmp_path / "deploy" / "profiles"
     profiles_dir.mkdir(parents=True)
@@ -128,6 +130,7 @@ def test_docker_launchers_expose_the_same_small_command_interface():
         "DEPLOY_CONFIGURED",
         "DEPLOY_GPU_MODE",
         "DEPLOY_IMAGE_SOURCE",
+        "DEPLOY_ACCESS_MODES",
         "DEPLOY_ACCESS_MODE",
         "DEPLOY_TUNNEL_MODE",
     ):
@@ -181,6 +184,7 @@ def test_global_cli_shell_scripts_have_valid_posix_syntax():
             "scripts/install-cli.sh",
             "scripts/knowbase",
             "scripts/network-detection.sh",
+            "scripts/access-modes.sh",
             "nginx/render-nginx-conf.sh",
             "start.sh",
         ],
@@ -207,7 +211,7 @@ def test_network_detection_helpers_combine_hostname_and_usable_ipv4_addresses():
             cwd=ROOT,
             check=True,
             capture_output=True,
-            text=True,
+            encoding="utf-8",
         )
         assert result.stdout.splitlines() == [
             "KB-SERVER,192.168.50.20,10.0.0.8",
@@ -234,7 +238,7 @@ def test_network_detection_helpers_combine_hostname_and_usable_ipv4_addresses():
             cwd=ROOT,
             check=True,
             capture_output=True,
-            text=True,
+            encoding="utf-8",
         )
         assert result.stdout.splitlines() == [
             "KB-SERVER,192.168.50.20,10.0.0.8",
@@ -244,6 +248,155 @@ def test_network_detection_helpers_combine_hostname_and_usable_ipv4_addresses():
 
     if not powershell and not shell:
         pytest.skip("PowerShell or a POSIX shell is required")
+
+
+def test_access_mode_helpers_normalize_migrate_and_toggle_combinations():
+    expected = [
+        "lan,domain,cloudflare",
+        "lan,domain",
+        "hybrid",
+        "2,3,4",
+        "局域网、公网、Cloudflare Tunnel",
+        "lan,cloudflare",
+        "lan",
+    ]
+    powershell = shutil.which("powershell.exe") or shutil.which("pwsh")
+    if powershell:
+        helper = ROOT / "scripts" / "access-modes.ps1"
+        command = (
+            f". '{helper}'; "
+            'Write-Output (ConvertTo-KnowbaseAccessModes "lan,public,tunnel"); '
+            'Write-Output (ConvertTo-KnowbaseAccessModes "" "domain"); '
+            'Write-Output (Get-KnowbaseLegacyAccessMode "lan,domain,cloudflare"); '
+            'Write-Output (Get-KnowbaseAccessModeChoices "lan,domain,cloudflare"); '
+            'Write-Output (Get-KnowbaseAccessModeLabels "lan,domain,cloudflare"); '
+            'Write-Output (Update-KnowbaseAccessModesForTunnel "lan" "cloudflare"); '
+            'Write-Output (Update-KnowbaseAccessModesForTunnel "lan,cloudflare" "off")'
+        )
+        result = subprocess.run(
+            [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            encoding="utf-8",
+        )
+        assert result.stdout.splitlines() == expected
+
+    shell = shutil.which("sh")
+    if not shell:
+        common_git_shell = Path(r"C:\Program Files\Git\bin\sh.exe")
+        shell = str(common_git_shell) if common_git_shell.is_file() else None
+    if shell:
+        helper = ROOT / "scripts" / "access-modes.sh"
+        command = (
+            '. "$1"; '
+            'knowbase_normalize_access_modes "lan,public,tunnel"; '
+            'knowbase_normalize_access_modes "" domain; '
+            'knowbase_legacy_access_mode "lan,domain,cloudflare"; '
+            'knowbase_access_mode_choices "lan,domain,cloudflare"; '
+            'knowbase_access_mode_labels "lan,domain,cloudflare"; '
+            'knowbase_update_access_modes_for_tunnel lan cloudflare; '
+            'knowbase_update_access_modes_for_tunnel "lan,cloudflare" off'
+        )
+        result = subprocess.run(
+            [shell, "-c", command, "knowbase-access-test", str(helper)],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            encoding="utf-8",
+        )
+        assert result.stdout.splitlines() == expected
+
+    if not powershell and not shell:
+        pytest.skip("PowerShell or a POSIX shell is required")
+
+
+def test_access_wizard_uses_checkbox_style_multi_select_and_mode_specific_details():
+    powershell_launcher = _read("start.ps1")
+    shell_launcher = _read("start.sh")
+
+    for launcher in (powershell_launcher, shell_launcher):
+        assert "访问方式（可多选）" in launcher
+        assert "请输入要启用的编号，多个用逗号分隔" in launcher
+        assert "具体配置" in launcher
+        assert "局域网访问设置" in launcher
+        assert "公网访问设置" in launcher
+        assert "Cloudflare Tunnel 设置" in launcher
+        assert "PUBLIC_DOMAIN" in launcher
+        assert "CLOUDFLARE_PUBLIC_HOSTNAME" in launcher
+
+
+def test_launchers_migrate_legacy_single_access_modes_without_losing_domains(tmp_path: Path):
+    powershell = shutil.which("powershell.exe") or shutil.which("pwsh")
+    shell = shutil.which("sh")
+    if not shell:
+        common_git_shell = Path(r"C:\Program Files\Git\bin\sh.exe")
+        shell = str(common_git_shell) if common_git_shell.is_file() else None
+
+    runtimes = []
+    if powershell:
+        runtimes.append(
+            (
+                "powershell",
+                "start.ps1",
+                lambda launcher: [
+                    powershell,
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(launcher),
+                    "init",
+                    "-NonInteractive",
+                ],
+            )
+        )
+    if shell:
+        runtimes.append(
+            (
+                "shell",
+                "start.sh",
+                lambda launcher: [shell, str(launcher), "init", "--non-interactive"],
+            )
+        )
+    if not runtimes:
+        pytest.skip("PowerShell or a POSIX shell is required")
+
+    scenarios = (
+        ("domain", "off", "legacy.example.com", "lan,domain", "PUBLIC_DOMAIN"),
+        (
+            "cloudflare",
+            "cloudflare",
+            "legacy-tunnel.example.com",
+            "local,cloudflare",
+            "CLOUDFLARE_PUBLIC_HOSTNAME",
+        ),
+    )
+    for runtime_name, launcher_name, command_for in runtimes:
+        for legacy_mode, tunnel_mode, external_domain, expected_modes, migrated_key in scenarios:
+            fixture_dir = tmp_path / f"{runtime_name}-{legacy_mode}"
+            fixture_dir.mkdir()
+            launcher = _copy_launcher_fixture(fixture_dir, launcher_name)
+            env_text = (fixture_dir / ".env.example").read_text(encoding="utf-8")
+            env_text = "\n".join(
+                line for line in env_text.splitlines() if not line.startswith("DEPLOY_ACCESS_MODES=")
+            )
+            env_text = env_text.replace("DEPLOY_CONFIGURED=false", "DEPLOY_CONFIGURED=true")
+            env_text = env_text.replace("DEPLOY_ACCESS_MODE=lan", f"DEPLOY_ACCESS_MODE={legacy_mode}")
+            env_text = env_text.replace("DEPLOY_TUNNEL_MODE=off", f"DEPLOY_TUNNEL_MODE={tunnel_mode}")
+            env_text = env_text.replace("EXTERNAL_DOMAIN=", f"EXTERNAL_DOMAIN={external_domain}")
+            (fixture_dir / ".env").write_text(env_text + "\n", encoding="utf-8")
+
+            subprocess.run(
+                command_for(launcher),
+                cwd=fixture_dir,
+                check=True,
+                capture_output=True,
+            )
+            migrated = _read_env(fixture_dir / ".env")
+            assert migrated["DEPLOY_ACCESS_MODES"] == expected_modes
+            assert migrated["DEPLOY_ACCESS_MODE"] == "hybrid"
+            assert migrated[migrated_key] == external_domain
 
 
 def test_lan_wizard_auto_detects_multiple_internal_access_names():
@@ -540,6 +693,8 @@ def test_powershell_launcher_generates_and_reconfigures_noninteractive_env(tmp_p
     assert env["DEPLOY_CONFIGURED"] == "true"
     assert env["DEPLOY_GPU_MODE"] == "cpu"
     assert env["DEPLOY_IMAGE_SOURCE"] == "official"
+    assert env["DEPLOY_ACCESS_MODES"] == "lan"
+    assert env["DEPLOY_ACCESS_MODE"] == "lan"
     assert len(env["SESSION_SECRET"]) >= 32
     assert env["MINIO_ROOT_PASSWORD"] == env["MINIO_SECRET_KEY"]
     assert env["SESSION_SECRET"].encode() not in initialized.stdout + initialized.stderr
@@ -564,7 +719,7 @@ def test_powershell_launcher_generates_and_reconfigures_noninteractive_env(tmp_p
             "-Source",
             "mainland",
             "-Tunnel",
-            "off",
+            "cloudflare",
         ],
         cwd=caller_dir,
         check=True,
@@ -576,9 +731,33 @@ def test_powershell_launcher_generates_and_reconfigures_noninteractive_env(tmp_p
     assert reconfigured["DEPLOY_CONFIGURED"] == "true"
     assert reconfigured["DEPLOY_GPU_MODE"] == "auto"
     assert reconfigured["DEPLOY_IMAGE_SOURCE"] == "mainland"
-    assert reconfigured["DEPLOY_TUNNEL_MODE"] == "off"
+    assert reconfigured["DEPLOY_ACCESS_MODES"] == "lan,cloudflare"
+    assert reconfigured["DEPLOY_ACCESS_MODE"] == "hybrid"
+    assert reconfigured["DEPLOY_TUNNEL_MODE"] == "cloudflare"
     assert reconfigured["SESSION_SECRET"] == original_session_secret
     assert reconfigured["MINIO_ROOT_PASSWORD"] == original_minio_password
+
+    subprocess.run(
+        [
+            powershell,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(launcher),
+            "configure",
+            "-NonInteractive",
+            "-Tunnel",
+            "off",
+        ],
+        cwd=caller_dir,
+        check=True,
+        capture_output=True,
+    )
+    tunnel_disabled = _read_env(tmp_path / ".env")
+    assert tunnel_disabled["DEPLOY_ACCESS_MODES"] == "lan"
+    assert tunnel_disabled["DEPLOY_ACCESS_MODE"] == "lan"
+    assert tunnel_disabled["DEPLOY_TUNNEL_MODE"] == "off"
 
 
 def test_shell_launcher_generates_and_reconfigures_noninteractive_env(tmp_path: Path):
@@ -611,6 +790,8 @@ def test_shell_launcher_generates_and_reconfigures_noninteractive_env(tmp_path: 
     assert env["DEPLOY_CONFIGURED"] == "true"
     assert env["DEPLOY_GPU_MODE"] == "cpu"
     assert env["DEPLOY_IMAGE_SOURCE"] == "official"
+    assert env["DEPLOY_ACCESS_MODES"] == "lan"
+    assert env["DEPLOY_ACCESS_MODE"] == "lan"
     assert len(env["SESSION_SECRET"]) >= 32
     assert env["MINIO_ROOT_PASSWORD"] == env["MINIO_SECRET_KEY"]
     assert env["SESSION_SECRET"].encode() not in initialized.stdout + initialized.stderr
@@ -629,7 +810,7 @@ def test_shell_launcher_generates_and_reconfigures_noninteractive_env(tmp_path: 
             "--source",
             "mainland",
             "--tunnel",
-            "off",
+            "cloudflare",
         ],
         cwd=caller_dir,
         check=True,
@@ -641,9 +822,29 @@ def test_shell_launcher_generates_and_reconfigures_noninteractive_env(tmp_path: 
     assert reconfigured["DEPLOY_CONFIGURED"] == "true"
     assert reconfigured["DEPLOY_GPU_MODE"] == "cpu"
     assert reconfigured["DEPLOY_IMAGE_SOURCE"] == "mainland"
-    assert reconfigured["DEPLOY_TUNNEL_MODE"] == "off"
+    assert reconfigured["DEPLOY_ACCESS_MODES"] == "lan,cloudflare"
+    assert reconfigured["DEPLOY_ACCESS_MODE"] == "hybrid"
+    assert reconfigured["DEPLOY_TUNNEL_MODE"] == "cloudflare"
     assert reconfigured["SESSION_SECRET"] == original_session_secret
     assert reconfigured["MINIO_ROOT_PASSWORD"] == original_minio_password
+
+    subprocess.run(
+        [
+            shell,
+            str(launcher),
+            "configure",
+            "--non-interactive",
+            "--tunnel",
+            "off",
+        ],
+        cwd=caller_dir,
+        check=True,
+        capture_output=True,
+    )
+    tunnel_disabled = _read_env(tmp_path / ".env")
+    assert tunnel_disabled["DEPLOY_ACCESS_MODES"] == "lan"
+    assert tunnel_disabled["DEPLOY_ACCESS_MODE"] == "lan"
+    assert tunnel_disabled["DEPLOY_TUNNEL_MODE"] == "off"
 
 
 def test_windows_native_launcher_uses_isolated_local_env_and_scoped_stop():

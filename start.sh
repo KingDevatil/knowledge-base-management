@@ -7,8 +7,12 @@ set -eu
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ENV_FILE="$ROOT_DIR/.env"
 NETWORK_DETECTION_SCRIPT="$ROOT_DIR/scripts/network-detection.sh"
-[ -f "$NETWORK_DETECTION_SCRIPT" ] || { echo "[错误] 网络地址检测脚本不存在：$NETWORK_DETECTION_SCRIPT" >&2; exit 1; }
+ACCESS_MODES_SCRIPT="$ROOT_DIR/scripts/access-modes.sh"
+for REQUIRED_SCRIPT in "$NETWORK_DETECTION_SCRIPT" "$ACCESS_MODES_SCRIPT"; do
+    [ -f "$REQUIRED_SCRIPT" ] || { echo "[错误] 部署辅助脚本不存在：$REQUIRED_SCRIPT" >&2; exit 1; }
+done
 . "$NETWORK_DETECTION_SCRIPT"
+. "$ACCESS_MODES_SCRIPT"
 COMMAND=up
 GPU_MODE=""
 PROFILE_MODE=auto
@@ -207,6 +211,7 @@ apply_hardware_profile() {
 }
 
 initialize_deployment_metadata() {
+    metadata_access_modes=$(read_env_value DEPLOY_ACCESS_MODES)
     metadata_access=$(read_env_value DEPLOY_ACCESS_MODE)
     if [ -z "$metadata_access" ]; then
         metadata_external=$(read_env_value EXTERNAL_DOMAIN)
@@ -218,7 +223,20 @@ initialize_deployment_metadata() {
         else
             metadata_access=lan
         fi
-        set_env_value DEPLOY_ACCESS_MODE "$metadata_access"
+    fi
+
+    metadata_access_modes=$(knowbase_normalize_access_modes "$metadata_access_modes" "$metadata_access")
+    if [ "$(env_value_or_default DEPLOY_TUNNEL_MODE off)" = cloudflare ] && ! knowbase_access_modes_contains "$metadata_access_modes" cloudflare; then
+        metadata_access_modes=$(knowbase_update_access_modes_for_tunnel "$metadata_access_modes" cloudflare)
+    fi
+    set_access_modes_metadata "$metadata_access_modes"
+
+    metadata_external=$(read_env_value EXTERNAL_DOMAIN)
+    if knowbase_access_modes_contains "$metadata_access_modes" domain && [ -z "$(read_env_value PUBLIC_DOMAIN)" ] && [ -n "$metadata_external" ]; then
+        set_env_value PUBLIC_DOMAIN "$metadata_external"
+    fi
+    if knowbase_access_modes_contains "$metadata_access_modes" cloudflare && [ -z "$(read_env_value CLOUDFLARE_PUBLIC_HOSTNAME)" ] && [ -n "$metadata_external" ]; then
+        set_env_value CLOUDFLARE_PUBLIC_HOSTNAME "$metadata_external"
     fi
 
     metadata_source=$(read_env_value DEPLOY_IMAGE_SOURCE)
@@ -240,11 +258,22 @@ deployment_is_configured() {
     [ "$(env_value_or_default DEPLOY_CONFIGURED true)" = true ]
 }
 
+set_access_modes_metadata() {
+    access_metadata_modes=$(knowbase_normalize_access_modes "${1:-}")
+    set_env_value DEPLOY_ACCESS_MODES "$access_metadata_modes"
+    set_env_value DEPLOY_ACCESS_MODE "$(knowbase_legacy_access_mode "$access_metadata_modes")"
+    if knowbase_access_modes_contains "$access_metadata_modes" cloudflare; then
+        set_env_value DEPLOY_TUNNEL_MODE cloudflare
+    else
+        set_env_value DEPLOY_TUNNEL_MODE off
+    fi
+}
+
 apply_command_configuration_overrides() {
     [ -z "$GPU_MODE" ] || set_env_value DEPLOY_GPU_MODE "$GPU_MODE"
     if [ -n "$TUNNEL_MODE" ] && [ "$TUNNEL_MODE" != auto ]; then
-        set_env_value DEPLOY_TUNNEL_MODE "$TUNNEL_MODE"
-        [ "$TUNNEL_MODE" != cloudflare ] || set_env_value DEPLOY_ACCESS_MODE cloudflare
+        override_access_modes=$(env_value_or_default DEPLOY_ACCESS_MODES lan)
+        set_access_modes_metadata "$(knowbase_update_access_modes_for_tunnel "$override_access_modes" "$TUNNEL_MODE")"
     fi
     if [ -n "$IMAGE_SOURCE_MODE" ] && [ "$IMAGE_SOURCE_MODE" != auto ]; then
         set_env_value DEPLOY_IMAGE_SOURCE "$IMAGE_SOURCE_MODE"
@@ -302,12 +331,58 @@ configure_image_source() {
 
 prompt_required_domain() {
     cfg_domain_default=$1
+    cfg_domain_label=${2:-请输入访问域名}
     while :; do
-        prompt_value "请输入访问域名" "$cfg_domain_default"
+        prompt_value "$cfg_domain_label" "$cfg_domain_default"
         case "$PROMPT_VALUE" in
             ''|*' '*) echo "域名不能为空且不能包含空格。" >&2 ;;
             *) REQUIRED_DOMAIN=$PROMPT_VALUE; return 0 ;;
         esac
+    done
+}
+
+configure_access_mode_selection() {
+    cfg_access_current=$(knowbase_normalize_access_modes "${1:-}")
+    while :; do
+        echo ""
+        echo "访问方式（可多选）"
+        for cfg_access_entry in '1:local:仅本机' '2:lan:局域网' '3:domain:公网' '4:cloudflare:Cloudflare Tunnel'; do
+            cfg_access_number=${cfg_access_entry%%:*}
+            cfg_access_remainder=${cfg_access_entry#*:}
+            cfg_access_mode=${cfg_access_remainder%%:*}
+            cfg_access_label=${cfg_access_remainder#*:}
+            if knowbase_access_modes_contains "$cfg_access_current" "$cfg_access_mode"; then cfg_access_mark=x; else cfg_access_mark=' '; fi
+            echo "  [$cfg_access_mark] $cfg_access_number) $cfg_access_label"
+        done
+
+        prompt_value "请输入要启用的编号，多个用逗号分隔" "$(knowbase_access_mode_choices "$cfg_access_current")"
+        cfg_access_selected=""
+        cfg_access_invalid=""
+        for cfg_access_choice in $(printf '%s' "$PROMPT_VALUE" | tr ',;' '  '); do
+            cfg_access_choice=$(printf '%s' "$cfg_access_choice" | tr '[:upper:]' '[:lower:]')
+            case "$cfg_access_choice" in
+                1|local|localhost) cfg_access_mode=local ;;
+                2|lan|internal) cfg_access_mode=lan ;;
+                3|domain|public|external) cfg_access_mode=domain ;;
+                4|cloudflare|tunnel) cfg_access_mode=cloudflare ;;
+                *) cfg_access_mode=""; cfg_access_invalid=${cfg_access_invalid:+$cfg_access_invalid, }$cfg_access_choice ;;
+            esac
+            [ -n "$cfg_access_mode" ] || continue
+            case ",$cfg_access_selected," in
+                *",$cfg_access_mode,"*) ;;
+                *) cfg_access_selected=${cfg_access_selected:+$cfg_access_selected,}$cfg_access_mode ;;
+            esac
+        done
+        if [ -n "$cfg_access_invalid" ]; then
+            echo "输入包含无效选项：$cfg_access_invalid。" >&2
+            continue
+        fi
+        if [ -z "$cfg_access_selected" ]; then
+            echo "至少选择一种访问方式。" >&2
+            continue
+        fi
+        CONFIGURED_ACCESS_MODES=$(knowbase_normalize_access_modes "$cfg_access_selected")
+        return 0
     done
 }
 
@@ -328,67 +403,102 @@ configure_internal_hosts() {
 }
 
 configure_network() {
+    cfg_current_modes=$(env_value_or_default DEPLOY_ACCESS_MODES lan)
+    configure_access_mode_selection "$cfg_current_modes"
+    cfg_access_modes=$CONFIGURED_ACCESS_MODES
     echo ""
-    echo "访问方式"
-    echo "  1) 仅本机访问"
-    echo "  2) 局域网访问（推荐）"
-    echo "  3) 公网域名 / 路由器端口转发"
-    echo "  4) Cloudflare Tunnel（无需公网 IP）"
-    cfg_current=$(env_value_or_default DEPLOY_ACCESS_MODE lan)
-    while :; do
-        prompt_value "请选择访问方式" "$cfg_current"
-        case "$PROMPT_VALUE" in
-            1|local) cfg_access=local; break ;;
-            2|lan) cfg_access=lan; break ;;
-            3|domain) cfg_access=domain; break ;;
-            4|cloudflare) cfg_access=cloudflare; break ;;
-            *) echo "输入无效，请重新选择。" >&2 ;;
-        esac
-    done
+    echo "具体配置"
 
-    case "$cfg_access" in
-        local)
-            set_env_value EXTERNAL_DOMAIN ""
-            set_env_value INTERNAL_DOMAIN localhost
-            set_env_value EXTERNAL_IP 127.0.0.1
-            set_env_value INTERNAL_IP 127.0.0.1
-            set_env_value CORS_ORIGINS '*'
-            set_env_value DEPLOY_TUNNEL_MODE off
-            ;;
-        lan)
-            configure_internal_hosts "$(env_value_or_default INTERNAL_DOMAIN localhost)"
-            set_env_value EXTERNAL_DOMAIN ""
-            set_env_value INTERNAL_DOMAIN "$CONFIGURED_INTERNAL_HOSTS"
-            set_env_value EXTERNAL_IP 0.0.0.0
-            set_env_value INTERNAL_IP 0.0.0.0
-            set_env_value CORS_ORIGINS '*'
-            set_env_value DEPLOY_TUNNEL_MODE off
-            ;;
-        domain)
-            prompt_required_domain "$(env_value_or_default EXTERNAL_DOMAIN kb.example.com)"
-            configure_internal_hosts "$(env_value_or_default INTERNAL_DOMAIN localhost)"
-            set_env_value EXTERNAL_DOMAIN "$REQUIRED_DOMAIN"
-            set_env_value INTERNAL_DOMAIN "$CONFIGURED_INTERNAL_HOSTS"
-            set_env_value EXTERNAL_IP 0.0.0.0
-            set_env_value INTERNAL_IP 0.0.0.0
-            set_env_value CORS_ORIGINS "https://$REQUIRED_DOMAIN"
-            set_env_value DEPLOY_TUNNEL_MODE off
-            echo "[提示] 请把证书放入 nginx/ssl/$REQUIRED_DOMAIN/。" >&2
-            ;;
-        cloudflare)
-            prompt_required_domain "$(env_value_or_default EXTERNAL_DOMAIN kb.example.com)"
-            prompt_secret "Cloudflare Tunnel Token" "$(read_env_value CLOUDFLARE_TUNNEL_TOKEN)"
-            [ -n "$PROMPT_VALUE" ] || { echo "[错误] Cloudflare Tunnel 模式必须提供 Token。" >&2; exit 1; }
-            set_env_value EXTERNAL_DOMAIN "$REQUIRED_DOMAIN"
-            set_env_value INTERNAL_DOMAIN localhost
-            set_env_value EXTERNAL_IP 127.0.0.1
-            set_env_value INTERNAL_IP 127.0.0.1
-            set_env_value CORS_ORIGINS "https://$REQUIRED_DOMAIN"
-            set_env_value CLOUDFLARE_TUNNEL_TOKEN "$PROMPT_VALUE"
-            set_env_value DEPLOY_TUNNEL_MODE cloudflare
-            ;;
-    esac
-    set_env_value DEPLOY_ACCESS_MODE "$cfg_access"
+    if knowbase_access_modes_contains "$cfg_access_modes" local; then
+        echo "[本机] 无需额外设置，将保留 localhost 访问。"
+    fi
+
+    if knowbase_access_modes_contains "$cfg_access_modes" lan; then
+        echo ""
+        echo "局域网访问设置"
+        configure_internal_hosts "$(env_value_or_default INTERNAL_DOMAIN localhost)"
+        cfg_internal_domain=$CONFIGURED_INTERNAL_HOSTS
+    else
+        cfg_internal_domain=localhost
+    fi
+
+    cfg_public_domain=$(read_env_value PUBLIC_DOMAIN)
+    cfg_active_public_domain=""
+    if knowbase_access_modes_contains "$cfg_access_modes" domain; then
+        echo ""
+        echo "公网访问设置"
+        if [ -z "$cfg_public_domain" ]; then
+            if knowbase_access_modes_contains "$cfg_current_modes" domain; then
+                cfg_public_domain=$(env_value_or_default EXTERNAL_DOMAIN kb.example.com)
+            else
+                cfg_public_domain=kb.example.com
+            fi
+        fi
+        prompt_required_domain "$cfg_public_domain" "公网访问域名"
+        cfg_public_domain=$REQUIRED_DOMAIN
+        cfg_active_public_domain=$cfg_public_domain
+        set_env_value PUBLIC_DOMAIN "$cfg_public_domain"
+        echo "[提示] 请把证书放入 nginx/ssl/$cfg_public_domain/。" >&2
+    fi
+
+    cfg_cloudflare_hostname=$(read_env_value CLOUDFLARE_PUBLIC_HOSTNAME)
+    cfg_active_cloudflare_hostname=""
+    if knowbase_access_modes_contains "$cfg_access_modes" cloudflare; then
+        echo ""
+        echo "Cloudflare Tunnel 设置"
+        if [ -z "$cfg_cloudflare_hostname" ]; then
+            if knowbase_access_modes_contains "$cfg_current_modes" cloudflare && ! knowbase_access_modes_contains "$cfg_current_modes" domain; then
+                cfg_cloudflare_hostname=$(env_value_or_default EXTERNAL_DOMAIN kb-tunnel.example.com)
+            elif [ -n "$cfg_active_public_domain" ]; then
+                cfg_cloudflare_hostname=tunnel.$cfg_active_public_domain
+            else
+                cfg_cloudflare_hostname=kb-tunnel.example.com
+            fi
+        fi
+        if [ -n "$cfg_active_public_domain" ] && [ "$(printf '%s' "$cfg_cloudflare_hostname" | tr '[:upper:]' '[:lower:]')" = "$(printf '%s' "$cfg_active_public_domain" | tr '[:upper:]' '[:lower:]')" ]; then
+            cfg_cloudflare_hostname=tunnel.$cfg_active_public_domain
+        fi
+        while :; do
+            prompt_required_domain "$cfg_cloudflare_hostname" "Cloudflare Public Hostname"
+            cfg_cloudflare_hostname=$REQUIRED_DOMAIN
+            if [ -z "$cfg_active_public_domain" ] || [ "$(printf '%s' "$cfg_cloudflare_hostname" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$cfg_active_public_domain" | tr '[:upper:]' '[:lower:]')" ]; then
+                break
+            fi
+            echo "公网直连域名和 Tunnel Hostname 应使用不同名称，例如 tunnel.$cfg_active_public_domain。" >&2
+            cfg_cloudflare_hostname=tunnel.$cfg_active_public_domain
+        done
+        prompt_secret "Cloudflare Tunnel Token" "$(read_env_value CLOUDFLARE_TUNNEL_TOKEN)"
+        [ -n "$PROMPT_VALUE" ] || { echo "[错误] Cloudflare Tunnel 必须提供 Token。" >&2; exit 1; }
+        cfg_active_cloudflare_hostname=$cfg_cloudflare_hostname
+        set_env_value CLOUDFLARE_PUBLIC_HOSTNAME "$cfg_cloudflare_hostname"
+        set_env_value CLOUDFLARE_TUNNEL_TOKEN "$PROMPT_VALUE"
+    fi
+
+    if [ -n "$cfg_active_public_domain" ]; then
+        cfg_runtime_external_domain=$cfg_active_public_domain
+    else
+        cfg_runtime_external_domain=$cfg_active_cloudflare_hostname
+    fi
+    if knowbase_access_modes_contains "$cfg_access_modes" lan || knowbase_access_modes_contains "$cfg_access_modes" domain; then
+        cfg_internal_bind=0.0.0.0
+    else
+        cfg_internal_bind=127.0.0.1
+    fi
+    if knowbase_access_modes_contains "$cfg_access_modes" domain; then cfg_external_bind=0.0.0.0; else cfg_external_bind=127.0.0.1; fi
+    cfg_cors_origins=""
+    [ -z "$cfg_active_public_domain" ] || cfg_cors_origins=https://$cfg_active_public_domain
+    [ -z "$cfg_active_cloudflare_hostname" ] || cfg_cors_origins=${cfg_cors_origins:+$cfg_cors_origins,}https://$cfg_active_cloudflare_hostname
+    if knowbase_access_modes_contains "$cfg_access_modes" lan || [ -z "$cfg_cors_origins" ]; then cfg_cors_origins='*'; fi
+
+    set_env_value INTERNAL_DOMAIN "$cfg_internal_domain"
+    set_env_value EXTERNAL_DOMAIN "$cfg_runtime_external_domain"
+    set_env_value INTERNAL_IP "$cfg_internal_bind"
+    set_env_value EXTERNAL_IP "$cfg_external_bind"
+    set_env_value CORS_ORIGINS "$cfg_cors_origins"
+    set_access_modes_metadata "$cfg_access_modes"
+    if knowbase_access_modes_contains "$cfg_access_modes" cloudflare; then
+        echo "[提示] Cloudflare Public Hostname 上游应配置为 http://nginx:80。" >&2
+    fi
 }
 
 configure_storage() {
@@ -423,10 +533,13 @@ show_configuration_summary() {
     echo "  硬件档位: $(env_value_or_default HARDWARE_PROFILE recommended)"
     echo "  GPU 模式:  $(env_value_or_default DEPLOY_GPU_MODE auto)"
     echo "  镜像源:    $(env_value_or_default DEPLOY_IMAGE_SOURCE mainland)"
-    echo "  访问方式:  $(env_value_or_default DEPLOY_ACCESS_MODE lan)"
-    echo "  内网名称/IP: $(env_value_or_default INTERNAL_DOMAIN localhost)"
-    echo "  外部域名:  $(env_value_or_default EXTERNAL_DOMAIN 未配置)"
-    echo "  Tunnel:    $(env_value_or_default DEPLOY_TUNNEL_MODE off) / Token $cfg_token_status"
+    cfg_summary_modes=$(env_value_or_default DEPLOY_ACCESS_MODES lan)
+    echo "  访问方式:  $(knowbase_access_mode_labels "$cfg_summary_modes")"
+    if knowbase_access_modes_contains "$cfg_summary_modes" lan; then echo "  局域网名称/IP: $(env_value_or_default INTERNAL_DOMAIN localhost)"; fi
+    if knowbase_access_modes_contains "$cfg_summary_modes" domain; then echo "  公网域名:  $(env_value_or_default PUBLIC_DOMAIN 未配置)"; fi
+    if knowbase_access_modes_contains "$cfg_summary_modes" cloudflare; then
+        echo "  Tunnel:    $(env_value_or_default CLOUDFLARE_PUBLIC_HOSTNAME 未配置) / Token $cfg_token_status"
+    fi
     echo "  数据目录:  $(env_value_or_default HOST_KBDATA_DIR ./kbdata)"
     echo "  模型:      $(env_value_or_default OLLAMA_MODEL bge-m3)"
     echo "  初始管理员: $(env_value_or_default ADMIN_INITIAL_USERNAME admin)"
@@ -570,7 +683,8 @@ select_tunnel() {
         echo "[错误] 启用 Cloudflare Tunnel 前请在 .env 设置 CLOUDFLARE_TUNNEL_TOKEN。" >&2
         exit 1
     fi
-    echo "[穿透] Cloudflare Tunnel 已启用；Public Hostname 上游应配置为 http://nginx:80"
+    tunnel_hostname=$(env_value_or_default CLOUDFLARE_PUBLIC_HOSTNAME 已在Cloudflare控制台配置的Hostname)
+    echo "[穿透] Cloudflare Tunnel 已启用：$tunnel_hostname；上游应配置为 http://nginx:80"
 }
 
 compose() {
@@ -634,7 +748,13 @@ wait_for_gateway() {
 }
 
 show_deployment_access_urls() {
-    deployment_internal_hosts=$(env_value_or_default INTERNAL_DOMAIN localhost)
+    deployment_access_modes=$(env_value_or_default DEPLOY_ACCESS_MODES lan)
+    deployment_internal_hosts=""
+    if knowbase_access_modes_contains "$deployment_access_modes" local; then deployment_internal_hosts=localhost; fi
+    if knowbase_access_modes_contains "$deployment_access_modes" lan; then
+        deployment_lan_hosts=$(env_value_or_default INTERNAL_DOMAIN localhost)
+        deployment_internal_hosts=${deployment_internal_hosts:+$deployment_internal_hosts,}$deployment_lan_hosts
+    fi
     deployment_old_ifs=$IFS
     IFS=',; '
     echo ""
@@ -645,10 +765,15 @@ show_deployment_access_urls() {
         echo "  MCP:      http://$deployment_internal_host/mcp"
     done
     IFS=$deployment_old_ifs
-    deployment_external_domain=$(read_env_value EXTERNAL_DOMAIN)
-    if [ -n "$deployment_external_domain" ]; then
-        echo "  外部访问: https://$deployment_external_domain/"
-        echo "  外部 MCP: https://$deployment_external_domain/mcp"
+    if knowbase_access_modes_contains "$deployment_access_modes" domain; then
+        deployment_public_domain=$(env_value_or_default PUBLIC_DOMAIN "$(read_env_value EXTERNAL_DOMAIN)")
+        echo "  公网访问: https://$deployment_public_domain/"
+        echo "  公网 MCP: https://$deployment_public_domain/mcp"
+    fi
+    if knowbase_access_modes_contains "$deployment_access_modes" cloudflare; then
+        deployment_tunnel_hostname=$(env_value_or_default CLOUDFLARE_PUBLIC_HOSTNAME "$(read_env_value EXTERNAL_DOMAIN)")
+        echo "  Tunnel:   https://$deployment_tunnel_hostname/"
+        echo "  Tunnel MCP: https://$deployment_tunnel_hostname/mcp"
     fi
 }
 

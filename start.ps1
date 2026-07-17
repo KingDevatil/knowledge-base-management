@@ -34,10 +34,14 @@ $ErrorActionPreference = "Stop"
 $RootDir = $PSScriptRoot
 $EnvFile = Join-Path $RootDir ".env"
 $NetworkDetectionScript = Join-Path $RootDir "scripts\network-detection.ps1"
-if (-not (Test-Path -LiteralPath $NetworkDetectionScript)) {
-    throw "网络地址检测脚本不存在：$NetworkDetectionScript"
+$AccessModesScript = Join-Path $RootDir "scripts\access-modes.ps1"
+foreach ($requiredScript in @($NetworkDetectionScript, $AccessModesScript)) {
+    if (-not (Test-Path -LiteralPath $requiredScript)) {
+        throw "部署辅助脚本不存在：$requiredScript"
+    }
 }
 . $NetworkDetectionScript
+. $AccessModesScript
 $script:ComposeFiles = @("-f", "docker-compose.yml")
 $script:ComposeOptions = @()
 $script:GpuWasSpecified = $PSBoundParameters.ContainsKey("Gpu")
@@ -171,18 +175,37 @@ function Set-HardwareProfile([string]$Name) {
 }
 
 function Initialize-DeploymentMetadata {
-    $accessMode = Get-DotEnvValue "DEPLOY_ACCESS_MODE"
-    if ([string]::IsNullOrWhiteSpace($accessMode)) {
+    $accessModes = Get-DotEnvValue "DEPLOY_ACCESS_MODES"
+    $legacyAccessMode = Get-DotEnvValue "DEPLOY_ACCESS_MODE"
+    if ([string]::IsNullOrWhiteSpace($legacyAccessMode)) {
         $externalDomain = Get-DotEnvValue "EXTERNAL_DOMAIN"
         $internalIp = Get-DotEnvValue "INTERNAL_IP"
         if (-not [string]::IsNullOrWhiteSpace($externalDomain) -and $externalDomain -ne "kb.company.com") {
-            $accessMode = "domain"
+            $legacyAccessMode = "domain"
         } elseif ($internalIp -eq "127.0.0.1") {
-            $accessMode = "local"
+            $legacyAccessMode = "local"
         } else {
-            $accessMode = "lan"
+            $legacyAccessMode = "lan"
         }
-        Set-DotEnvValue "DEPLOY_ACCESS_MODE" $accessMode
+    }
+
+    $accessModes = ConvertTo-KnowbaseAccessModes $accessModes $legacyAccessMode
+    if ((Get-DotEnvValueOrDefault "DEPLOY_TUNNEL_MODE" "off") -eq "cloudflare" -and
+        -not (Test-KnowbaseAccessMode $accessModes "cloudflare")) {
+        $accessModes = Update-KnowbaseAccessModesForTunnel $accessModes "cloudflare"
+    }
+    Set-AccessModesMetadata $accessModes
+
+    $externalDomain = Get-DotEnvValue "EXTERNAL_DOMAIN"
+    if ((Test-KnowbaseAccessMode $accessModes "domain") -and
+        [string]::IsNullOrWhiteSpace((Get-DotEnvValue "PUBLIC_DOMAIN")) -and
+        -not [string]::IsNullOrWhiteSpace($externalDomain)) {
+        Set-DotEnvValue "PUBLIC_DOMAIN" $externalDomain
+    }
+    if ((Test-KnowbaseAccessMode $accessModes "cloudflare") -and
+        [string]::IsNullOrWhiteSpace((Get-DotEnvValue "CLOUDFLARE_PUBLIC_HOSTNAME")) -and
+        -not [string]::IsNullOrWhiteSpace($externalDomain)) {
+        Set-DotEnvValue "CLOUDFLARE_PUBLIC_HOSTNAME" $externalDomain
     }
 
     $imageSource = Get-DotEnvValue "DEPLOY_IMAGE_SOURCE"
@@ -200,15 +223,21 @@ function Test-DeploymentConfigured {
     return (Get-DotEnvValueOrDefault "DEPLOY_CONFIGURED" "true").ToLowerInvariant() -eq "true"
 }
 
+function Set-AccessModesMetadata([string]$Modes) {
+    $normalizedModes = ConvertTo-KnowbaseAccessModes $Modes
+    Set-DotEnvValue "DEPLOY_ACCESS_MODES" $normalizedModes
+    Set-DotEnvValue "DEPLOY_ACCESS_MODE" (Get-KnowbaseLegacyAccessMode $normalizedModes)
+    $tunnelMode = if (Test-KnowbaseAccessMode $normalizedModes "cloudflare") { "cloudflare" } else { "off" }
+    Set-DotEnvValue "DEPLOY_TUNNEL_MODE" $tunnelMode
+}
+
 function Apply-CommandConfigurationOverrides {
     if ($script:GpuWasSpecified) {
         Set-DotEnvValue "DEPLOY_GPU_MODE" $Gpu
     }
     if ($script:TunnelWasSpecified -and $Tunnel -ne "auto") {
-        Set-DotEnvValue "DEPLOY_TUNNEL_MODE" $Tunnel
-        if ($Tunnel -eq "cloudflare") {
-            Set-DotEnvValue "DEPLOY_ACCESS_MODE" "cloudflare"
-        }
+        $accessModes = Get-DotEnvValueOrDefault "DEPLOY_ACCESS_MODES" "lan"
+        Set-AccessModesMetadata (Update-KnowbaseAccessModesForTunnel $accessModes $Tunnel)
     }
     if ($script:SourceWasSpecified -and $Source -ne "auto") {
         Set-DotEnvValue "DEPLOY_IMAGE_SOURCE" $Source
@@ -252,13 +281,57 @@ function Set-ImageSourceConfiguration {
     Set-DotEnvValue "DEPLOY_IMAGE_SOURCE" $sourceChoice
 }
 
-function Read-RequiredDomain([string]$CurrentValue) {
+function Read-RequiredDomain([string]$CurrentValue, [string]$Prompt = "请输入访问域名") {
     while ($true) {
-        $domain = Read-ConfigValue "请输入访问域名" $CurrentValue
+        $domain = Read-ConfigValue $Prompt $CurrentValue
         if (-not [string]::IsNullOrWhiteSpace($domain) -and $domain -notmatch "\s") {
             return $domain
         }
         Write-Host "域名不能为空且不能包含空格。" -ForegroundColor Yellow
+    }
+}
+
+function Read-AccessModeSelection([string]$CurrentModes) {
+    $currentModes = ConvertTo-KnowbaseAccessModes $CurrentModes
+    while ($true) {
+        Write-Host ""
+        Write-Host "访问方式（可多选）" -ForegroundColor Cyan
+        foreach ($entry in @(
+            @{ Number = "1"; Mode = "local"; Label = "仅本机" },
+            @{ Number = "2"; Mode = "lan"; Label = "局域网" },
+            @{ Number = "3"; Mode = "domain"; Label = "公网" },
+            @{ Number = "4"; Mode = "cloudflare"; Label = "Cloudflare Tunnel" }
+        )) {
+            $mark = if (Test-KnowbaseAccessMode $currentModes $entry.Mode) { "x" } else { " " }
+            Write-Host "  [$mark] $($entry.Number)) $($entry.Label)"
+        }
+
+        $defaultChoices = Get-KnowbaseAccessModeChoices $currentModes
+        $answer = Read-Host "请输入要启用的编号，多个用逗号分隔 [$defaultChoices]"
+        if ([string]::IsNullOrWhiteSpace($answer)) { return $currentModes }
+
+        $selectedModes = @()
+        $invalid = @()
+        foreach ($rawChoice in @($answer -split "[,;\s]+")) {
+            $choice = $rawChoice.Trim().ToLowerInvariant()
+            switch ($choice) {
+                { $_ -in @("1", "local", "localhost") } { $mode = "local"; break }
+                { $_ -in @("2", "lan", "internal") } { $mode = "lan"; break }
+                { $_ -in @("3", "domain", "public", "external") } { $mode = "domain"; break }
+                { $_ -in @("4", "cloudflare", "tunnel") } { $mode = "cloudflare"; break }
+                default { $mode = ""; if ($choice) { $invalid += $choice } }
+            }
+            if ($mode -and $selectedModes -notcontains $mode) { $selectedModes += $mode }
+        }
+        if ($invalid.Count -gt 0) {
+            Write-Host "输入包含无效选项：$($invalid -join ', ')。" -ForegroundColor Yellow
+            continue
+        }
+        if ($selectedModes.Count -eq 0) {
+            Write-Host "至少选择一种访问方式。" -ForegroundColor Yellow
+            continue
+        }
+        return ConvertTo-KnowbaseAccessModes ($selectedModes -join ",")
     }
 }
 
@@ -277,65 +350,86 @@ function Read-InternalHostConfiguration([string]$CurrentValue) {
 }
 
 function Set-NetworkConfiguration {
+    $currentModes = Get-DotEnvValueOrDefault "DEPLOY_ACCESS_MODES" "lan"
+    $accessModes = Read-AccessModeSelection $currentModes
     Write-Host ""
-    Write-Host "访问方式" -ForegroundColor Cyan
-    Write-Host "  1) 仅本机访问"
-    Write-Host "  2) 局域网访问（推荐）"
-    Write-Host "  3) 公网域名 / 路由器端口转发"
-    Write-Host "  4) Cloudflare Tunnel（无需公网 IP）"
-    $currentAccess = Get-DotEnvValueOrDefault "DEPLOY_ACCESS_MODE" "lan"
-    $accessChoice = Read-MenuChoice "请选择访问方式" $currentAccess @{
-        "1" = "local"; "local" = "local"
-        "2" = "lan"; "lan" = "lan"
-        "3" = "domain"; "domain" = "domain"
-        "4" = "cloudflare"; "cloudflare" = "cloudflare"
+    Write-Host "具体配置" -ForegroundColor Cyan
+
+    if (Test-KnowbaseAccessMode $accessModes "local") {
+        Write-Host "[本机] 无需额外设置，将保留 localhost 访问。" -ForegroundColor Green
     }
 
-    switch ($accessChoice) {
-        "local" {
-            Set-DotEnvValue "EXTERNAL_DOMAIN" ""
-            Set-DotEnvValue "INTERNAL_DOMAIN" "localhost"
-            Set-DotEnvValue "EXTERNAL_IP" "127.0.0.1"
-            Set-DotEnvValue "INTERNAL_IP" "127.0.0.1"
-            Set-DotEnvValue "CORS_ORIGINS" "*"
-            Set-DotEnvValue "DEPLOY_TUNNEL_MODE" "off"
-        }
-        "lan" {
-            $internalDomain = Read-InternalHostConfiguration (Get-DotEnvValueOrDefault "INTERNAL_DOMAIN" "localhost")
-            Set-DotEnvValue "EXTERNAL_DOMAIN" ""
-            Set-DotEnvValue "INTERNAL_DOMAIN" $internalDomain
-            Set-DotEnvValue "EXTERNAL_IP" "0.0.0.0"
-            Set-DotEnvValue "INTERNAL_IP" "0.0.0.0"
-            Set-DotEnvValue "CORS_ORIGINS" "*"
-            Set-DotEnvValue "DEPLOY_TUNNEL_MODE" "off"
-        }
-        "domain" {
-            $externalDomain = Read-RequiredDomain (Get-DotEnvValueOrDefault "EXTERNAL_DOMAIN" "kb.example.com")
-            $internalDomain = Read-InternalHostConfiguration (Get-DotEnvValueOrDefault "INTERNAL_DOMAIN" "localhost")
-            Set-DotEnvValue "EXTERNAL_DOMAIN" $externalDomain
-            Set-DotEnvValue "INTERNAL_DOMAIN" $internalDomain
-            Set-DotEnvValue "EXTERNAL_IP" "0.0.0.0"
-            Set-DotEnvValue "INTERNAL_IP" "0.0.0.0"
-            Set-DotEnvValue "CORS_ORIGINS" "https://$externalDomain"
-            Set-DotEnvValue "DEPLOY_TUNNEL_MODE" "off"
-            Write-Host "[提示] 请把证书放入 nginx/ssl/$externalDomain/。" -ForegroundColor Yellow
-        }
-        "cloudflare" {
-            $externalDomain = Read-RequiredDomain (Get-DotEnvValueOrDefault "EXTERNAL_DOMAIN" "kb.example.com")
-            $token = Read-SecretValue "Cloudflare Tunnel Token" (Get-DotEnvValue "CLOUDFLARE_TUNNEL_TOKEN")
-            if ([string]::IsNullOrWhiteSpace($token)) {
-                throw "Cloudflare Tunnel 模式必须提供 Token。"
-            }
-            Set-DotEnvValue "EXTERNAL_DOMAIN" $externalDomain
-            Set-DotEnvValue "INTERNAL_DOMAIN" "localhost"
-            Set-DotEnvValue "EXTERNAL_IP" "127.0.0.1"
-            Set-DotEnvValue "INTERNAL_IP" "127.0.0.1"
-            Set-DotEnvValue "CORS_ORIGINS" "https://$externalDomain"
-            Set-DotEnvValue "CLOUDFLARE_TUNNEL_TOKEN" $token
-            Set-DotEnvValue "DEPLOY_TUNNEL_MODE" "cloudflare"
-        }
+    if (Test-KnowbaseAccessMode $accessModes "lan") {
+        Write-Host ""
+        Write-Host "局域网访问设置" -ForegroundColor Cyan
+        $internalDomain = Read-InternalHostConfiguration (Get-DotEnvValueOrDefault "INTERNAL_DOMAIN" "localhost")
+    } else {
+        $internalDomain = "localhost"
     }
-    Set-DotEnvValue "DEPLOY_ACCESS_MODE" $accessChoice
+
+    $publicDomain = Get-DotEnvValue "PUBLIC_DOMAIN"
+    $activePublicDomain = ""
+    if (Test-KnowbaseAccessMode $accessModes "domain") {
+        Write-Host ""
+        Write-Host "公网访问设置" -ForegroundColor Cyan
+        if ([string]::IsNullOrWhiteSpace($publicDomain)) {
+            $publicDomain = if (Test-KnowbaseAccessMode $currentModes "domain") {
+                Get-DotEnvValueOrDefault "EXTERNAL_DOMAIN" "kb.example.com"
+            } else { "kb.example.com" }
+        }
+        $publicDomain = Read-RequiredDomain $publicDomain "公网访问域名"
+        $activePublicDomain = $publicDomain
+        Set-DotEnvValue "PUBLIC_DOMAIN" $publicDomain
+        Write-Host "[提示] 请把证书放入 nginx/ssl/$publicDomain/。" -ForegroundColor Yellow
+    }
+
+    $cloudflareHostname = Get-DotEnvValue "CLOUDFLARE_PUBLIC_HOSTNAME"
+    if (Test-KnowbaseAccessMode $accessModes "cloudflare") {
+        Write-Host ""
+        Write-Host "Cloudflare Tunnel 设置" -ForegroundColor Cyan
+        if ([string]::IsNullOrWhiteSpace($cloudflareHostname)) {
+            $cloudflareHostname = if ((Test-KnowbaseAccessMode $currentModes "cloudflare") -and
+                -not (Test-KnowbaseAccessMode $currentModes "domain")) {
+                Get-DotEnvValueOrDefault "EXTERNAL_DOMAIN" "kb-tunnel.example.com"
+            } elseif ($activePublicDomain) { "tunnel.$activePublicDomain" } else { "kb-tunnel.example.com" }
+        }
+        if ($activePublicDomain -and $cloudflareHostname.Equals($activePublicDomain, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $cloudflareHostname = "tunnel.$activePublicDomain"
+        }
+        while ($true) {
+            $cloudflareHostname = Read-RequiredDomain $cloudflareHostname "Cloudflare Public Hostname"
+            if (-not $activePublicDomain -or -not $cloudflareHostname.Equals($activePublicDomain, [System.StringComparison]::OrdinalIgnoreCase)) { break }
+            Write-Host "公网直连域名和 Tunnel Hostname 应使用不同名称，例如 tunnel.$activePublicDomain。" -ForegroundColor Yellow
+            $cloudflareHostname = "tunnel.$activePublicDomain"
+        }
+        $token = Read-SecretValue "Cloudflare Tunnel Token" (Get-DotEnvValue "CLOUDFLARE_TUNNEL_TOKEN")
+        if ([string]::IsNullOrWhiteSpace($token)) { throw "Cloudflare Tunnel 必须提供 Token。" }
+        Set-DotEnvValue "CLOUDFLARE_PUBLIC_HOSTNAME" $cloudflareHostname
+        Set-DotEnvValue "CLOUDFLARE_TUNNEL_TOKEN" $token
+    }
+
+    $runtimeExternalDomain = if (Test-KnowbaseAccessMode $accessModes "domain") {
+        $activePublicDomain
+    } elseif (Test-KnowbaseAccessMode $accessModes "cloudflare") {
+        $cloudflareHostname
+    } else { "" }
+    $internalBind = if ((Test-KnowbaseAccessMode $accessModes "lan") -or
+        (Test-KnowbaseAccessMode $accessModes "domain")) { "0.0.0.0" } else { "127.0.0.1" }
+    $externalBind = if (Test-KnowbaseAccessMode $accessModes "domain") { "0.0.0.0" } else { "127.0.0.1" }
+    $corsOrigins = @()
+    if ((Test-KnowbaseAccessMode $accessModes "domain") -and $activePublicDomain) { $corsOrigins += "https://$activePublicDomain" }
+    if ((Test-KnowbaseAccessMode $accessModes "cloudflare") -and $cloudflareHostname) { $corsOrigins += "https://$cloudflareHostname" }
+    $corsValue = if ((Test-KnowbaseAccessMode $accessModes "lan") -or $corsOrigins.Count -eq 0) { "*" } else { $corsOrigins -join "," }
+
+    Set-DotEnvValue "INTERNAL_DOMAIN" $internalDomain
+    Set-DotEnvValue "EXTERNAL_DOMAIN" $runtimeExternalDomain
+    Set-DotEnvValue "INTERNAL_IP" $internalBind
+    Set-DotEnvValue "EXTERNAL_IP" $externalBind
+    Set-DotEnvValue "CORS_ORIGINS" $corsValue
+    Set-AccessModesMetadata $accessModes
+    if (Test-KnowbaseAccessMode $accessModes "cloudflare") {
+        Write-Host "[提示] Cloudflare Public Hostname 上游应配置为 http://nginx:80。" -ForegroundColor Yellow
+    }
 }
 
 function Set-StorageConfiguration {
@@ -361,15 +455,18 @@ function Set-AdminConfiguration {
 
 function Show-ConfigurationSummary {
     $tokenConfigured = if ([string]::IsNullOrWhiteSpace((Get-DotEnvValue "CLOUDFLARE_TUNNEL_TOKEN"))) { "否" } else { "是（已隐藏）" }
+    $accessModes = Get-DotEnvValueOrDefault "DEPLOY_ACCESS_MODES" "lan"
     Write-Host ""
     Write-Host "当前部署配置" -ForegroundColor Green
     Write-Host "  硬件档位: $(Get-DotEnvValueOrDefault 'HARDWARE_PROFILE' 'recommended')"
     Write-Host "  GPU 模式:  $(Get-DotEnvValueOrDefault 'DEPLOY_GPU_MODE' 'auto')"
     Write-Host "  镜像源:    $(Get-DotEnvValueOrDefault 'DEPLOY_IMAGE_SOURCE' 'mainland')"
-    Write-Host "  访问方式:  $(Get-DotEnvValueOrDefault 'DEPLOY_ACCESS_MODE' 'lan')"
-    Write-Host "  内网名称/IP: $(Get-DotEnvValueOrDefault 'INTERNAL_DOMAIN' 'localhost')"
-    Write-Host "  外部域名:  $(Get-DotEnvValueOrDefault 'EXTERNAL_DOMAIN' '未配置')"
-    Write-Host "  Tunnel:    $(Get-DotEnvValueOrDefault 'DEPLOY_TUNNEL_MODE' 'off') / Token $tokenConfigured"
+    Write-Host "  访问方式:  $(Get-KnowbaseAccessModeLabels $accessModes)"
+    if (Test-KnowbaseAccessMode $accessModes "lan") { Write-Host "  局域网名称/IP: $(Get-DotEnvValueOrDefault 'INTERNAL_DOMAIN' 'localhost')" }
+    if (Test-KnowbaseAccessMode $accessModes "domain") { Write-Host "  公网域名:  $(Get-DotEnvValueOrDefault 'PUBLIC_DOMAIN' '未配置')" }
+    if (Test-KnowbaseAccessMode $accessModes "cloudflare") {
+        Write-Host "  Tunnel:    $(Get-DotEnvValueOrDefault 'CLOUDFLARE_PUBLIC_HOSTNAME' '未配置') / Token $tokenConfigured"
+    }
     Write-Host "  数据目录:  $(Get-DotEnvValueOrDefault 'HOST_KBDATA_DIR' './kbdata')"
     Write-Host "  模型:      $(Get-DotEnvValueOrDefault 'OLLAMA_MODEL' 'bge-m3')"
     Write-Host "  初始管理员: $(Get-DotEnvValueOrDefault 'ADMIN_INITIAL_USERNAME' 'admin')"
@@ -534,7 +631,8 @@ function Select-Tunnel {
         throw "启用 Cloudflare Tunnel 前请在 .env 设置 CLOUDFLARE_TUNNEL_TOKEN。"
     }
     $script:ComposeOptions += @("--profile", "tunnel")
-    Write-Step "[穿透] Cloudflare Tunnel 已启用；Public Hostname 上游应配置为 http://nginx:80"
+    $hostname = Get-DotEnvValueOrDefault "CLOUDFLARE_PUBLIC_HOSTNAME" "已在 Cloudflare 控制台配置的 Hostname"
+    Write-Step "[穿透] Cloudflare Tunnel 已启用：$hostname；上游应配置为 http://nginx:80"
 }
 
 function Invoke-Compose([string[]]$Arguments) {
@@ -591,17 +689,28 @@ function Wait-Gateway {
 }
 
 function Show-DeploymentAccessUrls {
-    $internalHosts = @((Get-DotEnvValueOrDefault "INTERNAL_DOMAIN" "localhost") -split "[,;\s]+" | Where-Object { $_ })
+    $accessModes = Get-DotEnvValueOrDefault "DEPLOY_ACCESS_MODES" "lan"
+    $internalHosts = @()
+    if (Test-KnowbaseAccessMode $accessModes "local") { $internalHosts += "localhost" }
+    if (Test-KnowbaseAccessMode $accessModes "lan") {
+        $internalHosts += @((Get-DotEnvValueOrDefault "INTERNAL_DOMAIN" "localhost") -split "[,;\s]+" | Where-Object { $_ })
+    }
+    $internalHosts = @($internalHosts | Select-Object -Unique)
     Write-Host ""
     Write-Host "部署完成：" -ForegroundColor Green
     foreach ($internalHost in $internalHosts) {
         Write-Host "  管理后台: http://$internalHost/admin"
         Write-Host "  MCP:      http://$internalHost/mcp"
     }
-    $externalDomain = Get-DotEnvValue "EXTERNAL_DOMAIN"
-    if ($externalDomain) {
-        Write-Host "  外部访问: https://$externalDomain/"
-        Write-Host "  外部 MCP: https://$externalDomain/mcp"
+    if (Test-KnowbaseAccessMode $accessModes "domain") {
+        $publicDomain = Get-DotEnvValueOrDefault "PUBLIC_DOMAIN" (Get-DotEnvValue "EXTERNAL_DOMAIN")
+        Write-Host "  公网访问: https://$publicDomain/"
+        Write-Host "  公网 MCP: https://$publicDomain/mcp"
+    }
+    if (Test-KnowbaseAccessMode $accessModes "cloudflare") {
+        $tunnelHostname = Get-DotEnvValueOrDefault "CLOUDFLARE_PUBLIC_HOSTNAME" (Get-DotEnvValue "EXTERNAL_DOMAIN")
+        Write-Host "  Tunnel:   https://$tunnelHostname/"
+        Write-Host "  Tunnel MCP: https://$tunnelHostname/mcp"
     }
 }
 
