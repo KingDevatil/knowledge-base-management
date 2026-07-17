@@ -6,6 +6,9 @@ set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ENV_FILE="$ROOT_DIR/.env"
+NETWORK_DETECTION_SCRIPT="$ROOT_DIR/scripts/network-detection.sh"
+[ -f "$NETWORK_DETECTION_SCRIPT" ] || { echo "[错误] 网络地址检测脚本不存在：$NETWORK_DETECTION_SCRIPT" >&2; exit 1; }
+. "$NETWORK_DETECTION_SCRIPT"
 COMMAND=up
 GPU_MODE=""
 PROFILE_MODE=auto
@@ -308,6 +311,22 @@ prompt_required_domain() {
     done
 }
 
+configure_internal_hosts() {
+    cfg_internal_current=$1
+    cfg_detected_hostname=$(knowbase_detect_hostname)
+    cfg_detected_ipv4s=$(knowbase_detect_lan_ipv4s)
+    cfg_detected_value=$(knowbase_normalize_internal_host_value "$cfg_detected_hostname $cfg_detected_ipv4s")
+    cfg_internal_default=$(knowbase_suggest_internal_host_value "$cfg_internal_current" "$cfg_detected_value")
+    cfg_ipv4_summary=$(printf '%s\n' "$cfg_detected_ipv4s" | awk 'NF { if (result != "") result = result ", "; result = result $0 } END { print result }')
+    [ -n "$cfg_detected_hostname" ] || cfg_detected_hostname=未检测到
+    [ -n "$cfg_ipv4_summary" ] || cfg_ipv4_summary=未检测到，请确认网卡已连接
+    echo "[检测] 计算机名：$cfg_detected_hostname"
+    echo "[检测] 局域网 IPv4：$cfg_ipv4_summary"
+    prompt_value "内网访问名称（计算机名/IP；多个值用逗号分隔，回车使用检测值）" "$cfg_internal_default"
+    CONFIGURED_INTERNAL_HOSTS=$(knowbase_normalize_internal_host_value "$PROMPT_VALUE")
+    [ -n "$CONFIGURED_INTERNAL_HOSTS" ] || CONFIGURED_INTERNAL_HOSTS=localhost
+}
+
 configure_network() {
     echo ""
     echo "访问方式"
@@ -337,9 +356,9 @@ configure_network() {
             set_env_value DEPLOY_TUNNEL_MODE off
             ;;
         lan)
-            prompt_value "内网主机名、域名或 IP" "$(env_value_or_default INTERNAL_DOMAIN localhost)"
+            configure_internal_hosts "$(env_value_or_default INTERNAL_DOMAIN localhost)"
             set_env_value EXTERNAL_DOMAIN ""
-            set_env_value INTERNAL_DOMAIN "$PROMPT_VALUE"
+            set_env_value INTERNAL_DOMAIN "$CONFIGURED_INTERNAL_HOSTS"
             set_env_value EXTERNAL_IP 0.0.0.0
             set_env_value INTERNAL_IP 0.0.0.0
             set_env_value CORS_ORIGINS '*'
@@ -347,9 +366,9 @@ configure_network() {
             ;;
         domain)
             prompt_required_domain "$(env_value_or_default EXTERNAL_DOMAIN kb.example.com)"
-            prompt_value "内网主机名或域名" "$(env_value_or_default INTERNAL_DOMAIN localhost)"
+            configure_internal_hosts "$(env_value_or_default INTERNAL_DOMAIN localhost)"
             set_env_value EXTERNAL_DOMAIN "$REQUIRED_DOMAIN"
-            set_env_value INTERNAL_DOMAIN "$PROMPT_VALUE"
+            set_env_value INTERNAL_DOMAIN "$CONFIGURED_INTERNAL_HOSTS"
             set_env_value EXTERNAL_IP 0.0.0.0
             set_env_value INTERNAL_IP 0.0.0.0
             set_env_value CORS_ORIGINS "https://$REQUIRED_DOMAIN"
@@ -405,7 +424,7 @@ show_configuration_summary() {
     echo "  GPU 模式:  $(env_value_or_default DEPLOY_GPU_MODE auto)"
     echo "  镜像源:    $(env_value_or_default DEPLOY_IMAGE_SOURCE mainland)"
     echo "  访问方式:  $(env_value_or_default DEPLOY_ACCESS_MODE lan)"
-    echo "  内网地址:  $(env_value_or_default INTERNAL_DOMAIN localhost)"
+    echo "  内网名称/IP: $(env_value_or_default INTERNAL_DOMAIN localhost)"
     echo "  外部域名:  $(env_value_or_default EXTERNAL_DOMAIN 未配置)"
     echo "  Tunnel:    $(env_value_or_default DEPLOY_TUNNEL_MODE off) / Token $cfg_token_status"
     echo "  数据目录:  $(env_value_or_default HOST_KBDATA_DIR ./kbdata)"
@@ -614,6 +633,25 @@ wait_for_gateway() {
     return 1
 }
 
+show_deployment_access_urls() {
+    deployment_internal_hosts=$(env_value_or_default INTERNAL_DOMAIN localhost)
+    deployment_old_ifs=$IFS
+    IFS=',; '
+    echo ""
+    echo "部署完成："
+    for deployment_internal_host in $deployment_internal_hosts; do
+        [ -n "$deployment_internal_host" ] || continue
+        echo "  管理后台: http://$deployment_internal_host/admin"
+        echo "  MCP:      http://$deployment_internal_host/mcp"
+    done
+    IFS=$deployment_old_ifs
+    deployment_external_domain=$(read_env_value EXTERNAL_DOMAIN)
+    if [ -n "$deployment_external_domain" ]; then
+        echo "  外部访问: https://$deployment_external_domain/"
+        echo "  外部 MCP: https://$deployment_external_domain/mcp"
+    fi
+}
+
 cli_installer() {
     cli_action=$1
     shift
@@ -694,11 +732,7 @@ case "$COMMAND" in
         echo "[等待] Compose 将依次检查依赖、拉取模型并等待 Gateway 健康。"
         compose_up_with_fallback
         wait_for_gateway
-        echo ""
-        echo "部署完成："
-        echo "  管理后台: http://localhost/admin"
-        echo "  MCP:      http://localhost/mcp"
-        echo "  局域网:   将 localhost 替换为本机 IP"
+        show_deployment_access_urls
         [ "$TUNNEL_MODE" != cloudflare ] || echo "  穿透:     Cloudflare Tunnel 已启动"
         install_cli_if_requested
         ;;

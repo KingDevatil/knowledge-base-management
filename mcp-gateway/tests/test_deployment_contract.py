@@ -29,6 +29,10 @@ GLOBAL_CLI_FILES = (
     "scripts/install-cli.ps1",
     "scripts/install-cli.sh",
 )
+NETWORK_DETECTION_FILES = (
+    "scripts/network-detection.ps1",
+    "scripts/network-detection.sh",
+)
 
 
 def _read(relative_path: str) -> str:
@@ -38,6 +42,10 @@ def _read(relative_path: str) -> str:
 def _copy_launcher_fixture(tmp_path: Path, launcher: str) -> Path:
     shutil.copy2(ROOT / launcher, tmp_path / launcher)
     shutil.copy2(ROOT / ".env.example", tmp_path / ".env.example")
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    for helper in NETWORK_DETECTION_FILES:
+        shutil.copy2(ROOT / helper, scripts_dir / Path(helper).name)
     profiles_dir = tmp_path / "deploy" / "profiles"
     profiles_dir.mkdir(parents=True)
     for profile in (ROOT / "deploy" / "profiles").glob("*.env"):
@@ -172,12 +180,85 @@ def test_global_cli_shell_scripts_have_valid_posix_syntax():
             "scripts/knowbase.sh",
             "scripts/install-cli.sh",
             "scripts/knowbase",
+            "scripts/network-detection.sh",
+            "nginx/render-nginx-conf.sh",
             "start.sh",
         ],
         cwd=ROOT,
         check=True,
         capture_output=True,
     )
+
+
+def test_network_detection_helpers_combine_hostname_and_usable_ipv4_addresses():
+    powershell = shutil.which("powershell.exe") or shutil.which("pwsh")
+    if powershell:
+        helper = ROOT / "scripts" / "network-detection.ps1"
+        command = (
+            f". '{helper}'; "
+            '$detected = Get-KnowbaseDetectedInternalHostValue -HostNameOverride "KB-SERVER" '
+            '-IPv4Override @("192.168.50.20", "169.254.1.2", "127.0.0.1", "10.0.0.8"); '
+            '$suggested = Get-KnowbaseSuggestedInternalHostValue "localhost" $detected; '
+            '$custom = Get-KnowbaseSuggestedInternalHostValue "kb.internal,192.168.1.9" $detected; '
+            'Write-Output $detected; Write-Output $suggested; Write-Output $custom'
+        )
+        result = subprocess.run(
+            [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert result.stdout.splitlines() == [
+            "KB-SERVER,192.168.50.20,10.0.0.8",
+            "KB-SERVER,192.168.50.20,10.0.0.8",
+            "kb.internal,KB-SERVER,192.168.50.20,10.0.0.8",
+        ]
+
+    shell = shutil.which("sh")
+    if not shell:
+        common_git_shell = Path(r"C:\Program Files\Git\bin\sh.exe")
+        shell = str(common_git_shell) if common_git_shell.is_file() else None
+    if shell:
+        helper = ROOT / "scripts" / "network-detection.sh"
+        command = (
+            '. "$1"; '
+            'detected=$(knowbase_detect_internal_host_value "KB-SERVER" '
+            '"192.168.50.20 169.254.1.2 127.0.0.1 10.0.0.8"); '
+            'suggested=$(knowbase_suggest_internal_host_value "localhost" "$detected"); '
+            'custom=$(knowbase_suggest_internal_host_value "kb.internal,192.168.1.9" "$detected"); '
+            'printf "%s\\n%s\\n%s\\n" "$detected" "$suggested" "$custom"'
+        )
+        result = subprocess.run(
+            [shell, "-c", command, "knowbase-network-test", str(helper)],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert result.stdout.splitlines() == [
+            "KB-SERVER,192.168.50.20,10.0.0.8",
+            "KB-SERVER,192.168.50.20,10.0.0.8",
+            "kb.internal,KB-SERVER,192.168.50.20,10.0.0.8",
+        ]
+
+    if not powershell and not shell:
+        pytest.skip("PowerShell or a POSIX shell is required")
+
+
+def test_lan_wizard_auto_detects_multiple_internal_access_names():
+    powershell_launcher = _read("start.ps1")
+    shell_launcher = _read("start.sh")
+    nginx_renderer = _read("nginx/render-nginx-conf.sh")
+
+    assert "Get-KnowbaseComputerName" in powershell_launcher
+    assert "Get-KnowbaseLanIPv4Addresses" in powershell_launcher
+    assert "knowbase_detect_hostname" in shell_launcher
+    assert "knowbase_detect_lan_ipv4s" in shell_launcher
+    assert "多个值用逗号分隔，回车使用检测值" in powershell_launcher
+    assert "多个值用逗号分隔，回车使用检测值" in shell_launcher
+    assert "INTERNAL_SERVER_NAMES" in nginx_renderer
+    assert "server_name ${INTERNAL_SERVER_NAMES} localhost 127.0.0.1;" in nginx_renderer
 
 
 def test_windows_global_cli_installs_routes_and_uninstalls_in_isolation(tmp_path: Path):
@@ -318,7 +399,7 @@ def test_windows_global_cli_forwards_deployment_options_from_any_working_directo
 
     _copy_launcher_fixture(tmp_path, "start.ps1")
     scripts_dir = tmp_path / "scripts"
-    scripts_dir.mkdir()
+    scripts_dir.mkdir(exist_ok=True)
     shutil.copy2(ROOT / "scripts" / "knowbase.ps1", scripts_dir / "knowbase.ps1")
     caller_dir = tmp_path / "unrelated-cwd"
     caller_dir.mkdir()

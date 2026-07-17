@@ -118,7 +118,7 @@ sh ./start.sh up
 6. 等待 Gateway 健康检查通过再报告完成；等待期间每 30 秒显示一次进度，超时会自动打印关键容器状态和日志。
 7. 交互式部署可选择把 `knowbase` 注册到当前用户 PATH；自动化部署可使用 Windows 的 `-InstallCli` 或 Linux 的 `--install-cli`。
 
-配置会持久化在 `.env`。以后只想修改部分选项时运行：
+配置会持久化在 `.env`。局域网向导会自动检测计算机名和有效 IPv4，并以逗号列表作为默认值；通常直接回车即可同时支持 `http://<计算机名>/mcp` 和 `http://<本机IP>/mcp`，多网卡时可删除不需要的候选地址。以后只想修改部分选项时运行：
 
 ```powershell
 # Windows
@@ -444,7 +444,7 @@ python src/consistency_cli.py
 | `RATE_LIMIT_DEFAULT` | `30` | API Key 每分钟默认 HTTP 请求数 |
 | `MINIO_ENDPOINT` / `MINIO_BUCKET` | `localhost:9000` / `kb-sources` | 源文件对象存储 |
 | `EXTERNAL_DOMAIN` | 可为空 | 外网/HTTPS 入口；纯内网 Demo 留空 |
-| `INTERNAL_DOMAIN` | `localhost` 或内网域名 | Nginx 内网 server name |
+| `INTERNAL_DOMAIN` | `主机名,192.168.1.100` | Nginx 内网 server name 列表；逗号分隔，可由向导自动检测 |
 | `CORS_ORIGINS` | `*` | Demo 可用；对外部署时应收紧 |
 
 Embedding Provider 还支持健康检查缓存、失败阈值和熔断冷却：`EMBEDDING_HEALTH_CACHE_TTL`、`EMBEDDING_FAILURE_THRESHOLD`、`EMBEDDING_CIRCUIT_COOLDOWN`。三个硬件档位的完整参数与调优方法见 [部署与容量配置指南](./部署与容量配置指南.md)。
@@ -533,6 +533,7 @@ knowledge-base-management/
 ├── scripts/                         # 辅助启动、测试与维护脚本
 │   ├── knowbase.ps1 / knowbase.sh  # Windows/Linux CLI 命令路由
 │   ├── install-cli.ps1 / .sh       # 用户级 PATH 安装、检查和卸载
+│   ├── network-detection.ps1 / .sh # 自动检测计算机名和局域网 IPv4
 │   ├── init-config.bat             # Docker 交互配置向导
 │   ├── stop-dev.bat                # 停止 Windows 原生服务
 │   ├── start-desktop-shell.bat     # Windows 桌面壳入口

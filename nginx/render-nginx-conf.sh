@@ -51,6 +51,17 @@ file_value="$(read_env_value REVERSE_PROXY_FORCE_HTTPS)"; [ -n "$file_value" ] &
 : "${REVERSE_PROXY_SSL_KEY_FILE:=}"
 : "${REVERSE_PROXY_FORCE_HTTPS:=true}"
 
+INTERNAL_SERVER_NAMES="$(printf '%s' "$INTERNAL_DOMAIN" | tr ',;' '  ' | awk '
+  {
+    for (i = 1; i <= NF; i++) {
+      key = tolower($i)
+      if (!seen[key]++) result = result (result == "" ? "" : " ") $i
+    }
+  }
+  END { print result }
+')"
+[ -n "$INTERNAL_SERVER_NAMES" ] || INTERNAL_SERVER_NAMES=localhost
+
 case "$(printf '%s' "$REVERSE_PROXY_ENABLED" | tr '[:upper:]' '[:lower:]')" in
   1|true|yes|on|enabled) REVERSE_PROXY_ENABLED=true ;;
   *) REVERSE_PROXY_ENABLED=false ;;
@@ -141,7 +152,7 @@ fi
 cat >> "$OUTPUT" <<EOF
     server {
         listen 80 default_server;
-        server_name ${INTERNAL_DOMAIN} localhost 127.0.0.1;
+        server_name ${INTERNAL_SERVER_NAMES} localhost 127.0.0.1;
 
 EOF
 write_proxy_locations >> "$OUTPUT"

@@ -33,6 +33,11 @@ param(
 $ErrorActionPreference = "Stop"
 $RootDir = $PSScriptRoot
 $EnvFile = Join-Path $RootDir ".env"
+$NetworkDetectionScript = Join-Path $RootDir "scripts\network-detection.ps1"
+if (-not (Test-Path -LiteralPath $NetworkDetectionScript)) {
+    throw "网络地址检测脚本不存在：$NetworkDetectionScript"
+}
+. $NetworkDetectionScript
 $script:ComposeFiles = @("-f", "docker-compose.yml")
 $script:ComposeOptions = @()
 $script:GpuWasSpecified = $PSBoundParameters.ContainsKey("Gpu")
@@ -257,6 +262,20 @@ function Read-RequiredDomain([string]$CurrentValue) {
     }
 }
 
+function Read-InternalHostConfiguration([string]$CurrentValue) {
+    $detectedHostName = Get-KnowbaseComputerName
+    $detectedIPv4s = @(Get-KnowbaseLanIPv4Addresses)
+    $detectedValue = ConvertTo-KnowbaseInternalHostValue ((@($detectedHostName) + $detectedIPv4s) -join ",")
+    $suggestedValue = Get-KnowbaseSuggestedInternalHostValue $CurrentValue $detectedValue
+
+    Write-Host "[检测] 计算机名：$(if ($detectedHostName) { $detectedHostName } else { '未检测到' })" -ForegroundColor Green
+    Write-Host "[检测] 局域网 IPv4：$(if ($detectedIPv4s.Count -gt 0) { $detectedIPv4s -join ', ' } else { '未检测到，请确认网卡已连接' })" -ForegroundColor Green
+    $configuredValue = Read-ConfigValue "内网访问名称（计算机名/IP；多个值用逗号分隔，回车使用检测值）" $suggestedValue
+    $normalizedValue = ConvertTo-KnowbaseInternalHostValue $configuredValue
+    if ([string]::IsNullOrWhiteSpace($normalizedValue)) { return "localhost" }
+    return $normalizedValue
+}
+
 function Set-NetworkConfiguration {
     Write-Host ""
     Write-Host "访问方式" -ForegroundColor Cyan
@@ -282,7 +301,7 @@ function Set-NetworkConfiguration {
             Set-DotEnvValue "DEPLOY_TUNNEL_MODE" "off"
         }
         "lan" {
-            $internalDomain = Read-ConfigValue "内网主机名、域名或 IP" (Get-DotEnvValueOrDefault "INTERNAL_DOMAIN" "localhost")
+            $internalDomain = Read-InternalHostConfiguration (Get-DotEnvValueOrDefault "INTERNAL_DOMAIN" "localhost")
             Set-DotEnvValue "EXTERNAL_DOMAIN" ""
             Set-DotEnvValue "INTERNAL_DOMAIN" $internalDomain
             Set-DotEnvValue "EXTERNAL_IP" "0.0.0.0"
@@ -292,7 +311,7 @@ function Set-NetworkConfiguration {
         }
         "domain" {
             $externalDomain = Read-RequiredDomain (Get-DotEnvValueOrDefault "EXTERNAL_DOMAIN" "kb.example.com")
-            $internalDomain = Read-ConfigValue "内网主机名或域名" (Get-DotEnvValueOrDefault "INTERNAL_DOMAIN" "localhost")
+            $internalDomain = Read-InternalHostConfiguration (Get-DotEnvValueOrDefault "INTERNAL_DOMAIN" "localhost")
             Set-DotEnvValue "EXTERNAL_DOMAIN" $externalDomain
             Set-DotEnvValue "INTERNAL_DOMAIN" $internalDomain
             Set-DotEnvValue "EXTERNAL_IP" "0.0.0.0"
@@ -348,7 +367,7 @@ function Show-ConfigurationSummary {
     Write-Host "  GPU 模式:  $(Get-DotEnvValueOrDefault 'DEPLOY_GPU_MODE' 'auto')"
     Write-Host "  镜像源:    $(Get-DotEnvValueOrDefault 'DEPLOY_IMAGE_SOURCE' 'mainland')"
     Write-Host "  访问方式:  $(Get-DotEnvValueOrDefault 'DEPLOY_ACCESS_MODE' 'lan')"
-    Write-Host "  内网地址:  $(Get-DotEnvValueOrDefault 'INTERNAL_DOMAIN' 'localhost')"
+    Write-Host "  内网名称/IP: $(Get-DotEnvValueOrDefault 'INTERNAL_DOMAIN' 'localhost')"
     Write-Host "  外部域名:  $(Get-DotEnvValueOrDefault 'EXTERNAL_DOMAIN' '未配置')"
     Write-Host "  Tunnel:    $(Get-DotEnvValueOrDefault 'DEPLOY_TUNNEL_MODE' 'off') / Token $tokenConfigured"
     Write-Host "  数据目录:  $(Get-DotEnvValueOrDefault 'HOST_KBDATA_DIR' './kbdata')"
@@ -571,6 +590,21 @@ function Wait-Gateway {
     throw "Gateway 启动超时"
 }
 
+function Show-DeploymentAccessUrls {
+    $internalHosts = @((Get-DotEnvValueOrDefault "INTERNAL_DOMAIN" "localhost") -split "[,;\s]+" | Where-Object { $_ })
+    Write-Host ""
+    Write-Host "部署完成：" -ForegroundColor Green
+    foreach ($internalHost in $internalHosts) {
+        Write-Host "  管理后台: http://$internalHost/admin"
+        Write-Host "  MCP:      http://$internalHost/mcp"
+    }
+    $externalDomain = Get-DotEnvValue "EXTERNAL_DOMAIN"
+    if ($externalDomain) {
+        Write-Host "  外部访问: https://$externalDomain/"
+        Write-Host "  外部 MCP: https://$externalDomain/mcp"
+    }
+}
+
 function Invoke-CliInstaller([ValidateSet("install", "uninstall", "status")][string]$Action, [switch]$Quiet) {
     $installer = Join-Path $RootDir "scripts\install-cli.ps1"
     if (-not (Test-Path -LiteralPath $installer)) {
@@ -668,11 +702,7 @@ switch ($Command) {
         Write-Step "[等待] Compose 将依次检查依赖、拉取模型并等待 Gateway 健康。"
         Invoke-ComposeUpWithFallback
         Wait-Gateway
-        Write-Host ""
-        Write-Host "部署完成：" -ForegroundColor Green
-        Write-Host "  管理后台: http://localhost/admin"
-        Write-Host "  MCP:      http://localhost/mcp"
-        Write-Host "  局域网:   将 localhost 替换为本机 IP"
+        Show-DeploymentAccessUrls
         if ($script:EffectiveTunnel -eq "cloudflare") { Write-Host "  穿透:     Cloudflare Tunnel 已启动" }
         Install-CliIfRequested
     }
