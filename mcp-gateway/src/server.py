@@ -233,7 +233,7 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
             ),
             Tool(
                 name="build_knowledge_graph",
-                description="构建知识图谱与关联检索索引：分析文档头部声明的核心实体、标签共享、同目录和语义相似关系，并生成交互式可视化",
+                description="构建知识图谱与关联检索索引：分析文档有效的核心实体和标签（头部提取值或后台校正值）、同目录和语义相似关系，并生成交互式可视化",
                 inputSchema={
                     "type": "object",
                     "properties": {
