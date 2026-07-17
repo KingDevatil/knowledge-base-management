@@ -344,6 +344,19 @@ def test_access_wizard_uses_keyboard_checkbox_menu_and_mode_specific_details():
     assert "91:66|79:66" in shell_selector
 
 
+def test_windows_cli_preserves_console_handles_for_interactive_deployment():
+    router = _read("scripts/knowbase.ps1")
+
+    direct_invocation = (
+        "& $PowerShellExecutable -NoProfile -ExecutionPolicy Bypass "
+        "-File $DeployScript $Action @ForwardArgs"
+    )
+    assert direct_invocation in router
+    assert f"{direct_invocation} | Out-Host" not in router
+    assert "$exitCode = switch ($command)" not in router
+    assert "$script:DeploymentExitCode = $LASTEXITCODE" in router
+
+
 def test_launchers_migrate_legacy_single_access_modes_without_losing_domains(tmp_path: Path):
     powershell = shutil.which("powershell.exe") or shutil.which("pwsh")
     shell = shutil.which("sh")

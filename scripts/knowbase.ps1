@@ -7,6 +7,7 @@ $InstallerScript = Join-Path $PSScriptRoot "install-cli.ps1"
 $DefaultHealthUrl = if ($env:KNOWBASE_HEALTH_URL) { $env:KNOWBASE_HEALTH_URL } else { "http://127.0.0.1:8000/health" }
 $PowerShellExecutable = (Get-Process -Id $PID).Path
 if ([string]::IsNullOrWhiteSpace($PowerShellExecutable)) { $PowerShellExecutable = "powershell.exe" }
+$script:DeploymentExitCode = 0
 
 function Show-KnowbaseUsage {
     @"
@@ -39,8 +40,10 @@ Knowbase CLI
 }
 
 function Invoke-Deployment([string]$Action, [string[]]$ForwardArgs = @()) {
-    & $PowerShellExecutable -NoProfile -ExecutionPolicy Bypass -File $DeployScript $Action @ForwardArgs | Out-Host
-    return $LASTEXITCODE
+    # Do not pipe or capture this native process. Interactive deployment menus
+    # need the child PowerShell process to inherit the real console handles.
+    & $PowerShellExecutable -NoProfile -ExecutionPolicy Bypass -File $DeployScript $Action @ForwardArgs
+    $script:DeploymentExitCode = $LASTEXITCODE
 }
 
 function Invoke-NativeScript([string[]]$NativeArgs) {
@@ -256,30 +259,59 @@ $command = if ($tokens.Count -gt 0) { $tokens[0].ToLowerInvariant() } else { "he
 $remaining = if ($tokens.Count -gt 1) { @($tokens[1..($tokens.Count - 1)]) } else { @() }
 
 try {
-    $exitCode = switch ($command) {
-        { $_ -in @("up", "start") } { Invoke-Deployment "up" $remaining; break }
-        { $_ -in @("down", "stop") } { Invoke-Deployment "down" $remaining; break }
-        "restart" {
-            $downCode = Invoke-Deployment "down"
-            if ($downCode -ne 0) { $downCode } else { Invoke-Deployment "up" $remaining }
+    $exitCode = 0
+    switch ($command) {
+        { $_ -in @("up", "start") } {
+            Invoke-Deployment "up" $remaining
+            $exitCode = $script:DeploymentExitCode
             break
         }
-        "status" { Invoke-Deployment "status" $remaining; break }
-        "logs" { Invoke-Deployment "logs" $remaining; break }
-        { $_ -in @("configure", "config") } { Invoke-Deployment "configure" $remaining; break }
-        "init" { Invoke-Deployment "init" $remaining; break }
-        "health" { Invoke-Health $remaining; break }
-        "gateway" { Invoke-Gateway $remaining; break }
-        "native" { Invoke-Native $remaining; break }
-        "cli" { Invoke-CliManagement $remaining; break }
-        "doctor" { Invoke-Doctor; break }
-        "home" { Write-Host $RootDir; 0; break }
-        "version" { Write-Host "knowbase CLI 1.0"; 0; break }
-        { $_ -in @("help", "-h", "--help") } { Show-KnowbaseUsage; 0; break }
+        { $_ -in @("down", "stop") } {
+            Invoke-Deployment "down" $remaining
+            $exitCode = $script:DeploymentExitCode
+            break
+        }
+        "restart" {
+            Invoke-Deployment "down"
+            $exitCode = $script:DeploymentExitCode
+            if ($exitCode -eq 0) {
+                Invoke-Deployment "up" $remaining
+                $exitCode = $script:DeploymentExitCode
+            }
+            break
+        }
+        "status" {
+            Invoke-Deployment "status" $remaining
+            $exitCode = $script:DeploymentExitCode
+            break
+        }
+        "logs" {
+            Invoke-Deployment "logs" $remaining
+            $exitCode = $script:DeploymentExitCode
+            break
+        }
+        { $_ -in @("configure", "config") } {
+            Invoke-Deployment "configure" $remaining
+            $exitCode = $script:DeploymentExitCode
+            break
+        }
+        "init" {
+            Invoke-Deployment "init" $remaining
+            $exitCode = $script:DeploymentExitCode
+            break
+        }
+        "health" { $exitCode = Invoke-Health $remaining; break }
+        "gateway" { $exitCode = Invoke-Gateway $remaining; break }
+        "native" { $exitCode = Invoke-Native $remaining; break }
+        "cli" { $exitCode = Invoke-CliManagement $remaining; break }
+        "doctor" { $exitCode = Invoke-Doctor; break }
+        "home" { Write-Host $RootDir; $exitCode = 0; break }
+        "version" { Write-Host "knowbase CLI 1.0"; $exitCode = 0; break }
+        { $_ -in @("help", "-h", "--help") } { Show-KnowbaseUsage; $exitCode = 0; break }
         default {
             Write-Host "[错误] 未知命令：$command" -ForegroundColor Red
             Show-KnowbaseUsage
-            2
+            $exitCode = 2
         }
     }
 } catch {
