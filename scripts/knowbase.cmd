@@ -1,7 +1,8 @@
 @echo off
 setlocal EnableDelayedExpansion
 set "KNOWBASE_CLI_SHIM=%~f0"
-set "KNOWBASE_HOME_FILE=%~dp0knowbase-home.txt"
+set "KNOWBASE_HOME_FILE=%LOCALAPPDATA%\KnowledgeBaseManagement\knowbase-home.txt"
+if exist "%~dp0knowbase-home.txt" set "KNOWBASE_HOME_FILE=%~dp0knowbase-home.txt"
 if not exist "%KNOWBASE_HOME_FILE%" (
     echo [ERROR] knowbase-home.txt not found. Re-run start.ps1 cli-install.
     exit /b 1

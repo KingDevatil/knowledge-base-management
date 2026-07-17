@@ -170,7 +170,7 @@ sh ./start.sh cli-install
 # 已安装 make 时也可执行 make cli-install
 ```
 
-PATH 更新后需要重新打开终端。Windows 的命令入口位于 `%LOCALAPPDATA%\KnowledgeBaseManagement\bin`；Linux 默认位于 `~/.local/bin`。注册信息保存项目绝对路径，整个项目移动后命令会明确提示失效，此时在新目录重新执行 `cli-install` 即可更新绑定。
+Windows 默认把入口安装到已经位于用户 PATH 的 `%LOCALAPPDATA%\Microsoft\WindowsApps\knowbase.cmd`，因此无需等待 Windows Terminal 刷新新增 PATH；绑定配置保存在 `%LOCALAPPDATA%\KnowledgeBaseManagement`。少数缺少 `WindowsApps` 的精简系统会回退到独立目录，此时若原终端仍未识别，需要关闭所有 Windows Terminal 窗口后重新打开。Linux 默认安装到 `~/.local/bin`，PATH 更新后需要重新打开终端。注册信息保存项目绝对路径，整个项目移动后命令会明确提示失效，此时在新目录重新执行 `cli-install` 即可更新绑定。
 
 | 命令 | 作用 |
 |---|---|

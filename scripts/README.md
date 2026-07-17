@@ -44,6 +44,6 @@ knowbase gateway restart
 knowbase cli uninstall
 ```
 
-Windows 默认写入当前用户 PATH 并安装到 `%LOCALAPPDATA%\KnowledgeBaseManagement\bin`；Linux 默认安装到 `~/.local/bin`，同时为 `~/.profile` 和当前 Bash/Zsh 配置增加带标记的 PATH 区块。安装后需重新打开终端。
+Windows 默认将入口安装到已在用户 PATH 中的 `%LOCALAPPDATA%\Microsoft\WindowsApps`，绑定配置保存在 `%LOCALAPPDATA%\KnowledgeBaseManagement`；这能让复用旧环境的 Windows Terminal 新标签页直接发现命令。Linux 默认安装到 `~/.local/bin`，同时为 `~/.profile` 和当前 Bash/Zsh 配置增加带标记的 PATH 区块，安装后需重新打开终端。
 
 所有仓库内辅助脚本都以脚本自身所在目录为基准定位上一级项目根目录，不依赖调用时的当前工作目录。移动整个项目目录后，仓库内脚本仍可直接使用；全局 `knowbase` 入口保存了注册时的绝对路径，因此移动后需重新执行 `cli-install` 更新绑定。如果单独复制某个辅助脚本，则必须保留“`scripts` 位于项目根目录下”这一相对结构。

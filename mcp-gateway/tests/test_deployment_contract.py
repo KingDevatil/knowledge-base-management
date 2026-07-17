@@ -244,6 +244,73 @@ def test_windows_global_cli_installs_routes_and_uninstalls_in_isolation(tmp_path
     assert not (bin_dir / "knowbase-home.txt").exists()
 
 
+def test_windows_default_cli_is_discoverable_without_refreshing_terminal_path(tmp_path: Path):
+    powershell = shutil.which("powershell.exe") or shutil.which("pwsh")
+    cmd = shutil.which("cmd.exe")
+    if not powershell or not cmd:
+        pytest.skip("Windows PowerShell and cmd.exe are required")
+
+    local_app_data = tmp_path / "LocalAppData"
+    windows_apps = local_app_data / "Microsoft" / "WindowsApps"
+    windows_apps.mkdir(parents=True)
+    stale_env = os.environ.copy()
+    for key in list(stale_env):
+        if key.lower() in {"path", "localappdata"}:
+            stale_env.pop(key)
+    stale_env["LOCALAPPDATA"] = str(local_app_data)
+    stale_env["PATH"] = str(windows_apps) + os.pathsep + os.environ["PATH"]
+
+    installer = ROOT / "scripts" / "install-cli.ps1"
+    subprocess.run(
+        [
+            powershell,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(installer),
+            "-Action",
+            "install",
+            "-Scope",
+            "Process",
+            "-Quiet",
+        ],
+        cwd=tmp_path,
+        env=stale_env,
+        check=True,
+        capture_output=True,
+    )
+
+    shim = windows_apps / "knowbase.cmd"
+    home_file = local_app_data / "KnowledgeBaseManagement" / "knowbase-home.txt"
+    assert shim.is_file()
+    assert home_file.read_text(encoding="utf-8").strip() == str(ROOT)
+    routed = subprocess.run(
+        [cmd, "/d", "/c", "knowbase", "home"],
+        cwd=tmp_path,
+        env=stale_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert str(ROOT).lower() in routed.stdout.strip().lower()
+
+    subprocess.run(
+        [cmd, "/d", "/c", "knowbase", "cli", "uninstall", "-Scope", "Process", "-Quiet"],
+        cwd=tmp_path,
+        env=stale_env,
+        check=True,
+        capture_output=True,
+    )
+    for _ in range(50):
+        if not shim.exists():
+            break
+        time.sleep(0.1)
+    assert not shim.exists()
+    assert not home_file.exists()
+    assert windows_apps.is_dir()
+
+
 def test_windows_global_cli_forwards_deployment_options_from_any_working_directory(tmp_path: Path):
     powershell = shutil.which("powershell.exe") or shutil.which("pwsh")
     if not powershell:
