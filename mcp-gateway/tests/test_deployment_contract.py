@@ -311,19 +311,37 @@ def test_access_mode_helpers_normalize_migrate_and_toggle_combinations():
         pytest.skip("PowerShell or a POSIX shell is required")
 
 
-def test_access_wizard_uses_checkbox_style_multi_select_and_mode_specific_details():
+def test_access_wizard_uses_keyboard_checkbox_menu_and_mode_specific_details():
     powershell_launcher = _read("start.ps1")
     shell_launcher = _read("start.sh")
+    powershell_selector = _read("scripts/access-modes.ps1")
+    shell_selector = _read("scripts/access-modes.sh")
+
+    for selector in (powershell_selector, shell_selector):
+        assert "访问方式（可多选）" in selector
+        assert "↑/↓ 移动" in selector
+        assert "Space 勾选/取消" in selector
+        assert "Enter 提交" in selector
+        assert "当前终端不支持逐键菜单，已切换为编号输入" in selector
+        assert "请输入要启用的编号，多个用逗号分隔" in selector
 
     for launcher in (powershell_launcher, shell_launcher):
-        assert "访问方式（可多选）" in launcher
-        assert "请输入要启用的编号，多个用逗号分隔" in launcher
         assert "具体配置" in launcher
         assert "局域网访问设置" in launcher
         assert "公网访问设置" in launcher
         assert "Cloudflare Tunnel 设置" in launcher
         assert "PUBLIC_DOMAIN" in launcher
         assert "CLOUDFLARE_PUBLIC_HOSTNAME" in launcher
+
+    assert "Read-KnowbaseAccessModeSelection" in powershell_launcher
+    assert "knowbase_select_access_modes" in shell_launcher
+    assert "[Console]::ReadKey($true)" in powershell_selector
+    assert '"UpArrow"' in powershell_selector
+    assert '"Spacebar"' in powershell_selector
+    assert "stty -echo -icanon min 1 time 0" in shell_selector
+    assert "od -An -tu1 -N1" in shell_selector
+    assert "91:65|79:65" in shell_selector
+    assert "91:66|79:66" in shell_selector
 
 
 def test_launchers_migrate_legacy_single_access_modes_without_losing_domains(tmp_path: Path):

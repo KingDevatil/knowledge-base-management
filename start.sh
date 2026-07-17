@@ -341,51 +341,6 @@ prompt_required_domain() {
     done
 }
 
-configure_access_mode_selection() {
-    cfg_access_current=$(knowbase_normalize_access_modes "${1:-}")
-    while :; do
-        echo ""
-        echo "访问方式（可多选）"
-        for cfg_access_entry in '1:local:仅本机' '2:lan:局域网' '3:domain:公网' '4:cloudflare:Cloudflare Tunnel'; do
-            cfg_access_number=${cfg_access_entry%%:*}
-            cfg_access_remainder=${cfg_access_entry#*:}
-            cfg_access_mode=${cfg_access_remainder%%:*}
-            cfg_access_label=${cfg_access_remainder#*:}
-            if knowbase_access_modes_contains "$cfg_access_current" "$cfg_access_mode"; then cfg_access_mark=x; else cfg_access_mark=' '; fi
-            echo "  [$cfg_access_mark] $cfg_access_number) $cfg_access_label"
-        done
-
-        prompt_value "请输入要启用的编号，多个用逗号分隔" "$(knowbase_access_mode_choices "$cfg_access_current")"
-        cfg_access_selected=""
-        cfg_access_invalid=""
-        for cfg_access_choice in $(printf '%s' "$PROMPT_VALUE" | tr ',;' '  '); do
-            cfg_access_choice=$(printf '%s' "$cfg_access_choice" | tr '[:upper:]' '[:lower:]')
-            case "$cfg_access_choice" in
-                1|local|localhost) cfg_access_mode=local ;;
-                2|lan|internal) cfg_access_mode=lan ;;
-                3|domain|public|external) cfg_access_mode=domain ;;
-                4|cloudflare|tunnel) cfg_access_mode=cloudflare ;;
-                *) cfg_access_mode=""; cfg_access_invalid=${cfg_access_invalid:+$cfg_access_invalid, }$cfg_access_choice ;;
-            esac
-            [ -n "$cfg_access_mode" ] || continue
-            case ",$cfg_access_selected," in
-                *",$cfg_access_mode,"*) ;;
-                *) cfg_access_selected=${cfg_access_selected:+$cfg_access_selected,}$cfg_access_mode ;;
-            esac
-        done
-        if [ -n "$cfg_access_invalid" ]; then
-            echo "输入包含无效选项：$cfg_access_invalid。" >&2
-            continue
-        fi
-        if [ -z "$cfg_access_selected" ]; then
-            echo "至少选择一种访问方式。" >&2
-            continue
-        fi
-        CONFIGURED_ACCESS_MODES=$(knowbase_normalize_access_modes "$cfg_access_selected")
-        return 0
-    done
-}
-
 configure_internal_hosts() {
     cfg_internal_current=$1
     cfg_detected_hostname=$(knowbase_detect_hostname)
@@ -404,8 +359,8 @@ configure_internal_hosts() {
 
 configure_network() {
     cfg_current_modes=$(env_value_or_default DEPLOY_ACCESS_MODES lan)
-    configure_access_mode_selection "$cfg_current_modes"
-    cfg_access_modes=$CONFIGURED_ACCESS_MODES
+    knowbase_select_access_modes "$cfg_current_modes"
+    cfg_access_modes=$KNOWBASE_SELECTED_ACCESS_MODES
     echo ""
     echo "具体配置"
 

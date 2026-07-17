@@ -118,7 +118,7 @@ sh ./start.sh up
 6. 等待 Gateway 健康检查通过再报告完成；等待期间每 30 秒显示一次进度，超时会自动打印关键容器状态和日志。
 7. 交互式部署可选择把 `knowbase` 注册到当前用户 PATH；自动化部署可使用 Windows 的 `-InstallCli` 或 Linux 的 `--install-cli`。
 
-配置会持久化在 `.env`。选择访问方式时输入一个或多个编号并用逗号分隔，例如 `2,3,4` 会同时启用局域网、公网直连和 Cloudflare Tunnel；按 Enter 保留当前勾选项。局域网具体配置会自动检测计算机名和有效 IPv4，并以逗号列表作为默认值；通常直接回车即可同时支持 `http://<计算机名>/mcp` 和 `http://<本机IP>/mcp`，多网卡时可删除不需要的候选地址。
+配置会持久化在 `.env`。访问方式菜单使用 `↑/↓` 移动，按 `Space` 勾选或取消，按 `Enter` 提交；Windows PowerShell 5、Windows Terminal 以及 Linux/macOS 常见终端均可使用。只有终端不支持逐键读取时才会自动回退为逗号分隔的编号输入。局域网具体配置会自动检测计算机名和有效 IPv4，并以逗号列表作为默认值；通常直接回车即可同时支持 `http://<计算机名>/mcp` 和 `http://<本机IP>/mcp`，多网卡时可删除不需要的候选地址。
 
 以后只想修改部分选项时运行：
 
@@ -204,7 +204,7 @@ Docker 默认把 Gateway、Chroma、Redis、MinIO、Ollama 的宿主机端口绑
 
 ### 域名、DDNS 与内网穿透
 
-- 配置向导中的四个访问方式是复选项，并非互斥模式；例如输入 `2,3,4` 可让同一部署同时接受局域网、公网直连和 Cloudflare Tunnel 访问。
+- 配置向导中的四个访问方式是复选项，并非互斥模式；用方向键依次勾选“局域网、公网、Cloudflare Tunnel”即可让三种入口同时工作。
 - 有公网 IP：勾选“公网”，将域名解析到服务器公网 IP，在路由器/安全组开放 80、443，并把证书放到 `nginx/ssl/<域名>/fullchain.pem` 和 `privkey.pem`。后台“设置”页也可保存 DDNS 与反向代理方案。
 - 动态公网 IP：后台 DDNS 支持 Cloudflare 等 Provider，负责更新 A/AAAA 记录；仍需确认运营商未使用 CGNAT，并配置端口转发。
 - 无公网 IP/CGNAT：勾选“Cloudflare Tunnel”。在 Cloudflare 控制台创建 remotely-managed tunnel，把 Public Hostname 的 Service 设为 `http://nginx:80`，再输入 Hostname 和 Token。
@@ -541,7 +541,7 @@ knowledge-base-management/
 │   ├── knowbase.ps1 / knowbase.sh  # Windows/Linux CLI 命令路由
 │   ├── install-cli.ps1 / .sh       # 用户级 PATH 安装、检查和卸载
 │   ├── network-detection.ps1 / .sh # 自动检测计算机名和局域网 IPv4
-│   ├── access-modes.ps1 / .sh      # 访问方式规范化、迁移和组合开关
+│   ├── access-modes.ps1 / .sh      # 键盘复选菜单、访问方式迁移和组合开关
 │   ├── init-config.bat             # Docker 交互配置向导
 │   ├── stop-dev.bat                # 停止 Windows 原生服务
 │   ├── start-desktop-shell.bat     # Windows 桌面壳入口

@@ -291,50 +291,6 @@ function Read-RequiredDomain([string]$CurrentValue, [string]$Prompt = "请输入
     }
 }
 
-function Read-AccessModeSelection([string]$CurrentModes) {
-    $currentModes = ConvertTo-KnowbaseAccessModes $CurrentModes
-    while ($true) {
-        Write-Host ""
-        Write-Host "访问方式（可多选）" -ForegroundColor Cyan
-        foreach ($entry in @(
-            @{ Number = "1"; Mode = "local"; Label = "仅本机" },
-            @{ Number = "2"; Mode = "lan"; Label = "局域网" },
-            @{ Number = "3"; Mode = "domain"; Label = "公网" },
-            @{ Number = "4"; Mode = "cloudflare"; Label = "Cloudflare Tunnel" }
-        )) {
-            $mark = if (Test-KnowbaseAccessMode $currentModes $entry.Mode) { "x" } else { " " }
-            Write-Host "  [$mark] $($entry.Number)) $($entry.Label)"
-        }
-
-        $defaultChoices = Get-KnowbaseAccessModeChoices $currentModes
-        $answer = Read-Host "请输入要启用的编号，多个用逗号分隔 [$defaultChoices]"
-        if ([string]::IsNullOrWhiteSpace($answer)) { return $currentModes }
-
-        $selectedModes = @()
-        $invalid = @()
-        foreach ($rawChoice in @($answer -split "[,;\s]+")) {
-            $choice = $rawChoice.Trim().ToLowerInvariant()
-            switch ($choice) {
-                { $_ -in @("1", "local", "localhost") } { $mode = "local"; break }
-                { $_ -in @("2", "lan", "internal") } { $mode = "lan"; break }
-                { $_ -in @("3", "domain", "public", "external") } { $mode = "domain"; break }
-                { $_ -in @("4", "cloudflare", "tunnel") } { $mode = "cloudflare"; break }
-                default { $mode = ""; if ($choice) { $invalid += $choice } }
-            }
-            if ($mode -and $selectedModes -notcontains $mode) { $selectedModes += $mode }
-        }
-        if ($invalid.Count -gt 0) {
-            Write-Host "输入包含无效选项：$($invalid -join ', ')。" -ForegroundColor Yellow
-            continue
-        }
-        if ($selectedModes.Count -eq 0) {
-            Write-Host "至少选择一种访问方式。" -ForegroundColor Yellow
-            continue
-        }
-        return ConvertTo-KnowbaseAccessModes ($selectedModes -join ",")
-    }
-}
-
 function Read-InternalHostConfiguration([string]$CurrentValue) {
     $detectedHostName = Get-KnowbaseComputerName
     $detectedIPv4s = @(Get-KnowbaseLanIPv4Addresses)
@@ -351,7 +307,7 @@ function Read-InternalHostConfiguration([string]$CurrentValue) {
 
 function Set-NetworkConfiguration {
     $currentModes = Get-DotEnvValueOrDefault "DEPLOY_ACCESS_MODES" "lan"
-    $accessModes = Read-AccessModeSelection $currentModes
+    $accessModes = Read-KnowbaseAccessModeSelection $currentModes
     Write-Host ""
     Write-Host "具体配置" -ForegroundColor Cyan
 
