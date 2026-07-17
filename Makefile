@@ -1,4 +1,4 @@
-.PHONY: help up down logs restart build backup health clean test pull-model
+.PHONY: help configure up down logs restart build backup health clean test pull-model
 
 # 可用档位：auto / minimum / recommended / high-performance
 PROFILE ?= auto
@@ -18,6 +18,7 @@ help:
 	@echo "企业中央知识库 + MCP Gateway 管理命令"
 	@echo ""
 	@echo "  make up PROFILE=recommended - 按硬件档位启动所有服务"
+	@echo "  make configure - 交互式生成或重新配置 .env"
 	@echo "  make down    - 停止所有服务"
 	@echo "  make restart - 重启所有服务"
 	@echo "  make build   - 重新构建 Gateway 镜像"
@@ -33,6 +34,9 @@ help:
 	@echo "GPU 检测: $$(if [ -n '$(NVIDIA_SMI)' ]; then echo '🟢 NVIDIA GPU 已启用'; else echo '🟡 CPU 模式'; fi)"
 
 # 启动服务
+configure:
+	sh ./start.sh configure
+
 up:
 	sh ./start.sh up --profile $(PROFILE)
 

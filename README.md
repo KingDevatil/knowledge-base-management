@@ -92,7 +92,7 @@ flowchart TD
 
 ### 一条命令启动
 
-克隆仓库并进入项目目录后执行对应入口；无需手动复制 `.env`、生成密钥或拉取模型。
+克隆仓库并进入项目目录后执行对应入口；首次运行会直接进入部署配置向导，无需手动复制或编辑 `.env`、生成密钥或拉取模型。
 
 Windows Docker Desktop：
 
@@ -108,37 +108,37 @@ sh ./start.sh up
 # 已安装 make 时也可执行 make up
 ```
 
-启动器默认加载 `recommended` 硬件档位，并会依次完成：
+首次向导会询问硬件档位、GPU、镜像源、访问方式、数据目录、Embedding 模型和管理员账号，然后依次完成：
 
-1. 从 `.env.example` 创建 `.env`，替换模板中的 `SESSION_SECRET` 和 MinIO 密码占位值；其他已有配置不会被覆盖。
-2. 检查 Docker、Compose 和 daemon，自动选择 CPU 或 NVIDIA GPU 配置。
-3. 优先使用 DaoCloud Docker 镜像前缀、清华 PyPI 和清华 Debian 镜像；任一拉取/构建失败时，自动追加官方源覆盖并完整重试。
-4. 构建并启动依赖；等待 Ollama 健康后，由一次性初始化容器自动拉取 `OLLAMA_MODEL`（默认 `bge-m3`）。
-5. 等待 Gateway 健康检查通过再报告完成；等待期间每 30 秒显示一次进度，超时会自动打印关键容器状态和日志。
+1. 从 `.env.example` 创建 `.env`，写入向导选项，并替换 `SESSION_SECRET` 和 MinIO 密码占位值。
+2. 按 `minimum`、`recommended` 或 `high-performance` 档位写入并发、超时和图谱参数。
+3. 检查 Docker、Compose 和 daemon，按选择自动检测或强制使用 CPU/NVIDIA GPU。
+4. 按选择优先使用国内镜像或直接使用官方源；国内镜像拉取/构建失败时自动回退官方源。
+5. 构建并启动依赖；等待 Ollama 健康后，由一次性初始化容器自动拉取 `OLLAMA_MODEL`。
+6. 等待 Gateway 健康检查通过再报告完成；等待期间每 30 秒显示一次进度，超时会自动打印关键容器状态和日志。
 
-首次自动创建的配置适合直接在本机或可信局域网试用，后台初始账号为 `admin` / `123456`。需要自定义内网域名、管理员密码、数据目录或国内镜像时，先初始化再编辑：
+配置会持久化在 `.env`。以后只想修改部分选项时运行：
 
 ```powershell
 # Windows
-.\start.ps1 init
-notepad .env
-.\start.ps1 up
+.\start.ps1 configure
+# 也可以双击 init-config.bat
 ```
 
 ```bash
 # Linux / macOS / WSL
-sh ./start.sh init
-${EDITOR:-vi} .env
-sh ./start.sh up
+sh ./start.sh configure
+# 或 make configure
 ```
 
-纯内网通常保持 `EXTERNAL_DOMAIN=`，`INTERNAL_DOMAIN` 可填写主机名、内网域名或服务器 IP。直接通过 IP 访问时，Nginx 的 default server 也会接收请求。镜像地址、硬件档位和并发参数均可在 `.env` 中覆盖。
+重配菜单可单独修改“硬件/GPU、镜像源、访问方式、数据/模型、初始管理员”，按 Enter 保留当前值；修改完成后重新执行 `up` 即可应用。首次向导中途退出时，已填内容会保留，下次 `up` 会继续完整配置。初始管理员配置只在账号库尚未创建账号时生效，已有管理员请在后台修改密码。`init` 保留为自动化使用的非交互初始化命令，CI 或无人值守部署可组合 `-NonInteractive` / `--non-interactive` 与原有参数。
 
 ### 常用部署命令
 
 | 操作 | Windows | Linux / macOS / WSL |
 |---|---|---|
 | 启动并等待就绪 | `.\start.ps1 up` | `sh ./start.sh up` |
+| 交互式重新配置 | `.\start.ps1 configure` | `sh ./start.sh configure` |
 | 查看状态与健康 | `.\start.ps1 status` | `sh ./start.sh status` |
 | 跟踪全部日志 | `.\start.ps1 logs` | `sh ./start.sh logs` |
 | 停止服务 | `.\start.ps1 down` | `sh ./start.sh down` |
@@ -148,6 +148,7 @@ sh ./start.sh up
 | 最低硬件档位 | `.\start.ps1 up -Profile minimum` | `sh ./start.sh up --profile minimum` |
 | 推荐档位 | `.\start.ps1 up -Profile recommended` | `sh ./start.sh up --profile recommended` |
 | 高性能档位 | `.\start.ps1 up -Profile high-performance` | `sh ./start.sh up --profile high-performance` |
+| 无人值守初始化 | `.\start.ps1 init -NonInteractive -Profile recommended -Gpu auto -Source mainland` | `sh ./start.sh init --non-interactive --profile recommended --source mainland` |
 
 `status` 会同时显示 Compose 容器状态并请求 Gateway `/health`。启动阻塞时终端会持续给出等待进度；另一个终端可以运行 `logs` 查看模型下载、依赖健康检查和 Gateway 启动日志。
 
@@ -167,9 +168,9 @@ Docker 默认把 Gateway、Chroma、Redis、MinIO、Ollama 的宿主机端口绑
 
 ### 域名、DDNS 与内网穿透
 
-- 有公网 IP：将域名解析到服务器公网 IP，在路由器/安全组开放 80、443，把证书放到 `nginx/ssl/<域名>/fullchain.pem` 和 `privkey.pem`，再设置 `EXTERNAL_DOMAIN`、`CORS_ORIGINS=https://<域名>` 后重启。后台“设置”页也可保存 DDNS 与反向代理方案。
+- 有公网 IP：在 `configure` 中选择“公网域名”，将域名解析到服务器公网 IP，在路由器/安全组开放 80、443，并把证书放到 `nginx/ssl/<域名>/fullchain.pem` 和 `privkey.pem`。后台“设置”页也可保存 DDNS 与反向代理方案。
 - 动态公网 IP：后台 DDNS 支持 Cloudflare 等 Provider，负责更新 A/AAAA 记录；仍需确认运营商未使用 CGNAT，并配置端口转发。
-- 无公网 IP/CGNAT：Docker 已内置可选 Cloudflare Tunnel profile。在 Cloudflare 控制台创建 remotely-managed tunnel，把 Public Hostname 的 Service 设为 `http://nginx:80`，将域名和 Token 写入 `.env` 的 `EXTERNAL_DOMAIN`、`CLOUDFLARE_TUNNEL_TOKEN`，然后执行 `.\start.ps1 up -Tunnel cloudflare` 或 `sh ./start.sh up --tunnel cloudflare`。也可把已有 frp、Tailscale 等隧道的本地上游指向 `http://127.0.0.1:80`。
+- 无公网 IP/CGNAT：Docker 已内置 Cloudflare Tunnel profile。在 Cloudflare 控制台创建 remotely-managed tunnel，把 Public Hostname 的 Service 设为 `http://nginx:80`，然后在 `configure` 中选择 Cloudflare Tunnel 并输入域名和 Token。后续所有生命周期命令都会从 `.env` 自动复用 Tunnel 模式，不必重复传参数。
 
 无论哪种方式，都只应公开 Nginx/Gateway 入口，不要把 Redis、Chroma、MinIO 或 Ollama 端口暴露到公网。完整步骤见 [部署与容量配置指南](./部署与容量配置指南.md)。
 
@@ -209,7 +210,7 @@ notepad .env.local
 .\start-dev.ps1 -Stop
 ```
 
-`-Stop` 不再终止机器上共享的所有 Python、Ollama 或 Redis/Memurai 进程。若服务缺失或启动失败，脚本会立即给出具体依赖，不会继续显示“全部就绪”。`init-config.bat` 现在只用于初始化 Docker 的 `.env`，不用于原生开发模式。
+`-Stop` 不再终止机器上共享的所有 Python、Ollama 或 Redis/Memurai 进程。若服务缺失或启动失败，脚本会立即给出具体依赖，不会继续显示“全部就绪”。`init-config.bat` 用于生成或重新配置 Docker 的 `.env`，不用于原生开发模式。
 
 也可以使用桌面入口：
 
@@ -368,6 +369,12 @@ python src/consistency_cli.py
 
 | 配置 | 默认/示例 | 说明 |
 |---|---|---|
+| `HARDWARE_PROFILE` | `recommended` | 配置向导选择的硬件档位 |
+| `DEPLOY_CONFIGURED` | `true`（向导完成后） | 标记首次配置是否完整；中途退出时下次继续向导 |
+| `DEPLOY_GPU_MODE` | `auto` | `auto` / `cpu` / `gpu`；由所有部署命令自动复用 |
+| `DEPLOY_IMAGE_SOURCE` | `mainland` | `mainland` 国内镜像优先并自动回退，或 `official` |
+| `DEPLOY_ACCESS_MODE` | `lan` | `local` / `lan` / `domain` / `cloudflare` |
+| `DEPLOY_TUNNEL_MODE` | `off` | `off` / `cloudflare`；启用后自动加载 Compose profile |
 | `HOST_KBDATA_DIR` | `./kbdata` | Docker 宿主机数据目录 |
 | `KBDATA_DIR` | Docker 内固定 `/app/data` | 本地运行时的数据根目录 |
 | `SESSION_SECRET` | 无有效默认值 | `DEBUG=false` 时必须至少 32 字符 |
@@ -454,6 +461,7 @@ knowledge-base-management/
 ├── .env.example.local              # Windows 本地配置模板
 ├── start.sh / start.ps1            # Linux/Windows Docker 统一部署入口
 ├── start-docker.bat / Makefile     # Docker 双击入口与命令包装
+├── init-config.bat                  # Windows 可双击运行的交互配置向导
 ├── start-dev.ps1                   # Windows 原生开发服务编排
 ├── 部署与容量配置指南.md             # 镜像、并发、硬件、域名与穿透配置
 ├── start-desktop-shell.bat         # Windows 桌面壳入口

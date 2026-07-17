@@ -1,4 +1,8 @@
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -6,6 +10,27 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def _read(relative_path: str) -> str:
     return (ROOT / relative_path).read_text(encoding="utf-8")
+
+
+def _copy_launcher_fixture(tmp_path: Path, launcher: str) -> Path:
+    shutil.copy2(ROOT / launcher, tmp_path / launcher)
+    shutil.copy2(ROOT / ".env.example", tmp_path / ".env.example")
+    profiles_dir = tmp_path / "deploy" / "profiles"
+    profiles_dir.mkdir(parents=True)
+    for profile in (ROOT / "deploy" / "profiles").glob("*.env"):
+        shutil.copy2(profile, profiles_dir / profile.name)
+    return tmp_path / launcher
+
+
+def _read_env(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key] = value
+    return values
 
 
 def test_compose_bootstraps_model_and_waits_for_gateway_health():
@@ -23,13 +48,160 @@ def test_docker_launchers_expose_the_same_small_command_interface():
     shell_launcher = _read("start.sh")
     powershell_launcher = _read("start.ps1")
 
-    for command in ("up", "down", "status", "logs", "init"):
+    for command in ("up", "down", "status", "logs", "init", "configure"):
         assert command in shell_launcher
         assert command in powershell_launcher
     assert ".env.example" in shell_launcher
     assert ".env.example" in powershell_launcher
     assert "SESSION_SECRET" in shell_launcher
     assert "SESSION_SECRET" in powershell_launcher
+    for key in (
+        "DEPLOY_CONFIGURED",
+        "DEPLOY_GPU_MODE",
+        "DEPLOY_IMAGE_SOURCE",
+        "DEPLOY_ACCESS_MODE",
+        "DEPLOY_TUNNEL_MODE",
+    ):
+        assert key in shell_launcher
+        assert key in powershell_launcher
+        assert key in _read(".env.example")
+
+
+def test_powershell_launcher_generates_and_reconfigures_noninteractive_env(tmp_path: Path):
+    powershell = shutil.which("powershell.exe") or shutil.which("pwsh")
+    if not powershell:
+        pytest.skip("PowerShell is not available")
+
+    launcher = _copy_launcher_fixture(tmp_path, "start.ps1")
+    initialized = subprocess.run(
+        [
+            powershell,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(launcher),
+            "init",
+            "-NonInteractive",
+            "-Profile",
+            "minimum",
+            "-Gpu",
+            "cpu",
+            "-Source",
+            "official",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+
+    env = _read_env(tmp_path / ".env")
+    assert env["HARDWARE_PROFILE"] == "minimum"
+    assert env["DEPLOY_CONFIGURED"] == "true"
+    assert env["DEPLOY_GPU_MODE"] == "cpu"
+    assert env["DEPLOY_IMAGE_SOURCE"] == "official"
+    assert len(env["SESSION_SECRET"]) >= 32
+    assert env["MINIO_ROOT_PASSWORD"] == env["MINIO_SECRET_KEY"]
+    assert env["SESSION_SECRET"].encode() not in initialized.stdout + initialized.stderr
+    assert env["MINIO_ROOT_PASSWORD"].encode() not in initialized.stdout + initialized.stderr
+
+    original_session_secret = env["SESSION_SECRET"]
+    original_minio_password = env["MINIO_ROOT_PASSWORD"]
+    subprocess.run(
+        [
+            powershell,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(launcher),
+            "configure",
+            "-NonInteractive",
+            "-Profile",
+            "high-performance",
+            "-Gpu",
+            "auto",
+            "-Source",
+            "mainland",
+            "-Tunnel",
+            "off",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+
+    reconfigured = _read_env(tmp_path / ".env")
+    assert reconfigured["HARDWARE_PROFILE"] == "high-performance"
+    assert reconfigured["DEPLOY_CONFIGURED"] == "true"
+    assert reconfigured["DEPLOY_GPU_MODE"] == "auto"
+    assert reconfigured["DEPLOY_IMAGE_SOURCE"] == "mainland"
+    assert reconfigured["DEPLOY_TUNNEL_MODE"] == "off"
+    assert reconfigured["SESSION_SECRET"] == original_session_secret
+    assert reconfigured["MINIO_ROOT_PASSWORD"] == original_minio_password
+
+
+def test_shell_launcher_generates_and_reconfigures_noninteractive_env(tmp_path: Path):
+    shell = shutil.which("sh")
+    if not shell:
+        pytest.skip("POSIX sh is not available")
+
+    launcher = _copy_launcher_fixture(tmp_path, "start.sh")
+    initialized = subprocess.run(
+        [
+            shell,
+            str(launcher),
+            "init",
+            "--non-interactive",
+            "--profile",
+            "minimum",
+            "--cpu",
+            "--source",
+            "official",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+
+    env = _read_env(tmp_path / ".env")
+    assert env["HARDWARE_PROFILE"] == "minimum"
+    assert env["DEPLOY_CONFIGURED"] == "true"
+    assert env["DEPLOY_GPU_MODE"] == "cpu"
+    assert env["DEPLOY_IMAGE_SOURCE"] == "official"
+    assert len(env["SESSION_SECRET"]) >= 32
+    assert env["MINIO_ROOT_PASSWORD"] == env["MINIO_SECRET_KEY"]
+    assert env["SESSION_SECRET"].encode() not in initialized.stdout + initialized.stderr
+    assert env["MINIO_ROOT_PASSWORD"].encode() not in initialized.stdout + initialized.stderr
+
+    original_session_secret = env["SESSION_SECRET"]
+    original_minio_password = env["MINIO_ROOT_PASSWORD"]
+    subprocess.run(
+        [
+            shell,
+            str(launcher),
+            "configure",
+            "--non-interactive",
+            "--profile",
+            "high-performance",
+            "--source",
+            "mainland",
+            "--tunnel",
+            "off",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+
+    reconfigured = _read_env(tmp_path / ".env")
+    assert reconfigured["HARDWARE_PROFILE"] == "high-performance"
+    assert reconfigured["DEPLOY_CONFIGURED"] == "true"
+    assert reconfigured["DEPLOY_GPU_MODE"] == "cpu"
+    assert reconfigured["DEPLOY_IMAGE_SOURCE"] == "mainland"
+    assert reconfigured["DEPLOY_TUNNEL_MODE"] == "off"
+    assert reconfigured["SESSION_SECRET"] == original_session_secret
+    assert reconfigured["MINIO_ROOT_PASSWORD"] == original_minio_password
 
 
 def test_windows_native_launcher_uses_isolated_local_env_and_scoped_stop():
