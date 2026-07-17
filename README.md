@@ -17,6 +17,12 @@
 
 本项目不负责调用大模型生成最终回答，也不保存对话。Agent 调用 `search_knowledge` / `get_document` 获得证据后，自行完成总结、引用和推理。
 
+## 文档导航
+
+- [部署与容量配置指南](./部署与容量配置指南.md)：Docker、Windows、硬件档位、并发参数、域名和内网穿透。
+- [用户接入指南](./用户接入指南.md)：API Key、Cursor、Claude Desktop、Kimi Code 和其他 MCP 客户端配置。
+- [Agent 使用指南](./Agent%20使用指南.md)：检索、阅读、写入、维护工具及推荐调用流程。
+
 ## 当前架构
 
 ```mermaid
