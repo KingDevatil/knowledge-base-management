@@ -38,6 +38,44 @@ def test_graph_extraction_preserves_semantic_similarity_as_edge_weight():
     }]
 
 
+def test_graph_extraction_builds_entity_nodes_and_weighted_document_relations():
+    builder = KnowledgeGraphBuilder.__new__(KnowledgeGraphBuilder)
+    docs = [
+        {
+            "doc_id": "a",
+            "title": "Gateway guide",
+            "path": "ops",
+            "tags": [],
+            "entities": ["MCP Gateway", "Chroma"],
+        },
+        {
+            "doc_id": "b",
+            "title": "Gateway troubleshooting",
+            "path": "support",
+            "tags": [],
+            "entities": ["mcp-gateway", "Redis"],
+        },
+    ]
+
+    extraction = builder._build_extraction(docs, semantic_threshold=0.0)
+    entity_nodes = [node for node in extraction["nodes"] if node["file_type"] == "entity"]
+    edges_by_relation = {}
+    for edge in extraction["edges"]:
+        edges_by_relation.setdefault(edge["relation"], []).append(edge)
+
+    assert {node["label"] for node in entity_nodes} == {"MCP Gateway", "Chroma", "Redis"}
+    assert len(edges_by_relation["declares_core_entity"]) == 4
+    assert edges_by_relation["co_entity"] == [{
+        "source": "a",
+        "target": "b",
+        "relation": "co_entity",
+        "confidence": "EXTRACTED",
+        "weight": 0.65,
+        "source_file": "kb",
+        "shared_entities": ["MCP Gateway"],
+    }]
+
+
 def test_large_relation_groups_use_sparse_two_hop_graph():
     ids = [f"doc-{index}" for index in range(60)]
 

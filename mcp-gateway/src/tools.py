@@ -6,6 +6,12 @@ from datetime import datetime, timezone
 from fastapi import HTTPException
 
 from config import get_settings
+from document_metadata import (
+    extract_document_header_metadata,
+    merge_metadata_values,
+    metadata_value_key,
+    normalize_metadata_values,
+)
 from knowledge_base import KnowledgeBase
 from source_store import SourceStore
 from embedding import OllamaEmbedder, EmbeddingError
@@ -332,6 +338,8 @@ class KnowledgeTools(KnowledgeToolsReader):
             metadata={
                 "path": old_metadata.get("path", ""),
                 "tags": old_metadata.get("tags", ""),
+                "header_tags": old_metadata.get("header_tags", ""),
+                "entities": old_metadata.get("entities", ""),
                 "source_path": old_metadata.get("source_path", ""),
                 "source_format": old_metadata.get("source_format", "markdown"),
                 "created_at": old_metadata.get("created_at", ""),
@@ -365,8 +373,9 @@ class KnowledgeTools(KnowledgeToolsReader):
                 "total_chunks": len(chunks),
                 "__write_status": "staging",
             }
-            if "tags" in item and isinstance(item["tags"], list):
-                item["tags"] = ",".join(item["tags"])
+            for field in ("tags", "header_tags", "entities"):
+                if field in item and isinstance(item[field], list):
+                    item[field] = ",".join(item[field])
             metadatas.append(item)
 
         self.kb.collection.add(
@@ -467,7 +476,10 @@ class KnowledgeTools(KnowledgeToolsReader):
             )
 
         await self._notify_progress(progress_callback, 5, "读取现有文档")
-        tags = tags or []
+        header_metadata = extract_document_header_metadata(content)
+        tags = merge_metadata_values(tags or [], header_metadata.tags)
+        header_tags = header_metadata.tags
+        entities = header_metadata.entities
         await self._snapshot_document_version(doc_id, "before_update", updated_by)
         now = datetime.now(timezone.utc).isoformat()
         size_label = content_size_kb(content)
@@ -482,12 +494,7 @@ class KnowledgeTools(KnowledgeToolsReader):
         old_meta = old_chunks[0]["metadata"] if old_chunks else {}
         old_path = old_meta.get("path", "")
         old_title = old_meta.get("title", "")
-        old_tags_raw = old_meta.get("tags", "")
-        old_tags = (
-            [t.strip() for t in old_tags_raw.replace("，", ",").split(",") if t.strip()]
-            if isinstance(old_tags_raw, str) and old_tags_raw
-            else (old_tags_raw if isinstance(old_tags_raw, list) else [])
-        )
+        old_tags = normalize_metadata_values(old_meta.get("tags", []))
 
         # 未传入新路径/标签时保留原值，避免 Agent 遗漏参数导致数据丢失
         new_path = DirectoryTree.validate_path(path) if path else old_path
@@ -566,6 +573,8 @@ class KnowledgeTools(KnowledgeToolsReader):
                 metadata={
                     "path": new_path,
                     "tags": tags,
+                    "header_tags": header_tags,
+                    "entities": entities,
                     "source_path": staging_source_path,
                     "source_format": "markdown",
                     "created_at": old_meta.get("created_at", now),
@@ -586,7 +595,11 @@ class KnowledgeTools(KnowledgeToolsReader):
                     await self.kb.delete_document(doc_id)
                     deleted_old = True
                     metadata = {
-                        "path": new_path, "tags": tags, "source_path": source_path,
+                        "path": new_path,
+                        "tags": tags,
+                        "header_tags": header_tags,
+                        "entities": entities,
+                        "source_path": source_path,
                         "source_format": "markdown",
                         "created_at": old_meta.get("created_at", now),
                         "updated_at": now,
@@ -783,11 +796,8 @@ class KnowledgeTools(KnowledgeToolsReader):
         title = meta.get("title", "")
         path = meta.get("path", "")
         source_path = meta.get("source_path", "")
-        tags = (
-            meta.get("tags", "").replace("，", ",").split(",")
-            if isinstance(meta.get("tags"), str)
-            else (meta.get("tags") or [])
-        )
+        old_tags = normalize_metadata_values(meta.get("tags", []))
+        old_header_tags = normalize_metadata_values(meta.get("header_tags", []))
 
         try:
             if source_path:
@@ -804,6 +814,18 @@ class KnowledgeTools(KnowledgeToolsReader):
                 status_code=400,
                 detail=f"文档「{title}」源文件内容为空",
             )
+
+        header_metadata = extract_document_header_metadata(content)
+        if meta.get("header_tags") is None:
+            manual_tags = old_tags
+        else:
+            old_header_keys = {metadata_value_key(tag) for tag in old_header_tags}
+            manual_tags = [
+                tag for tag in old_tags if metadata_value_key(tag) not in old_header_keys
+            ]
+        tags = merge_metadata_values(manual_tags, header_metadata.tags)
+        header_tags = header_metadata.tags
+        entities = header_metadata.entities
 
         size_label = content_size_kb(content)
         new_chunks = chunk_markdown(content, self.settings.CHUNK_SIZE, self.settings.CHUNK_OVERLAP)
@@ -825,7 +847,11 @@ class KnowledgeTools(KnowledgeToolsReader):
             await self._notify_progress(progress_callback, 55, "准备暂存数据")
             now = datetime.now(timezone.utc).isoformat()
             staging_metadata = {
-                "path": path, "tags": tags, "source_path": source_path,
+                "path": path,
+                "tags": tags,
+                "header_tags": header_tags,
+                "entities": entities,
+                "source_path": source_path,
                 "source_format": "markdown",
                 "created_at": meta.get("created_at", now),
                 "updated_at": now,

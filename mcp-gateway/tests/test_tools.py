@@ -292,6 +292,8 @@ class MockKnowledgeBase:
             "title": title,
             "path": metadata.get("path", ""),
             "tags": metadata.get("tags", []),
+            "header_tags": metadata.get("header_tags", []),
+            "entities": metadata.get("entities", []),
             "chunk_count": len(chunks),
             "created_at": metadata.get("created_at", ""),
             "updated_at": metadata.get("updated_at", ""),
@@ -787,6 +789,24 @@ class TestKnowledgeToolsAdd:
         assert "guide" in doc["tags"]
 
     @pytest.mark.asyncio
+    async def test_add_document_extracts_declared_header_tags_and_entities(self):
+        tools, _, _ = _make_tools()
+        result = await tools.add_document(
+            title="Gateway",
+            content="""# Gateway
+
+Tags: deployment, internal
+实体：MCP Gateway、Chroma
+""",
+            tags=["manual"],
+        )
+
+        doc = await tools.get_document(result["doc_id"])
+
+        assert doc["tags"] == ["manual", "deployment", "internal"]
+        assert doc["entities"] == ["MCP Gateway", "Chroma"]
+
+    @pytest.mark.asyncio
     async def test_import_markdown_equivalent(self):
         """import_markdown should produce same result as add_document."""
         tools, kb, store = _make_tools()
@@ -851,6 +871,26 @@ class TestKnowledgeToolsUpdate:
         assert result["success"] is True
         doc = await tools.get_document(doc_id)
         assert doc["title"] == "Updated"
+
+    @pytest.mark.asyncio
+    async def test_update_document_extracts_chinese_and_english_header_metadata(self):
+        tools, _kb, _store = _make_tools()
+        added = await tools.add_document(title="Gateway", content="# Gateway")
+
+        await tools.update_document(
+            doc_id=added["doc_id"],
+            title="Gateway",
+            content="""# Gateway
+
+Tags: deployment, internal
+实体：MCP Gateway、Chroma
+""",
+            tags=["manual"],
+        )
+
+        document = await tools.get_document(added["doc_id"])
+        assert document["tags"] == ["manual", "deployment", "internal"]
+        assert document["entities"] == ["MCP Gateway", "Chroma"]
 
     @pytest.mark.asyncio
     async def test_update_document_reports_long_running_stages(self):
@@ -1100,6 +1140,36 @@ class TestKnowledgeToolsReindex:
         assert result["success"] is True
         assert result["chunks_old"] > 0
         assert result["chunks_new"] > 0
+
+    @pytest.mark.asyncio
+    async def test_reindex_document_refreshes_header_metadata_and_keeps_manual_tags(self):
+        tools, _kb, store = _make_tools()
+        added = await tools.add_document(
+            title="Gateway",
+            content="""# Gateway
+
+标签：旧标签
+核心实体：Old Service
+""",
+            path="test",
+            tags=["manual"],
+        )
+        doc_id = added["doc_id"]
+        store.save_source(
+            doc_id,
+            """# Gateway
+
+Tags: refreshed
+Core Entities: MCP Gateway, Redis
+""",
+            "test",
+        )
+
+        await tools.reindex_document(doc_id)
+
+        document = await tools.get_document(doc_id)
+        assert document["tags"] == ["manual", "refreshed"]
+        assert document["entities"] == ["MCP Gateway", "Redis"]
 
     @pytest.mark.asyncio
     async def test_reindex_document_reports_long_running_stages(self):

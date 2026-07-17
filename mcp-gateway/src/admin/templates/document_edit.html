@@ -316,6 +316,9 @@
             <!-- Markdown 编辑器 -->
             <div>
                 <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">内容（Markdown）</label>
+                <p class="text-xs text-slate-500 dark:text-slate-400">
+                    可在文档开头声明 <code>标签：部署、运维</code> 与 <code>核心实体：MCP Gateway、Chroma</code>；也兼容 <code>Tags</code>、<code>Core Entities</code>、<code>Entities</code>，保存时自动提取，无需模型。
+                </p>
                 <div class="editor-container mt-2">
                     <div class="editor-pane">
                         <textarea name="content" id="content-editor" placeholder="# 标题&#10;&#10;开始输入 Markdown 内容...">{{ content }}</textarea>

@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
+from document_metadata import normalize_metadata_values
 from models import SearchResult
 
 
@@ -305,6 +306,8 @@ class GraphAssociationExpander:
         adjacency: dict[str, list[tuple[str, float, str]]] = {}
         default_weights = {
             "semantically_similar": 0.75,
+            "co_entity": 0.65,
+            "declares_core_entity": 0.85,
             "co_tag": 0.50,
             "same_directory": 0.35,
         }
@@ -562,16 +565,17 @@ def doc_matches_filters(doc: dict[str, Any], query: RetrievalQuery) -> bool:
 
 
 def normalize_tags(tags: Any) -> list[str]:
-    if isinstance(tags, list):
-        return [str(tag).strip() for tag in tags if str(tag).strip()]
-    if isinstance(tags, str):
-        return [tag.strip() for tag in tags.replace("，", ",").split(",") if tag.strip()]
-    return []
+    return normalize_metadata_values(tags)
+
+
+def normalize_entities(entities: Any) -> list[str]:
+    return normalize_metadata_values(entities)
 
 
 def keyword_score(terms: list[str], doc: dict[str, Any], content: str) -> float:
     title = str(doc.get("title", "")).lower()
     path = str(doc.get("path", "")).lower()
+    entities = " ".join(normalize_entities(doc.get("entities", []))).lower()
     haystack = content.lower()
     score = 0.0
     for term in terms:
@@ -579,6 +583,8 @@ def keyword_score(terms: list[str], doc: dict[str, Any], content: str) -> float:
             score += 3.0
         if term in path:
             score += 1.5
+        if term in entities:
+            score += 3.5
         score += min(haystack.count(term), 5) * 1.0
     return score
 
@@ -587,6 +593,7 @@ def structure_score(query_text: str, doc: dict[str, Any]) -> float:
     doc_id = str(doc.get("doc_id", "")).lower()
     title = str(doc.get("title", "")).lower()
     path = str(doc.get("path", "")).lower()
+    entities = [entity.lower() for entity in normalize_entities(doc.get("entities", []))]
     if query_text == doc_id:
         return 10.0
     if query_text and query_text == title:
@@ -595,6 +602,12 @@ def structure_score(query_text: str, doc: dict[str, Any]) -> float:
         return 5.0
     if query_text and query_text in path:
         return 3.0
+    if any(query_text == entity for entity in entities):
+        return 8.5
+    if query_text and any(entity in query_text for entity in entities):
+        return 6.0
+    if query_text and any(query_text in entity for entity in entities):
+        return 4.0
     return 1.0 if not query_text else 0.0
 
 
@@ -615,12 +628,17 @@ def rerank_score(candidate: RetrievalCandidate, query: RetrievalQuery) -> float:
     title = candidate.result.title.lower()
     path = candidate.result.path.lower()
     content = candidate.result.content.lower()
+    entities = " ".join(normalize_entities(
+        getattr(candidate.result, "entities", [])
+    )).lower()
     boost = 0.0
     for term in terms:
         if term in title:
             boost += 0.05
         if term in path:
             boost += 0.03
+        if term in entities:
+            boost += 0.05
         if term in content:
             boost += 0.02
     return min(boost, 0.15)
@@ -633,6 +651,7 @@ def chunk_to_search_result(doc: dict[str, Any], chunk: dict[str, Any], score: fl
         title=metadata.get("title") or doc.get("title", ""),
         path=metadata.get("path") or doc.get("path", ""),
         source_path=metadata.get("source_path", ""),
+        entities=normalize_entities(doc.get("entities") or metadata.get("entities", [])),
         doc_id=metadata.get("doc_id") or doc.get("doc_id", ""),
         chunk_index=metadata.get("chunk_index", 0),
         total_chunks=metadata.get("total_chunks", doc.get("chunk_count", 0)),
@@ -647,6 +666,7 @@ def candidate_to_debug_dict(candidate: RetrievalCandidate) -> dict[str, Any]:
         "title": result.title,
         "path": result.path,
         "source_path": result.source_path,
+        "entities": result.entities,
         "doc_id": result.doc_id,
         "chunk_index": result.chunk_index,
         "total_chunks": result.total_chunks,

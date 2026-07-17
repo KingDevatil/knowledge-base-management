@@ -10,6 +10,7 @@ from time import monotonic
 from fastapi import HTTPException
 
 from config import get_settings
+from document_metadata import normalize_metadata_values
 from knowledge_base import KnowledgeBase
 from source_store import SourceStore
 from embedding import OllamaEmbedder
@@ -403,6 +404,7 @@ class KnowledgeToolsReader:
             enriched.setdefault("context_truncated", False)
             enriched.setdefault("updated_at", "")
             enriched.setdefault("tags", [])
+            enriched.setdefault("entities", [])
             enriched.setdefault(
                 "citation",
                 f"{item.get('path') or '/'}:{item.get('title', '')}#chunk-{chunk_index}",
@@ -460,7 +462,8 @@ class KnowledgeToolsReader:
                 len(context_before) + len(context_after) > max_context_chars
             )
             enriched["updated_at"] = doc_info.get("updated_at", "")
-            enriched["tags"] = doc_info.get("tags", [])
+            enriched["tags"] = normalize_metadata_values(doc_info.get("tags", []))
+            enriched["entities"] = normalize_metadata_values(doc_info.get("entities", []))
             enriched["citation"] = f"{item.get('path') or '/'}:{item.get('title', '')}#chunk-{chunk_index}"
             enriched_results.append(enriched)
         return enriched_results
@@ -509,6 +512,7 @@ class KnowledgeToolsReader:
                     "title": d.title,
                     "path": d.path,
                     "tags": d.tags,
+                    "entities": d.entities,
                     "chunk_count": d.chunk_count,
                     "created_at": d.created_at,
                     "updated_at": d.updated_at,
@@ -569,20 +573,13 @@ class KnowledgeToolsReader:
                 },
             })
 
-        tags_raw = doc_info.get("tags", "")
-        if isinstance(tags_raw, str) and tags_raw:
-            tags = [t.strip() for t in tags_raw.split(",") if t.strip()]
-        elif isinstance(tags_raw, list):
-            tags = tags_raw
-        else:
-            tags = []
-
         return {
             "doc_id": doc_id,
             "title": doc_info.get("title", ""),
             "content": content,
             "path": path,
-            "tags": tags,
+            "tags": normalize_metadata_values(doc_info.get("tags", [])),
+            "entities": normalize_metadata_values(doc_info.get("entities", [])),
             "created_by": doc_info.get("created_by", ""),
             "created_at": doc_info.get("created_at", ""),
             "updated_at": doc_info.get("updated_at", ""),

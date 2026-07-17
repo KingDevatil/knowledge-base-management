@@ -351,6 +351,14 @@
                     {% endfor %}
                 </div>
                 {% endif %}
+                {% if entities %}
+                <div class="flex gap-1 flex-wrap" title="文档头部声明的核心实体">
+                    <i data-lucide="network" class="w-3 h-3 self-center text-violet-500 dark:text-violet-400"></i>
+                    {% for entity in entities %}
+                    <span class="inline-flex items-center px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-violet-50 dark:bg-violet-500/10 text-violet-700 dark:text-violet-300">{{ entity }}</span>
+                    {% endfor %}
+                </div>
+                {% endif %}
                 <span class="flex items-center gap-1">
                     <i data-lucide="layers" class="w-3 h-3 text-slate-400 dark:text-slate-500"></i>
                     {{ chunk_count }} 切片

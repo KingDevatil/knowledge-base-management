@@ -130,6 +130,9 @@
                                     {% for t in doc.tags[:3] %}
                                     <span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">{{ t }}</span>
                                     {% endfor %}
+                                    {% for entity in doc.entities[:2] %}
+                                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-violet-50 dark:bg-violet-500/10 text-violet-700 dark:text-violet-300">{{ entity }}</span>
+                                    {% endfor %}
                                 </div>
                             </td>
                             <td class="px-4 py-2.5 text-slate-600 dark:text-slate-400">{{ doc.chunk_count }}</td>

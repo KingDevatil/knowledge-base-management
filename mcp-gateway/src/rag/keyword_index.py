@@ -12,6 +12,7 @@ from .retrieval import (
     doc_matches_filters,
     keyword_score,
     tokenize_keyword_terms,
+    normalize_entities,
 )
 
 
@@ -115,5 +116,6 @@ class KeywordInvertedIndex:
             str(doc.get("doc_id", "")),
             str(doc.get("title", "")),
             str(doc.get("path", "")),
+            " ".join(normalize_entities(doc.get("entities", []))),
             chunk.get("content", ""),
         ])))

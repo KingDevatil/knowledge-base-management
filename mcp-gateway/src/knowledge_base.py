@@ -3,6 +3,7 @@ import json
 from typing import List, Optional
 import chromadb
 
+from document_metadata import normalize_metadata_values
 from models import SearchResult, DocumentInfo
 
 # Redis key for document index cache
@@ -99,7 +100,9 @@ class KnowledgeBase:
                     "doc_id": doc_id,
                     "title": meta.get("title", ""),
                     "path": meta.get("path", ""),
-                    "tags": meta.get("tags", ""),
+                    "tags": normalize_metadata_values(meta.get("tags", "")),
+                    "header_tags": normalize_metadata_values(meta.get("header_tags", "")),
+                    "entities": normalize_metadata_values(meta.get("entities", "")),
                     "chunk_count": 0,
                     "created_at": meta.get("created_at", ""),
                     "updated_at": meta.get("updated_at", ""),
@@ -134,9 +137,15 @@ class KnowledgeBase:
         if not chunks:
             return
 
+        normalized_metadata = {
+            **metadata,
+            "tags": normalize_metadata_values(metadata.get("tags", [])),
+            "header_tags": normalize_metadata_values(metadata.get("header_tags", [])),
+            "entities": normalize_metadata_values(metadata.get("entities", [])),
+        }
         ids = [f"{doc_id}#chunk-{i}" for i in range(len(chunks))]
         metadatas = [{
-            **metadata,
+            **normalized_metadata,
             "doc_id": doc_id,
             "title": title,
             "chunk_index": i,
@@ -144,8 +153,9 @@ class KnowledgeBase:
         } for i in range(len(chunks))]
 
         for m in metadatas:
-            if "tags" in m and isinstance(m["tags"], list):
-                m["tags"] = ",".join(m["tags"])
+            for field in ("tags", "header_tags", "entities"):
+                if field in m and isinstance(m[field], list):
+                    m[field] = ",".join(m[field])
 
         self.collection.add(
             ids=ids,
@@ -158,11 +168,13 @@ class KnowledgeBase:
         await self._doc_index_set(doc_id, {
             "doc_id": doc_id,
             "title": title,
-            "path": metadata.get("path", ""),
-            "tags": metadata.get("tags", ""),
+            "path": normalized_metadata.get("path", ""),
+            "tags": normalized_metadata["tags"],
+            "header_tags": normalized_metadata["header_tags"],
+            "entities": normalized_metadata["entities"],
             "chunk_count": len(chunks),
-            "created_at": metadata.get("created_at", ""),
-            "updated_at": metadata.get("updated_at", ""),
+            "created_at": normalized_metadata.get("created_at", ""),
+            "updated_at": normalized_metadata.get("updated_at", ""),
         })
 
     async def delete_document(self, doc_id: str) -> int:
@@ -211,6 +223,7 @@ class KnowledgeBase:
                     title=meta.get("title", ""),
                     path=meta.get("path", ""),
                     source_path=meta.get("source_path", ""),
+                    entities=normalize_metadata_values(meta.get("entities", "")),
                     doc_id=meta.get("doc_id", ""),
                     chunk_index=meta.get("chunk_index", 0),
                     total_chunks=meta.get("total_chunks", 0),
@@ -253,7 +266,16 @@ class KnowledgeBase:
         total = len(doc_list)
 
         # 分页
-        return [DocumentInfo(**d) for d in doc_list[offset:offset + limit]], total
+        return [
+            DocumentInfo(
+                **{
+                    **doc,
+                    "tags": normalize_metadata_values(doc.get("tags", [])),
+                    "entities": normalize_metadata_values(doc.get("entities", [])),
+                }
+            )
+            for doc in doc_list[offset:offset + limit]
+        ], total
 
     async def list_documents_by_paths(
         self,
@@ -276,7 +298,16 @@ class KnowledgeBase:
 
         doc_list.sort(key=lambda x: x.get("created_at", ""), reverse=True)
         total = len(doc_list)
-        return [DocumentInfo(**d) for d in doc_list[offset:offset + limit]], total
+        return [
+            DocumentInfo(
+                **{
+                    **doc,
+                    "tags": normalize_metadata_values(doc.get("tags", [])),
+                    "entities": normalize_metadata_values(doc.get("entities", [])),
+                }
+            )
+            for doc in doc_list[offset:offset + limit]
+        ], total
 
     async def get_document_chunks(
         self,

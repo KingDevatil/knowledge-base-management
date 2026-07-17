@@ -98,6 +98,32 @@ async def test_ingestion_pipeline_records_node_logs():
 
 
 @pytest.mark.asyncio
+async def test_ingestion_pipeline_extracts_header_tags_and_entities_without_model():
+    kb = MockKB()
+    pipeline = make_pipeline(kb=kb)
+
+    await pipeline.import_document(
+        title="Gateway",
+        content="""# Gateway
+
+Tags: deployment, internal
+核心实体：MCP Gateway、Chroma
+
+## Details
+实体：正文不应解析
+""",
+        path="guides",
+        tags=["manual"],
+        doc_id="doc-metadata",
+    )
+
+    metadata = kb.docs["doc-metadata"]["metadata"]
+    assert metadata["tags"] == ["manual", "deployment", "internal"]
+    assert metadata["header_tags"] == ["deployment", "internal"]
+    assert metadata["entities"] == ["MCP Gateway", "Chroma"]
+
+
+@pytest.mark.asyncio
 async def test_ingestion_pipeline_reports_embedding_failure():
     pipeline = make_pipeline(embedder=MockEmbedder(fail=True))
 

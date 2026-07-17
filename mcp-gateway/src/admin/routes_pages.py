@@ -10,6 +10,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
 from directory_tree import DirectoryTree
 from directory_store import merge_into_tree
+from document_metadata import normalize_metadata_values
 
 from logger import get_logger
 
@@ -322,7 +323,8 @@ async def document_view(request: Request, doc_id: str, user: dict = Depends(get_
     return templates.TemplateResponse(request, "document_view.html", {
         "request": request, "admin": user, "doc_id": doc_id,
         "title": meta.get("title", ""), "path": doc_path,
-        "tags": meta.get("tags", "").replace("，", ",").split(",") if isinstance(meta.get("tags"), str) else meta.get("tags", []),
+        "tags": normalize_metadata_values(meta.get("tags", [])),
+        "entities": normalize_metadata_values(meta.get("entities", [])),
         "content": content, "html_content": html_content,
         "toc_html": toc_html,
         "source_path": source_path, "chunk_count": len(chunks),

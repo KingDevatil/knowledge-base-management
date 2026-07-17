@@ -18,6 +18,7 @@ except ImportError:  # 允许基础检索在可选图谱依赖尚未安装时继
     to_json = None
 
 from config import get_settings
+from document_metadata import entity_node_id, normalize_metadata_values
 from logger import get_logger
 
 logger = get_logger()
@@ -28,6 +29,8 @@ class KnowledgeGraphBuilder:
 
     边类型：
       - co_tag (EXTRACTED): 共享至少一个标签的两篇文档
+      - declares_core_entity (EXTRACTED): 文档头部声明的核心实体
+      - co_entity (EXTRACTED): 两篇文档共享至少一个核心实体
       - same_directory (EXTRACTED): 同一目录下的文档
       - semantically_similar (INFERRED, 可选): 向量余弦相似度超过阈值
     """
@@ -154,17 +157,32 @@ class KnowledgeGraphBuilder:
         edges: list[dict] = []
         edge_keys: set[tuple[str, str, str]] = set()
 
-        # 节点：每篇文档一个
+        # 节点：每篇文档一个；核心实体是独立节点，连接到声明它的文档。
+        doc_entities: dict[str, list[tuple[str, str]]] = {}
+        entity_labels: dict[str, str] = {}
+        entity_index: dict[str, list[str]] = {}
         for doc in docs:
             doc_id = doc.get("doc_id") or doc.get("id", "")
+            tags = normalize_metadata_values(doc.get("tags", []))
+            entities = normalize_metadata_values(doc.get("entities", []))
             nodes.append({
                 "id": doc_id,
                 "label": doc.get("title", ""),
                 "file_type": "document",
                 "source_file": doc.get("path", "") or "/",
-                "tags": ",".join(doc.get("tags", [])),
+                "tags": ",".join(tags),
+                "entities": ",".join(entities),
                 "updated_at": doc.get("updated_at", ""),
             })
+            entity_refs: list[tuple[str, str]] = []
+            for entity in entities:
+                entity_id = entity_node_id(entity)
+                entity_labels.setdefault(entity_id, entity)
+                entity_refs.append((entity_id, entity))
+                if doc_id:
+                    entity_index.setdefault(entity_id, []).append(doc_id)
+            if doc_id:
+                doc_entities[doc_id] = entity_refs
 
         def _add_edge(
             src: str,
@@ -191,11 +209,51 @@ class KnowledgeGraphBuilder:
                 **attributes,
             })
 
+        for entity_id, label in entity_labels.items():
+            nodes.append({
+                "id": entity_id,
+                "label": label,
+                "file_type": "entity",
+                "source_file": "entities",
+                "tags": "",
+                "entity_kind": "core_entity",
+                "document_count": len(set(entity_index.get(entity_id, []))),
+            })
+
+        # 文档 ↔ 核心实体边，以及共享核心实体的直接文档关联。
+        for doc_id, entity_refs in doc_entities.items():
+            for entity_id, entity in entity_refs:
+                _add_edge(
+                    doc_id,
+                    entity_id,
+                    "declares_core_entity",
+                    "EXTRACTED",
+                    0.85,
+                    entity=entity,
+                )
+
+        shared_entities: dict[tuple[str, str], list[str]] = {}
+        for entity_id, doc_ids in entity_index.items():
+            if len(doc_ids) < 2:
+                continue
+            for src, tgt in self._relation_pairs(doc_ids):
+                pair = tuple(sorted((src, tgt)))
+                shared_entities.setdefault(pair, []).append(entity_labels[entity_id])
+        for (src, tgt), entities in shared_entities.items():
+            _add_edge(
+                src,
+                tgt,
+                "co_entity",
+                "EXTRACTED",
+                min(0.9, 0.65 + 0.10 * (len(entities) - 1)),
+                shared_entities=entities,
+            )
+
         # co_tag 边：共享标签
         tag_index: dict[str, list[str]] = {}
         for doc in docs:
             doc_id = doc.get("doc_id") or doc.get("id", "")
-            for tag in doc.get("tags", []):
+            for tag in normalize_metadata_values(doc.get("tags", [])):
                 t = tag.strip()
                 if t:
                     tag_index.setdefault(t, []).append(doc_id)
@@ -324,6 +382,8 @@ class KnowledgeGraphBuilder:
             path_count: dict[str, int] = {}
             for nid in members:
                 node = G.nodes[nid]
+                if node.get("file_type") != "document":
+                    continue
                 tags_str = node.get("tags", "")
                 for t in tags_str.split(","):
                     t = t.strip()

@@ -13,6 +13,7 @@ from fastapi import HTTPException
 
 from chunker import chunk_markdown
 from directory_tree import DirectoryTree
+from document_metadata import extract_document_header_metadata, merge_metadata_values
 from embedding import EmbeddingError
 from helpers import content_hash, content_size_kb
 
@@ -206,7 +207,10 @@ class DocumentIngestionPipeline:
     def _normalize_content(self, context: dict[str, Any]) -> None:
         context["content"] = context["content"].replace("\r\n", "\n").replace("\r", "\n")
         context["path"] = DirectoryTree.validate_path(context.get("path", ""))
-        context["tags"] = context.get("tags") or []
+        header_metadata = extract_document_header_metadata(context["content"])
+        context["header_tags"] = header_metadata.tags
+        context["tags"] = merge_metadata_values(context.get("tags") or [], header_metadata.tags)
+        context["entities"] = header_metadata.entities
 
     def _chunk(self, context: dict[str, Any]) -> None:
         chunks = chunk_markdown(context["content"], self.chunk_size, self.chunk_overlap)
@@ -246,6 +250,8 @@ class DocumentIngestionPipeline:
         context["metadata"] = {
             "path": context["path"],
             "tags": context["tags"],
+            "header_tags": context.get("header_tags", []),
+            "entities": context.get("entities", []),
             "source_path": context["source_path"],
             "source_format": "markdown",
             "created_at": context["now"],
@@ -278,6 +284,8 @@ class DocumentIngestionPipeline:
             "doc_id": context.get("doc_id", ""),
             "title": context.get("title", ""),
             "path": context.get("path", ""),
+            "tags": context.get("tags", []),
+            "entities": context.get("entities", []),
             "content_chars": len(context.get("content") or ""),
             "chunk_count": len(context.get("chunks") or []),
             "embedding_count": len(context.get("embeddings") or []),

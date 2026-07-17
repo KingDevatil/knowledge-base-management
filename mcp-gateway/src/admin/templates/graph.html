@@ -7,7 +7,7 @@
     <div class="flex items-center justify-between">
         <div>
             <h1 class="text-xl font-bold text-slate-900 dark:text-white">知识图谱</h1>
-            <p class="text-sm text-slate-500 dark:text-slate-400 mt-0.5">文档关系可视化图谱</p>
+            <p class="text-sm text-slate-500 dark:text-slate-400 mt-0.5">文档与核心实体关系可视化图谱</p>
         </div>
         <div class="flex items-center gap-3">
             {% if admin.role in ('super_admin', 'admin', 'user') %}
@@ -30,7 +30,7 @@
                     <i data-lucide="circle" class="w-4 h-4 text-brand-600 dark:text-brand-400"></i>
                 </div>
                 <div>
-                    <p class="text-xs text-slate-500 dark:text-slate-400">文档节点</p>
+                    <p class="text-xs text-slate-500 dark:text-slate-400">图谱节点</p>
                     <p class="text-2xl font-bold text-slate-900 dark:text-white" id="stat-nodes">
                         {{ graph_stats.nodes if graph_stats else '-' }}
                     </p>
@@ -80,7 +80,7 @@
     <!-- 分组图例 + 筛选复选框 -->
     <div class="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-4">
         <div class="flex items-center justify-between mb-3">
-            <h2 class="text-sm font-semibold text-slate-700 dark:text-slate-300">文档分组</h2>
+            <h2 class="text-sm font-semibold text-slate-700 dark:text-slate-300">关联分组</h2>
             <div class="flex gap-2">
                 <button onclick="selectAllGroups(true)" class="text-xs text-brand-600 dark:text-brand-400 hover:underline">全选</button>
                 <span class="text-xs text-slate-300 dark:text-slate-600">|</span>
@@ -95,7 +95,7 @@
         <div id="graph-toolbar" class="flex flex-wrap items-center gap-3 px-4 py-3 border-b border-slate-100 dark:border-slate-800">
             <div class="relative flex-1 max-w-xs">
                 <i data-lucide="search" class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"></i>
-                <input type="text" id="node-search" placeholder="搜索文档..."
+                <input type="text" id="node-search" placeholder="搜索文档或核心实体..."
                     class="w-full pl-9 pr-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:border-brand-400 dark:focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10 outline-none transition-all">
             </div>
             <button onclick="resetView()"
@@ -124,7 +124,7 @@
                 </div>
 
                 <div class="border-t border-slate-100 dark:border-slate-700 pt-3">
-                    <p class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">关联文档</p>
+                    <p class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">关联节点</p>
                     <div id="detail-relations" class="space-y-1.5 max-h-60 overflow-y-auto"></div>
                 </div>
             </div>
@@ -218,10 +218,16 @@ const GROUP_COLORS = [
 ];
 const RELATION_LABELS = {
     'co_tag': '共享标签',
+    'co_entity': '共享核心实体',
+    'declares_core_entity': '声明核心实体',
+    'same_directory': '同目录',
     'semantically_similar': '语义相似',
 };
 const RELATION_ICONS = {
     'co_tag': '🏷️',
+    'co_entity': '◆',
+    'declares_core_entity': '◆',
+    'same_directory': '📁',
     'semantically_similar': '🔗',
 };
 
@@ -267,15 +273,16 @@ const visNodes = GRAPH_DATA.nodes.map(n => {
     const deg = degree[n.id] || 0;
     const maxDeg = Math.max(...Object.values(degree), 1);
     const size = 18 + 22 * (deg / maxDeg);
-    const color = GROUP_COLORS[cid % GROUP_COLORS.length] || '#94a3b8';
+    const isEntity = n.file_type === 'entity';
+    const color = isEntity ? '#8b5cf6' : (GROUP_COLORS[cid % GROUP_COLORS.length] || '#94a3b8');
     return {
         id: n.id,
         label: n.label,
-        size: Math.max(size, 20),
+        size: isEntity ? Math.max(size * 0.8, 18) : Math.max(size, 20),
         color: { background: color, border: color, highlight: { background: color, border: '#ffffff' } },
         borderWidth: 2, borderWidthSelected: 3,
         font: { color: '#1e293b', size: 13, face: 'Inter, Noto Sans SC, sans-serif' },
-        shape: 'dot', group: cid,
+        shape: isEntity ? 'diamond' : 'dot', group: cid,
     };
 });
 const visEdges = linkList.map(l => ({
@@ -325,7 +332,7 @@ Object.entries(groupInfo).forEach(([gid, info]) => {
         class="w-4 h-4 rounded border-slate-300 dark:border-slate-600 text-brand-600 focus:ring-brand-500 cursor-pointer">
         <span class="w-2.5 h-2.5 rounded-full" style="background:${GROUP_COLORS[idx]}"></span>
         <span class="text-slate-700 dark:text-slate-300">${info.label}</span>
-        <span class="text-xs text-slate-400">${info.nodes.length}篇</span>`;
+        <span class="text-xs text-slate-400">${info.nodes.length} 节点</span>`;
     const cb = label.querySelector('input');
     cb.addEventListener('change', applyGroupFilter);
     groupCheckboxes[gid] = cb;
@@ -350,7 +357,9 @@ function selectAllGroups(select) {
 document.getElementById('node-search').addEventListener('input', function() {
     const q = this.value.trim().toLowerCase();
     GRAPH_DATA.nodes.forEach(n => {
-        const match = !q || n.label.toLowerCase().includes(q) || (n.tags && n.tags.toLowerCase().includes(q));
+        const match = !q || n.label.toLowerCase().includes(q) ||
+            (n.tags && n.tags.toLowerCase().includes(q)) ||
+            (n.entities && n.entities.toLowerCase().includes(q));
         const existing = dataset.nodes.get(n.id);
         if (existing) dataset.nodes.update({...existing, opacity: match ? 1.0 : 0.08});
     });
@@ -364,25 +373,31 @@ network.on('click', function(params) {
     if (!n) return;
 
     const cid = n.community;
-    const gLabel = groupInfo[cid] ? groupInfo[cid].label : '其他';
-    const color = GROUP_COLORS[cid % GROUP_COLORS.length] || '#94a3b8';
+    const isEntity = n.file_type === 'entity';
+    const gLabel = isEntity ? '核心实体' : (groupInfo[cid] ? groupInfo[cid].label : '其他');
+    const color = isEntity ? '#8b5cf6' : (GROUP_COLORS[cid % GROUP_COLORS.length] || '#94a3b8');
 
     document.getElementById('detail-title').textContent = n.label;
     document.getElementById('detail-subtitle').textContent = n.source_file || '';
-    document.getElementById('detail-tags').innerHTML = (n.tags || '').split(',').filter(Boolean).map(t =>
+    const tagBadges = (n.tags || '').split(',').filter(Boolean).map(t =>
         `<span class="px-2 py-0.5 rounded-full text-xs bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300">${t.trim()}</span>`
-    ).join('') || '<span class="text-slate-400 text-xs">无标签</span>';
+    );
+    const entityBadges = (n.entities || '').split(',').filter(Boolean).map(entity =>
+        `<span class="px-2 py-0.5 rounded-full text-xs bg-violet-50 dark:bg-violet-500/10 text-violet-700 dark:text-violet-300">◆ ${entity.trim()}</span>`
+    );
+    document.getElementById('detail-tags').innerHTML = [...tagBadges, ...entityBadges].join('') ||
+        `<span class="text-slate-400 text-xs">${isEntity ? '核心实体节点' : '无标签或核心实体'}</span>`;
     document.getElementById('detail-community-badge').textContent = gLabel;
     document.getElementById('detail-community-badge').style.background = color;
     document.getElementById('detail-degree').textContent = (degree[nid] || 0) + ' 条连接';
 
-    // 关联文档列表
+    // 关联节点列表
     const rels = edgeIndex[nid] || [];
     const relContainer = document.getElementById('detail-relations');
     relContainer.innerHTML = '';
 
     if (rels.length === 0) {
-        relContainer.innerHTML = '<p class="text-xs text-slate-400">无关联文档</p>';
+        relContainer.innerHTML = '<p class="text-xs text-slate-400">无关联节点</p>';
     } else {
         // 按关系类型分组
         const byRel = {};
@@ -400,7 +415,9 @@ network.on('click', function(params) {
 
             targets.forEach(tid => {
                 const tNode = nodeMap[tid];
-                const tColor = GROUP_COLORS[(tNode ? tNode.community : 0) % GROUP_COLORS.length] || '#94a3b8';
+                const tColor = tNode && tNode.file_type === 'entity'
+                    ? '#8b5cf6'
+                    : (GROUP_COLORS[(tNode ? tNode.community : 0) % GROUP_COLORS.length] || '#94a3b8');
                 const item = document.createElement('div');
                 item.className = 'flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700/50 cursor-pointer transition-all';
                 item.innerHTML = `<span class="w-2 h-2 rounded-full flex-shrink-0" style="background:${tColor}"></span>

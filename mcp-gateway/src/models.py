@@ -28,6 +28,7 @@ class DocumentInfo(BaseModel):
     title: str
     path: str = ""
     tags: list[str] = Field(default_factory=list)
+    entities: list[str] = Field(default_factory=list)
     chunk_count: int = 0
     created_at: str = ""
     updated_at: str = ""
@@ -38,6 +39,7 @@ class SearchResult(BaseModel):
     title: str
     path: str = ""
     source_path: str = ""
+    entities: list[str] = Field(default_factory=list)
     doc_id: str = ""
     chunk_index: int = 0
     total_chunks: int = 0

@@ -102,6 +102,20 @@ async def test_structure_channel_matches_doc_id_and_filters():
 
 
 @pytest.mark.asyncio
+async def test_structure_channel_matches_declared_core_entity_without_model():
+    kb = MockKnowledgeBase()
+    kb.docs[0]["entities"] = ["MCP Gateway"]
+    channel = StructureChannel(kb)
+
+    results = await channel.search(
+        RetrievalQuery(text="mcp gateway deployment", top_k=5)
+    )
+
+    assert [result.result.doc_id for result in results] == ["doc-1"]
+    assert results[0].raw_score == 6.0
+
+
+@pytest.mark.asyncio
 async def test_vector_channel_adapts_existing_kb_search():
     channel = VectorChannel(MockKnowledgeBase(), MockEmbedder())
 
@@ -347,8 +361,8 @@ async def test_pipeline_uses_weighted_graph_to_expand_related_documents():
         max_hops=1,
     )
     graph_expander._load_adjacency = lambda: {
-        "doc-1": [("doc-2", 0.9, "semantically_similar")],
-        "doc-2": [("doc-1", 0.9, "semantically_similar")],
+        "doc-1": [("doc-2", 0.9, "co_entity")],
+        "doc-2": [("doc-1", 0.9, "co_entity")],
     }
     pipeline = RetrievalPipeline(
         channels=[SingleHitChannel()],
@@ -360,7 +374,7 @@ async def test_pipeline_uses_weighted_graph_to_expand_related_documents():
 
     graph_results = [result for result in results if result["channel"] == "graph"]
     assert [result["doc_id"] for result in graph_results] == ["doc-2"]
-    assert "semantically_similar" in graph_results[0]["association_reason"]
+    assert "co_entity" in graph_results[0]["association_reason"]
 
 
 @pytest.mark.asyncio
