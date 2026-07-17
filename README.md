@@ -116,13 +116,14 @@ sh ./start.sh up
 4. 按选择优先使用国内镜像或直接使用官方源；国内镜像拉取/构建失败时自动回退官方源。
 5. 构建并启动依赖；等待 Ollama 健康后，由一次性初始化容器自动拉取 `OLLAMA_MODEL`。
 6. 等待 Gateway 健康检查通过再报告完成；等待期间每 30 秒显示一次进度，超时会自动打印关键容器状态和日志。
+7. 交互式部署可选择把 `knowbase` 注册到当前用户 PATH；自动化部署可使用 Windows 的 `-InstallCli` 或 Linux 的 `--install-cli`。
 
 配置会持久化在 `.env`。以后只想修改部分选项时运行：
 
 ```powershell
 # Windows
 .\start.ps1 configure
-# 也可以双击 init-config.bat
+# 也可以双击 scripts\init-config.bat
 ```
 
 ```bash
@@ -149,8 +150,41 @@ sh ./start.sh configure
 | 推荐档位 | `.\start.ps1 up -Profile recommended` | `sh ./start.sh up --profile recommended` |
 | 高性能档位 | `.\start.ps1 up -Profile high-performance` | `sh ./start.sh up --profile high-performance` |
 | 无人值守初始化 | `.\start.ps1 init -NonInteractive -Profile recommended -Gpu auto -Source mainland` | `sh ./start.sh init --non-interactive --profile recommended --source mainland` |
+| 部署并注册全局命令 | `.\start.ps1 up -InstallCli` | `sh ./start.sh up --install-cli` |
+| 单独注册全局命令 | `.\start.ps1 cli-install` | `sh ./start.sh cli-install` |
 
 `status` 会同时显示 Compose 容器状态并请求 Gateway `/health`。启动阻塞时终端会持续给出等待进度；另一个终端可以运行 `logs` 查看模型下载、依赖健康检查和 Gateway 启动日志。
+
+### 全局 `knowbase` 命令
+
+部署向导结束时可以选择注册全局命令，也可以随时手动执行：
+
+```powershell
+# Windows：写入当前用户 PATH，无需管理员权限
+.\start.ps1 cli-install
+```
+
+```bash
+# Linux：安装到 ~/.local/bin，并更新 ~/.profile 与当前 Shell 配置
+sh ./start.sh cli-install
+# 已安装 make 时也可执行 make cli-install
+```
+
+PATH 更新后需要重新打开终端。Windows 的命令入口位于 `%LOCALAPPDATA%\KnowledgeBaseManagement\bin`；Linux 默认位于 `~/.local/bin`。注册信息保存项目绝对路径，整个项目移动后命令会明确提示失效，此时在新目录重新执行 `cli-install` 即可更新绑定。
+
+| 命令 | 作用 |
+|---|---|
+| `knowbase up` / `knowbase down` / `knowbase restart` | 启动、停止或重启完整 Docker 服务 |
+| `knowbase status` / `knowbase logs` | 查看完整服务状态或持续日志 |
+| `knowbase configure` / `knowbase init` | 交互重配或非交互初始化配置 |
+| `knowbase health [--json]` | 请求本机 Gateway `/health`，失败时返回非零退出码 |
+| `knowbase gateway start\|stop\|restart` | 只操作已经部署的 `mcp-gateway` 容器；首次部署仍使用 `knowbase up` |
+| `knowbase gateway status\|logs\|health` | 查看 Gateway 容器、日志和健康状态 |
+| `knowbase native start\|stop\|restart\|status\|logs` | Windows 原生模式管理；Linux 使用 Docker 模式 |
+| `knowbase doctor` | 检查项目目录、`.env`、Docker Compose 和 Gateway 健康 |
+| `knowbase cli status\|uninstall` | 检查或卸载全局命令 |
+
+`knowbase gateway start` 和 `restart` 会等待健康检查通过再返回，期间每 10 秒输出一次进度；默认检查 `http://127.0.0.1:8000/health`，可通过 `KNOWBASE_HEALTH_URL` 或 `knowbase health --url <地址>` 覆盖。
 
 ### 访问地址
 
@@ -206,18 +240,26 @@ notepad .env.local
 .\start-dev.ps1 -Profile minimum
 .\start-dev.ps1 -NoAutoInstall
 
+# 只生成/校验 .env.local，不安装依赖、不创建数据目录、不启动服务
+.\start-dev.ps1 -InitOnly -Profile recommended
+
+# 后台启动；脚本会等到 Gateway /health 返回 200 后才退出
+.\start-dev.ps1 -Background
+
 # 只停止本项目占用 8000/8001/9000/9001 的 Gateway、Chroma、MinIO
 .\start-dev.ps1 -Stop
 ```
 
-`-Stop` 不再终止机器上共享的所有 Python、Ollama 或 Redis/Memurai 进程。若服务缺失或启动失败，脚本会立即给出具体依赖，不会继续显示“全部就绪”。`init-config.bat` 用于生成或重新配置 Docker 的 `.env`，不用于原生开发模式。
+原生启动器兼容 `start-dev.bat` 使用的 Windows PowerShell 5.1。Redis 不再以“6379 端口已监听”作为就绪条件，而会执行真实 `PING`；优先启动已安装的 Memurai Windows 服务，失败时再尝试直接运行可执行文件。Gateway 会在后台拉起并持续轮询 `/health`，等待期间每 10 秒显示进度，只有所有依赖健康且 `/health` 返回 200 才显示“全部健康”；失败时会显示 `mcp-gateway-dev.stderr.log` / `mcp-gateway-dev.stdout.log` 尾部。默认模式保持前台热重载，`-Background` 使用稳定的非热重载进程并在健康后返回终端。
+
+`-Stop` 不会终止机器上共享的 Ollama 或 Redis/Memurai 进程，只停止本项目监听端口的 Gateway、Chroma 和 MinIO（包括 Gateway 热重载进程树）。若 8000 端口已被占用但健康检查失败，脚本会明确停止并提示先检查或执行 `-Stop`，不会继续显示“全部就绪”。`scripts\init-config.bat` 用于生成或重新配置 Docker 的 `.env`，不用于原生开发模式；需要双击停止原生服务时可使用 `scripts\stop-dev.bat`。
 
 也可以使用桌面入口：
 
 ```powershell
-.\start-desktop-shell.bat
+.\scripts\start-desktop-shell.bat
 # 旧版 tkinter 启动器
-.\start-gui.bat
+.\scripts\start-gui.bat
 ```
 
 本地模式默认按 `.env.local` 的 `BIND_HOST=0.0.0.0` 监听 `http://<主机>:8000`。仅需本机访问时改为 `127.0.0.1`；允许局域网访问时还需配置 Windows 防火墙。
@@ -318,7 +360,7 @@ notepad .env.local
 | `restore_document_version` | 恢复指定版本 | `doc_id`, `version_id` | `write` |
 | `build_knowledge_graph` | 生成标签、目录和可选语义关系图 | 可选 `semantic_threshold` | `write` |
 
-MCP 工具调用仍是请求—响应模式，调用方会等待最终结果。客户端在请求中提供 `progressToken` 且支持展示 MCP progress notification 时，`add_document`、`update_document` 和 `reindex_document` 会发送 0–100 的阶段提示，例如“生成向量”“等待写入锁”“替换文档索引”；不支持进度通知的客户端只会表现为普通等待。检索不发送进度流，但有总时限、阶段时限和并发排队上限；超时会返回 `degraded` 信息，过载会快速返回 `503` 和建议重试时间。
+MCP 工具调用仍是请求—响应模式，调用方会等待最终结果。客户端在请求中提供 `progressToken` 且支持展示 MCP progress notification 时，`search_knowledge` 会依次提示“等待检索执行槽位”“检查查询缓存”“执行向量、关键词和结构混合检索”“补充上下文”等阶段；`add_document`、`update_document` 和 `reindex_document` 也会发送“生成向量”“等待写入锁”“替换文档索引”等 0–100 阶段提示。不支持进度通知的客户端只会表现为普通等待，但最终结果不受影响。检索仍有总时限、阶段时限和并发排队上限；超时会返回 `degraded` 信息，过载会快速返回 `503` 和建议重试时间。
 
 写入使用 Redis 分布式锁串行提交，Embedding 会尽量在进入锁之前完成，持锁期间会周期性续租。锁被占用时返回 `423`，错误详情包含 `retry_after_ms`，调用方可据此延迟重试。`update_document` 是覆盖式更新；请显式提供需要保留的标签。
 
@@ -461,10 +503,8 @@ knowledge-base-management/
 ├── .env.example.local              # Windows 本地配置模板
 ├── start.sh / start.ps1            # Linux/Windows Docker 统一部署入口
 ├── start-docker.bat / Makefile     # Docker 双击入口与命令包装
-├── init-config.bat                  # Windows 可双击运行的交互配置向导
-├── start-dev.ps1                   # Windows 原生开发服务编排
+├── start-dev.ps1 / start-dev.bat   # Windows 原生开发一键入口
 ├── 部署与容量配置指南.md             # 镜像、并发、硬件、域名与穿透配置
-├── start-desktop-shell.bat         # Windows 桌面壳入口
 ├── mcp-gateway/
 │   ├── requirements.txt
 │   ├── requirements-dev.txt
@@ -490,10 +530,20 @@ knowledge-base-management/
 │   └── tests/                       # Gateway 单元/集成风格测试
 ├── kbdata/                          # 默认运行时数据根目录
 ├── nginx/                           # 动态 Nginx 配置生成
-├── scripts/                         # 测试与依赖一致性脚本
+├── scripts/                         # 辅助启动、测试与维护脚本
+│   ├── knowbase.ps1 / knowbase.sh  # Windows/Linux CLI 命令路由
+│   ├── install-cli.ps1 / .sh       # 用户级 PATH 安装、检查和卸载
+│   ├── init-config.bat             # Docker 交互配置向导
+│   ├── stop-dev.bat                # 停止 Windows 原生服务
+│   ├── start-desktop-shell.bat     # Windows 桌面壳入口
+│   ├── start-gui.bat               # 旧版 tkinter 启动器
+│   ├── test.ps1 / test.sh          # 跨平台测试入口
+│   └── check_deps_sync.py          # 依赖声明一致性检查
 ├── 用户接入指南.md
 └── Agent 使用指南.md
 ```
+
+根目录只保留用户最常用的一键部署入口；其余辅助入口集中在 `scripts/`。这些脚本都根据自身位置解析项目根目录，不依赖启动命令所在的当前工作目录，因此可从资源管理器双击或从任意目录调用。脚本用途和调用方式见 [`scripts/README.md`](scripts/README.md)。
 
 ## 当前阶段限制
 

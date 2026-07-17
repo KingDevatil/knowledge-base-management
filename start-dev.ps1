@@ -2,20 +2,24 @@
 # No Docker/WSL2 needed, all native components
 # Usage: right-click "Run with PowerShell", or .\start-dev.ps1 in terminal
 # Optional: .\start-dev.ps1 -Profile minimum|recommended|high-performance
+# Automation: .\start-dev.ps1 -InitOnly | .\start-dev.ps1 -Background
 
 param(
     [switch]$Install,
     [switch]$Quiet,
     [switch]$Stop,
     [switch]$NoAutoInstall,
+    [switch]$InitOnly,
+    [switch]$Background,
     [ValidateSet("auto", "minimum", "recommended", "high-performance")]
     [string]$Profile = "auto"
 )
 
 $ErrorActionPreference = "Continue"
 $Global:ExitCode = 0
+$RootDir = $PSScriptRoot
 
-$logFile = "$PSScriptRoot\start-dev.log"
+$logFile = "$RootDir\start-dev.log"
 function Log { Add-Content -Path $logFile -Value "[$(Get-Date -Format 'HH:mm:ss')] $args" }
 
 function Write-Info  { Write-Host "[INFO] $args" -Foreground Cyan }
@@ -31,7 +35,7 @@ function Import-DotEnv([string]$Path) {
     foreach ($rawLine in [System.IO.File]::ReadAllLines($Path)) {
         $line = $rawLine.Trim()
         if (-not $line -or $line.StartsWith("#")) { continue }
-        $parts = $line.Split(@('='), 2)
+        $parts = $line -split "=", 2
         if ($parts.Count -ne 2) { continue }
         $name = $parts[0].Trim()
         $value = $parts[1].Trim().Trim('"').Trim("'")
@@ -60,14 +64,14 @@ function Set-DotEnvValue([string]$Path, [string]$Key, [string]$Value) {
 
 function Set-HardwareProfile([string]$Name, [string]$TargetEnvFile) {
     if (-not $Name -or $Name -eq "auto") { return }
-    $profilePath = Join-Path $PSScriptRoot "deploy\profiles\$Name.env"
+    $profilePath = Join-Path $RootDir "deploy\profiles\$Name.env"
     if (-not (Test-Path -LiteralPath $profilePath)) {
         throw "Hardware profile not found: $profilePath"
     }
     foreach ($rawLine in [System.IO.File]::ReadAllLines($profilePath)) {
         $line = $rawLine.Trim()
         if (-not $line -or $line.StartsWith("#") -or -not $line.Contains("=")) { continue }
-        $parts = $line.Split(@('='), 2)
+        $parts = $line -split "=", 2
         Set-DotEnvValue $TargetEnvFile $parts[0].Trim() $parts[1].Trim()
     }
     Write-Info "Applied hardware profile: $Name"
@@ -233,10 +237,75 @@ function Test-PythonDependencies([string]$PythonCommand) {
     return $LASTEXITCODE -eq 0
 }
 
-$localEnvFile = "$PSScriptRoot\.env.local"
+function Test-RedisReady([string]$PythonCommand) {
+    & $PythonCommand -c "import os, redis; client = redis.from_url(os.environ.get('REDIS_URL', 'redis://127.0.0.1:6379/0'), socket_connect_timeout=1, socket_timeout=1); assert client.ping() is True; client.close()" *> $null
+    return $LASTEXITCODE -eq 0
+}
+
+function Wait-RedisReady([string]$PythonCommand, [int]$TimeoutSeconds = 20) {
+    for ($attempt = 0; $attempt -le $TimeoutSeconds; $attempt++) {
+        if (Test-RedisReady $PythonCommand) { return $true }
+        if ($attempt -lt $TimeoutSeconds) { Start-Sleep -Seconds 1 }
+    }
+    return $false
+}
+
+function Test-GatewayReady([string]$HealthUrl) {
+    try {
+        $response = Invoke-WebRequest $HealthUrl -Method GET -TimeoutSec 3 -UseBasicParsing
+        return $response.StatusCode -eq 200
+    } catch {
+        return $false
+    }
+}
+
+function Wait-GatewayReady(
+    [string]$HealthUrl,
+    [System.Diagnostics.Process]$Process,
+    [int]$TimeoutSeconds = 90
+) {
+    for ($attempt = 0; $attempt -le $TimeoutSeconds; $attempt++) {
+        if (Test-GatewayReady $HealthUrl) { return $true }
+        if ($Process) {
+            try {
+                $Process.Refresh()
+                if ($Process.HasExited) { return $false }
+            } catch {
+                return $false
+            }
+        }
+        if ($attempt -gt 0 -and $attempt % 10 -eq 0) {
+            Write-Info "  -> Gateway is still starting (${attempt}s); waiting for /health..."
+        }
+        if ($attempt -lt $TimeoutSeconds) { Start-Sleep -Seconds 1 }
+    }
+    return $false
+}
+
+function Find-MatchingProcessAncestor([int]$ProcessId, [string]$CommandPattern) {
+    $currentProcessId = $ProcessId
+    for ($depth = 0; $depth -lt 8 -and $currentProcessId -gt 0; $depth++) {
+        $processInfo = Get-CimInstance Win32_Process -Filter "ProcessId = $currentProcessId" -ErrorAction SilentlyContinue
+        if (-not $processInfo) { return 0 }
+        if ($processInfo.CommandLine -match $CommandPattern) { return [int]$processInfo.ProcessId }
+        $currentProcessId = [int]$processInfo.ParentProcessId
+    }
+    return 0
+}
+
+function Stop-ProcessTree([int]$ProcessId) {
+    $taskkill = Get-Command "taskkill.exe" -ErrorAction SilentlyContinue
+    if ($taskkill) {
+        & $taskkill.Source /PID $ProcessId /T /F *> $null
+    } else {
+        Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
+    }
+}
+
+$localEnvFile = "$RootDir\.env.local"
 $localEnvCreated = $false
 if (-not (Test-Path -LiteralPath $localEnvFile)) {
-    Copy-Item -LiteralPath "$PSScriptRoot\.env.example.local" -Destination $localEnvFile
+    Copy-Item -LiteralPath "$RootDir\.env.example.local" -Destination $localEnvFile
     $localEnvCreated = $true
     Write-Info "Created .env.local from .env.example.local"
 }
@@ -246,10 +315,38 @@ if ($Profile -ne "auto") {
     Set-HardwareProfile "recommended" $localEnvFile
 }
 Import-DotEnv $localEnvFile
+# Normalize legacy localhost values for Windows IPv4 services. PowerShell 5.1 can
+# spend the entire short health timeout on ::1 even when the service listens on IPv4.
+if (-not $env:REDIS_URL) { $env:REDIS_URL = "redis://127.0.0.1:6379/0" }
+if (-not $env:CHROMA_HOST) { $env:CHROMA_HOST = "127.0.0.1" }
+if (-not $env:CHROMA_PORT) { $env:CHROMA_PORT = "8001" }
+if (-not $env:OLLAMA_URL) { $env:OLLAMA_URL = "http://127.0.0.1:11434" }
+if (-not $env:MINIO_ENDPOINT) { $env:MINIO_ENDPOINT = "127.0.0.1:9000" }
+if ($env:REDIS_URL -match "^redis://localhost(?=[:/])") {
+    $env:REDIS_URL = $env:REDIS_URL -replace "^redis://localhost", "redis://127.0.0.1"
+}
+if ($env:CHROMA_HOST -eq "localhost") { $env:CHROMA_HOST = "127.0.0.1" }
+if ($env:OLLAMA_URL -match "^https?://localhost(?=[:/])") {
+    $env:OLLAMA_URL = $env:OLLAMA_URL -replace "^(https?://)localhost", '${1}127.0.0.1'
+}
+if ($env:MINIO_ENDPOINT -match "^localhost(?=:)" ) {
+    $env:MINIO_ENDPOINT = $env:MINIO_ENDPOINT -replace "^localhost", "127.0.0.1"
+}
+if ($InitOnly) {
+    foreach ($requiredName in @("HARDWARE_PROFILE", "REDIS_URL", "CHROMA_HOST", "OLLAMA_URL")) {
+        $requiredValue = [Environment]::GetEnvironmentVariable($requiredName, "Process")
+        if ([string]::IsNullOrWhiteSpace($requiredValue)) {
+            Write-Err "Required local setting is missing: $requiredName"
+            exit 1
+        }
+    }
+    Write-Ok "Local configuration initialized: $localEnvFile"
+    exit 0
+}
 if (-not $env:KBDATA_DIR) {
-    $env:KBDATA_DIR = "$PSScriptRoot\kbdata"
+    $env:KBDATA_DIR = "$RootDir\kbdata"
 } elseif (-not [System.IO.Path]::IsPathRooted($env:KBDATA_DIR)) {
-    $env:KBDATA_DIR = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot $env:KBDATA_DIR))
+    $env:KBDATA_DIR = [System.IO.Path]::GetFullPath((Join-Path $RootDir $env:KBDATA_DIR))
 }
 New-Item -ItemType Directory -Path $env:KBDATA_DIR -Force | Out-Null
 
@@ -261,12 +358,12 @@ if ($Stop) {
         Where-Object { $_.LocalPort -in @(8000, 8001, 9000, 9001) } |
         Select-Object -ExpandProperty OwningProcess -Unique
     foreach ($candidatePid in $candidatePids) {
-        $processInfo = Get-CimInstance Win32_Process -Filter "ProcessId = $candidatePid" -ErrorAction SilentlyContinue
-        if ($processInfo.CommandLine -match "uvicorn.+src\.main:app|chroma.+run|minio.+server") {
-            Stop-Process -Id $candidatePid -Force -ErrorAction SilentlyContinue
+        $projectProcessId = Find-MatchingProcessAncestor $candidatePid "uvicorn.+src\.main:app|chroma.+run|minio.+server"
+        if ($projectProcessId -gt 0) {
+            Stop-ProcessTree $projectProcessId
             $count++
-            Write-Ok "  stopped PID $candidatePid"
-            Log "Stopped project listener PID $candidatePid"
+            Write-Ok "  stopped PID $projectProcessId (listener PID $candidatePid)"
+            Log "Stopped project process tree PID $projectProcessId (listener PID $candidatePid)"
         }
     }
     if ($count -eq 0) {
@@ -299,7 +396,7 @@ Log "Using: $(& $python --version)"
 # ---------- Step 2: Python deps ----------
 Write-Info "Step 2/7 - Checking Python deps..."
 Log "Check requirements.txt"
-$reqFile = "$PSScriptRoot\mcp-gateway\requirements.txt"
+$reqFile = "$RootDir\mcp-gateway\requirements.txt"
 if (-not (Test-Path $reqFile)) {
     Write-Err "requirements.txt not found at: $reqFile"
     Log "requirements.txt missing"
@@ -350,6 +447,7 @@ Write-Ok "Python deps ready"
 # ---------- Step 3: Ollama ----------
 Write-Info "Step 3/7 - Checking Ollama..."
 Log "Check Ollama"
+$ollamaHealthUrl = "$($env:OLLAMA_URL.TrimEnd('/'))/api/tags"
 $ollamaExe = Find-OllamaExecutable
 if (-not $ollamaExe) {
     Write-Info "Ollama not found; starting automatic installation."
@@ -363,7 +461,7 @@ if (-not $ollamaExe) {
 } else {
     $running = $false
     try {
-        $r = Invoke-WebRequest "http://localhost:11434/api/tags" -Method GET -TimeoutSec 2 -UseBasicParsing
+        $r = Invoke-WebRequest $ollamaHealthUrl -Method GET -TimeoutSec 2 -UseBasicParsing
         if ($r.StatusCode -eq 200) { $running = $true }
     } catch { Log "Ollama not running: $_" }
     if (-not $running) {
@@ -373,7 +471,7 @@ if (-not $ollamaExe) {
         for ($attempt = 0; $attempt -lt 15 -and -not $running; $attempt++) {
             Start-Sleep -Seconds 1
             try {
-                $r = Invoke-WebRequest "http://localhost:11434/api/tags" -Method GET -TimeoutSec 2 -UseBasicParsing
+                $r = Invoke-WebRequest $ollamaHealthUrl -Method GET -TimeoutSec 2 -UseBasicParsing
                 $running = $r.StatusCode -eq 200
             } catch { }
         }
@@ -385,7 +483,7 @@ if (-not $ollamaExe) {
     }
 
     $ollamaModel = if ($env:OLLAMA_MODEL) { $env:OLLAMA_MODEL } else { "bge-m3" }
-    $tags = Invoke-RestMethod "http://localhost:11434/api/tags" -Method GET -TimeoutSec 5
+    $tags = Invoke-RestMethod $ollamaHealthUrl -Method GET -TimeoutSec 5
     $modelInstalled = $tags.models | Where-Object {
         $_.name -eq $ollamaModel -or $_.name -like "${ollamaModel}:*"
     }
@@ -412,32 +510,72 @@ if (-not $ollamaExe) {
 
 # ---------- Step 4: Redis / Memurai ----------
 Write-Info "Step 4/7 - Checking Redis / Memurai..."
-Log "Check port 6379"
-$redisOk = $false
-try { $check = netstat -an 2>$null | Select-String ":6379"; if ($check) { $redisOk = $true } } catch { Log "netstat fail: $_" }
+if (-not $env:REDIS_URL) { $env:REDIS_URL = "redis://127.0.0.1:6379/0" }
+Log "Check Redis PING: $env:REDIS_URL"
+$redisOk = Test-RedisReady $python
 if (-not $redisOk) {
+    $redisHost = ""
+    try { $redisHost = ([System.Uri]$env:REDIS_URL).Host } catch { Log "Invalid REDIS_URL: $_" }
+    $localRedisHosts = @("localhost", "127.0.0.1", "::1")
+    if ($redisHost -and $redisHost -notin $localRedisHosts) {
+        Write-Err "Configured Redis did not answer PING: $env:REDIS_URL"
+        Write-Info "A remote REDIS_URL is configured, so the launcher will not start local Memurai."
+        Pause-IfInteractive
+        exit 1
+    }
+
     $memuraiExe = Find-MemuraiExecutable
     if (-not $memuraiExe) {
         Write-Info "Redis/Memurai not found; starting automatic Memurai installation."
         $memuraiExe = Install-MemuraiRuntime
+        $redisOk = Wait-RedisReady $python 5
     }
-    if ($memuraiExe) {
-        Write-Info "Starting Memurai..."
-        Log "Start Memurai: $memuraiExe"
-        try { Start-Process -FilePath $memuraiExe -WindowStyle Hidden; Start-Sleep -Seconds 2; Write-Ok "Memurai started" } catch { Log "Memurai start fail: $_" }
-    } else {
+
+    if (-not $redisOk) {
+        $memuraiService = Get-Service -Name "Memurai" -ErrorAction SilentlyContinue
+        if ($memuraiService) {
+            $memuraiServiceStarted = $memuraiService.Status -eq "Running"
+            if ($memuraiService.Status -ne "Running") {
+                Write-Info "Starting the Memurai Windows service..."
+                Log "Start Memurai service"
+                try {
+                    Start-Service -Name "Memurai" -ErrorAction Stop
+                    $memuraiServiceStarted = $true
+                } catch {
+                    Write-Warn "Could not start the Memurai service; trying the executable directly."
+                    Log "Memurai service start failed: $_"
+                }
+            } else {
+                Write-Info "Memurai service is running; waiting for Redis PING..."
+            }
+            if ($memuraiServiceStarted) {
+                $redisOk = Wait-RedisReady $python 15
+            }
+        }
+    }
+
+    if (-not $redisOk -and $memuraiExe) {
+        Write-Info "Starting Memurai directly..."
+        Log "Start Memurai executable: $memuraiExe"
+        try {
+            Start-Process -FilePath $memuraiExe -WindowStyle Hidden | Out-Null
+            $redisOk = Wait-RedisReady $python 20
+        } catch {
+            Log "Memurai executable start failed: $_"
+        }
+    }
+
+    if (-not $memuraiExe -and -not $redisOk) {
         Write-Warn "Memurai automatic installation failed or was disabled."
         Log "Memurai not found"
     }
-} else {
-    Write-Ok "Redis port 6379 ready"
-    Log "Redis 6379 ok"
 }
 
-$redisOk = $false
-try { $check = netstat -an 2>$null | Select-String ":6379"; if ($check) { $redisOk = $true } } catch { }
-if (-not $redisOk) {
-    Write-Err "Redis/Memurai is required but not available. Install Memurai or use the Docker deployment."
+if ($redisOk) {
+    Write-Ok "Redis PING succeeded"
+    Log "Redis PING succeeded"
+} else {
+    Write-Err "Redis/Memurai is required but did not answer PING. Check REDIS_URL and the Memurai service."
     Pause-IfInteractive
     exit 1
 }
@@ -445,9 +583,10 @@ if (-not $redisOk) {
 # ---------- Step 5: Chroma ----------
 Write-Info "Step 5/7 - Checking Chroma..."
 Log "Check Chroma port 8001"
+$chromaHealthUrl = "http://$($env:CHROMA_HOST):$($env:CHROMA_PORT)/api/v2/heartbeat"
 $chromaOk = $false
 try {
-    $r = Invoke-WebRequest "http://localhost:8001/api/v2/heartbeat" -Method GET -TimeoutSec 2 -UseBasicParsing
+    $r = Invoke-WebRequest $chromaHealthUrl -Method GET -TimeoutSec 2 -UseBasicParsing
     if ($r.StatusCode -eq 200) { $chromaOk = $true }
 } catch { Log "Chroma not running: $_" }
 if (-not $chromaOk) {
@@ -466,13 +605,13 @@ if (-not $chromaOk) {
     Write-Info "  -> Starting Chroma process (wait 10s)..."
     Log "Start Chroma process"
     try {
-        $chromaArgs = "run --host localhost --port 8001 --path `"$env:KBDATA_DIR\chroma`""
+        $chromaArgs = "run --host $env:CHROMA_HOST --port $env:CHROMA_PORT --path `"$env:KBDATA_DIR\chroma`""
         $p = Start-Process -FilePath $chromaExe -ArgumentList $chromaArgs -WindowStyle Hidden -PassThru
         Start-Sleep -Seconds 8
-        try { $r = Invoke-WebRequest "http://localhost:8001/api/v2/heartbeat" -Method GET -TimeoutSec 3 -UseBasicParsing; if ($r.StatusCode -eq 200) { $chromaOk = $true; Write-Ok "Chroma started" } } catch { Log "Chroma still not reachable: $_" }
+        try { $r = Invoke-WebRequest $chromaHealthUrl -Method GET -TimeoutSec 3 -UseBasicParsing; if ($r.StatusCode -eq 200) { $chromaOk = $true; Write-Ok "Chroma started" } } catch { Log "Chroma still not reachable: $_" }
     } catch { Log "Chroma process start fail: $_" }
     if (-not $chromaOk) {
-        Write-Err "Chroma auto-start failed. Manual command: chroma run --host localhost --port 8001"
+        Write-Err "Chroma auto-start failed. Manual command: chroma run --host $env:CHROMA_HOST --port $env:CHROMA_PORT"
         Log "Chroma start failed"
         Pause-IfInteractive
         exit 1
@@ -485,15 +624,17 @@ if (-not $chromaOk) {
 # ---------- Step 6: MinIO ----------
 Write-Info "Step 6/7 - Checking MinIO..."
 Log "Check MinIO port 9000"
+$minioScheme = if ($env:MINIO_SECURE -eq "true") { "https" } else { "http" }
+$minioHealthUrl = "${minioScheme}://$($env:MINIO_ENDPOINT)/minio/health/live"
 $minioOk = $false
 try {
-    $r = Invoke-WebRequest "http://localhost:9000/minio/health/live" -Method GET -TimeoutSec 2 -UseBasicParsing
+    $r = Invoke-WebRequest $minioHealthUrl -Method GET -TimeoutSec 2 -UseBasicParsing
     if ($r.StatusCode -eq 200) { $minioOk = $true }
 } catch { Log "MinIO not running: $_" }
 if (-not $minioOk) {
     $minioExe = Get-Command "minio" -ErrorAction SilentlyContinue
     if (-not $minioExe) {
-        $minioLocal = "$PSScriptRoot\minio.exe"
+        $minioLocal = "$RootDir\minio.exe"
         if (-not (Test-Path $minioLocal)) {
             Write-Info "Downloading MinIO..."
             Log "Download MinIO"
@@ -513,11 +654,11 @@ if (-not $minioOk) {
         try {
             if (-not $env:MINIO_ROOT_USER) { $env:MINIO_ROOT_USER = if ($env:MINIO_ACCESS_KEY) { $env:MINIO_ACCESS_KEY } else { "minioadmin" } }
             if (-not $env:MINIO_ROOT_PASSWORD) { $env:MINIO_ROOT_PASSWORD = if ($env:MINIO_SECRET_KEY) { $env:MINIO_SECRET_KEY } else { "minioadmin" } }
-            $proc = Start-Process -FilePath $minioExe.Source -ArgumentList "server $dataDir --console-address :9001" -WindowStyle Hidden -PassThru -WorkingDirectory "$PSScriptRoot"
+            $proc = Start-Process -FilePath $minioExe.Source -ArgumentList "server $dataDir --console-address :9001" -WindowStyle Hidden -PassThru -WorkingDirectory "$RootDir"
             for ($attempt = 0; $attempt -lt 10 -and -not $minioOk; $attempt++) {
                 Start-Sleep -Seconds 1
                 try {
-                    $r = Invoke-WebRequest "http://localhost:9000/minio/health/live" -Method GET -TimeoutSec 2 -UseBasicParsing
+                    $r = Invoke-WebRequest $minioHealthUrl -Method GET -TimeoutSec 2 -UseBasicParsing
                     $minioOk = $r.StatusCode -eq 200
                 } catch { }
             }
@@ -537,13 +678,13 @@ if (-not $minioOk) {
 # ---------- Step 7: mcp-gateway ----------
 Write-Info "Step 7/7 - Starting mcp-gateway..."
 Log "Start mcp-gateway"
-$env:PYTHONPATH = "$PSScriptRoot\mcp-gateway\src"
-if (-not $env:REDIS_URL) { $env:REDIS_URL = "redis://localhost:6379/0" }
-if (-not $env:CHROMA_HOST) { $env:CHROMA_HOST = "localhost" }
+$env:PYTHONPATH = "$RootDir\mcp-gateway\src"
+if (-not $env:REDIS_URL) { $env:REDIS_URL = "redis://127.0.0.1:6379/0" }
+if (-not $env:CHROMA_HOST) { $env:CHROMA_HOST = "127.0.0.1" }
 if (-not $env:CHROMA_PORT) { $env:CHROMA_PORT = "8001" }
-if (-not $env:OLLAMA_URL) { $env:OLLAMA_URL = "http://localhost:11434" }
+if (-not $env:OLLAMA_URL) { $env:OLLAMA_URL = "http://127.0.0.1:11434" }
 if (-not $env:OLLAMA_NUM_PARALLEL) { $env:OLLAMA_NUM_PARALLEL = "4" }
-if (-not $env:MINIO_ENDPOINT) { $env:MINIO_ENDPOINT = "localhost:9000" }
+if (-not $env:MINIO_ENDPOINT) { $env:MINIO_ENDPOINT = "127.0.0.1:9000" }
 if (-not $env:MINIO_ACCESS_KEY) { $env:MINIO_ACCESS_KEY = "minioadmin" }
 if (-not $env:MINIO_SECRET_KEY) { $env:MINIO_SECRET_KEY = "minioadmin" }
 if (-not $env:MINIO_BUCKET) { $env:MINIO_BUCKET = "kb-sources" }
@@ -556,23 +697,93 @@ if (-not $env:ADMIN_ACCOUNTS_FILE) { $env:ADMIN_ACCOUNTS_FILE = "$env:KBDATA_DIR
 if (-not $env:API_KEY_FILE) { $env:API_KEY_FILE = "$env:KBDATA_DIR\config\api_keys.json" }
 Log "PYTHONPATH=$env:PYTHONPATH"
 Log "REDIS_URL=$env:REDIS_URL"
+$gatewayProbeHost = $env:BIND_HOST
+if ($gatewayProbeHost -in @("0.0.0.0", "*", "::", "[::]")) { $gatewayProbeHost = "127.0.0.1" }
+$gatewayHealthUrl = "http://${gatewayProbeHost}:8000/health"
+$gatewayStdOut = Join-Path $RootDir "mcp-gateway-dev.stdout.log"
+$gatewayStdErr = Join-Path $RootDir "mcp-gateway-dev.stderr.log"
+
+$gatewayProcess = $null
+$gatewayWasRunning = Test-GatewayReady $gatewayHealthUrl
+if (-not $gatewayWasRunning) {
+    $gatewayPortOwner = Get-NetTCPConnection -State Listen -LocalPort 8000 -ErrorAction SilentlyContinue |
+        Select-Object -First 1 -ExpandProperty OwningProcess
+    if ($gatewayPortOwner) {
+        Write-Err "Port 8000 is occupied, but Gateway /health is not ready (listener PID $gatewayPortOwner)."
+        Write-Info "Run .\start-dev.ps1 -Stop, inspect the existing process, then start again."
+        Pause-IfInteractive
+        exit 1
+    }
+
+    Remove-Item -LiteralPath $gatewayStdOut, $gatewayStdErr -Force -ErrorAction SilentlyContinue
+    $gatewayArgs = @("-m", "uvicorn", "src.main:app", "--host", $env:BIND_HOST, "--port", "8000")
+    if (-not $Background) { $gatewayArgs += "--reload" }
+    Write-Info "  -> Gateway process started; waiting for /health (up to 90s)..."
+    Log "Starting uvicorn; stdout=$gatewayStdOut; stderr=$gatewayStdErr"
+    try {
+        $gatewayProcess = Start-Process -FilePath $python -ArgumentList $gatewayArgs `
+            -WorkingDirectory "$RootDir\mcp-gateway" -WindowStyle Hidden -PassThru `
+            -RedirectStandardOutput $gatewayStdOut -RedirectStandardError $gatewayStdErr
+    } catch {
+        Log "uvicorn start failed: $_"
+        Write-Err "Could not start Gateway: $_"
+        Pause-IfInteractive
+        exit 1
+    }
+
+    if (-not (Wait-GatewayReady $gatewayHealthUrl $gatewayProcess 90)) {
+        Write-Err "Gateway did not become healthy. It is not being reported as ready."
+        Log "Gateway health wait failed"
+        if ($gatewayProcess) {
+            try {
+                $gatewayProcess.Refresh()
+                if (-not $gatewayProcess.HasExited) { Stop-ProcessTree $gatewayProcess.Id }
+            } catch { Log "Gateway cleanup failed: $_" }
+        }
+        foreach ($diagnosticLog in @($gatewayStdErr, $gatewayStdOut)) {
+            if ((Test-Path -LiteralPath $diagnosticLog) -and (Get-Item -LiteralPath $diagnosticLog).Length -gt 0) {
+                Write-Warn "Last lines from $diagnosticLog"
+                Get-Content -LiteralPath $diagnosticLog -Tail 30 | ForEach-Object { Write-Host "  $_" }
+            }
+        }
+        Pause-IfInteractive
+        exit 1
+    }
+} else {
+    Write-Ok "Gateway was already healthy; reusing the existing process"
+}
+
 Write-Info ""
 Write-Info "============================================"
-Write-Info "  All services ready!"
+Write-Info "  All services are healthy!"
 Write-Info "  API:           http://localhost:8000"
 Write-Info "  Admin:         http://localhost:8000/admin"
 Write-Info "  MinIO Console: http://localhost:9001"
-Write-Info "  Ctrl+C to stop mcp-gateway"
-Write-Info "  Log: $logFile"
+Write-Info "  Health:        $gatewayHealthUrl"
+if ($Background -or $gatewayWasRunning) {
+    Write-Info "  Stop:          .\start-dev.ps1 -Stop"
+} else {
+    Write-Info "  Ctrl+C to stop mcp-gateway"
+}
+Write-Info "  Launcher log:  $logFile"
+Write-Info "  Gateway logs:  $gatewayStdOut / $gatewayStdErr"
 Write-Info "============================================"
 Write-Info ""
-Log "Starting uvicorn"
+Log "All services healthy"
+
+if ($Background -or $gatewayWasRunning) { exit 0 }
+
 try {
-    Set-Location "$PSScriptRoot\mcp-gateway"
-    & $python -m uvicorn src.main:app --host $env:BIND_HOST --port 8000 --reload
-} catch {
-    Log "uvicorn start fail: $_"
-    Write-Err "Start failed, check log: $logFile"
-    Pause-IfInteractive
+    $gatewayProcess.WaitForExit()
+} finally {
+    try {
+        $gatewayProcess.Refresh()
+        if (-not $gatewayProcess.HasExited) { Stop-ProcessTree $gatewayProcess.Id }
+    } catch { Log "Gateway foreground cleanup failed: $_" }
 }
-Pause-IfInteractive "mcp-gateway stopped, press Enter to exit"
+
+if ($gatewayProcess.ExitCode -ne 0) {
+    Write-Err "mcp-gateway stopped with exit code $($gatewayProcess.ExitCode). Check $gatewayStdErr"
+    Pause-IfInteractive
+    exit $gatewayProcess.ExitCode
+}

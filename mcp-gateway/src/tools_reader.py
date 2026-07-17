@@ -196,6 +196,16 @@ class KnowledgeToolsReader:
         except Exception as e:
             logger.warning(f"Failed to record search stats in Redis: {e}")
 
+    @staticmethod
+    async def _notify_progress(progress_callback, progress: float, message: str) -> None:
+        if progress_callback is None:
+            return
+        try:
+            await progress_callback(progress, message)
+        except Exception:
+            # Progress is advisory and must never fail the search result.
+            return
+
     async def search_knowledge(
         self,
         query: str,
@@ -204,6 +214,7 @@ class KnowledgeToolsReader:
         filter_path: str = "",
         include_context: bool = True,
         max_context_chars: int | None = None,
+        progress_callback=None,
     ) -> dict:
         """Search the knowledge base."""
         if not query or not query.strip():
@@ -225,12 +236,14 @@ class KnowledgeToolsReader:
         started = monotonic()
         timeout_ms = max(1, self.settings.SEARCH_TOTAL_TIMEOUT_MS)
         queue_timeout_ms = max(1, self.settings.SEARCH_QUEUE_TIMEOUT_MS)
+        await self._notify_progress(progress_callback, 5, "等待检索执行槽位")
         try:
             await asyncio.wait_for(
                 self._search_capacity.acquire(),
                 timeout=queue_timeout_ms / 1000,
             )
         except TimeoutError:
+            await self._notify_progress(progress_callback, 100, "检索队列繁忙，请稍后重试")
             raise HTTPException(
                 status_code=503,
                 detail={
@@ -239,6 +252,7 @@ class KnowledgeToolsReader:
                 },
             )
 
+        await self._notify_progress(progress_callback, 15, "已获得执行槽位，检查查询缓存")
         try:
             try:
                 return await asyncio.wait_for(
@@ -249,10 +263,12 @@ class KnowledgeToolsReader:
                         filter_path=filter_path,
                         include_context=include_context,
                         max_context_chars=max_context_chars,
+                        progress_callback=progress_callback,
                     ),
                     timeout=timeout_ms / 1000,
                 )
             except TimeoutError:
+                await self._notify_progress(progress_callback, 90, "检索超时，返回降级结果")
                 return {
                     "query": query,
                     "results": [],
@@ -277,6 +293,7 @@ class KnowledgeToolsReader:
         filter_path: str,
         include_context: bool,
         max_context_chars: int,
+        progress_callback=None,
     ) -> dict:
         started = monotonic()
         await self._record_search_stats()
@@ -303,10 +320,12 @@ class KnowledgeToolsReader:
                         "enrichment": 0.0,
                         "total": round((monotonic() - started) * 1000, 3),
                     }
+                    await self._notify_progress(progress_callback, 90, "命中查询缓存，准备返回")
                     return result
             except Exception as e:
                 logger.warning(f"Failed to read search cache: {e}")
 
+        await self._notify_progress(progress_callback, 35, "执行向量、关键词和结构混合检索")
         retrieval_started = monotonic()
         results = await self.retrieval_pipeline.search(
             RetrievalQuery(
@@ -318,6 +337,11 @@ class KnowledgeToolsReader:
         )
         retrieval_ms = round((monotonic() - retrieval_started) * 1000, 3)
 
+        await self._notify_progress(
+            progress_callback,
+            75,
+            f"基础检索完成，命中 {len(results)} 条，补充上下文",
+        )
         enrichment_started = monotonic()
         retrieval_errors = self.retrieval_pipeline.last_errors
         enrichment_timeout_ms = max(1, self.settings.SEARCH_ENRICH_TIMEOUT_MS)
@@ -337,6 +361,7 @@ class KnowledgeToolsReader:
             })
             enriched_results = self._results_without_context(results)
         enrichment_ms = round((monotonic() - enrichment_started) * 1000, 3)
+        await self._notify_progress(progress_callback, 90, "检索结果整理完成")
         timed_out = any("timed out" in error.get("error", "") for error in retrieval_errors)
 
         result = {

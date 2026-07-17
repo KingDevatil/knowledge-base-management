@@ -384,6 +384,26 @@ class TestKnowledgeToolsReader:
         assert {"channel", "raw_score", "final_score", "postprocess_reason"} <= set(result["results"][0])
 
     @pytest.mark.asyncio
+    async def test_search_knowledge_reports_wait_and_retrieval_progress(self, reader):
+        updates = []
+
+        async def report(progress, message):
+            updates.append((progress, message))
+
+        result = await reader.search_knowledge(
+            "test",
+            top_k=5,
+            progress_callback=report,
+        )
+
+        assert result["total"] > 0
+        assert updates[0] == (5, "等待检索执行槽位")
+        assert (15, "已获得执行槽位，检查查询缓存") in updates
+        assert any(progress == 35 and "混合检索" in message for progress, message in updates)
+        assert any(progress == 75 and "补充上下文" in message for progress, message in updates)
+        assert updates[-1] == (90, "检索结果整理完成")
+
+    @pytest.mark.asyncio
     async def test_search_knowledge_empty(self, reader):
         with pytest.raises(Exception):
             await reader.search_knowledge("", top_k=5)

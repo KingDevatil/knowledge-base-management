@@ -1,4 +1,4 @@
-.PHONY: help configure up down logs restart build backup health clean test pull-model
+.PHONY: help configure up down logs restart build backup health clean test pull-model cli-install cli-uninstall cli-status
 
 # 可用档位：auto / minimum / recommended / high-performance
 PROFILE ?= auto
@@ -25,6 +25,8 @@ help:
 	@echo "  make logs    - 查看 Gateway 日志"
 	@echo "  make logs-all- 查看所有服务日志"
 	@echo "  make health  - 检查服务健康状态"
+	@echo "  make cli-install - 注册全局 knowbase 命令"
+	@echo "  make cli-status  - 检查全局 knowbase 命令"
 	@echo "  make metrics - 查看运行指标"
 	@echo "  make backup  - 备份 Chroma 和 MinIO 数据"
 	@echo "  make clean   - 清理所有数据和卷 (⚠️ 危险)"
@@ -65,6 +67,15 @@ logs-all:
 # 健康检查
 health:
 	sh ./start.sh status
+
+cli-install:
+	sh ./start.sh cli-install
+
+cli-uninstall:
+	sh ./start.sh cli-uninstall
+
+cli-status:
+	sh ./start.sh cli-status
 
 # 运行指标
 metrics:

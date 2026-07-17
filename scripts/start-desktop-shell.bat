@@ -1,6 +1,7 @@
 @echo off
 title KB Desktop Shell
-cd /d "%~dp0"
+for %%I in ("%~dp0..") do set "ROOT_DIR=%%~fI"
+cd /d "%ROOT_DIR%"
 
 REM ============================================
 REM  Detect Python interpreter
@@ -46,7 +47,7 @@ REM ============================================
 REM  Auto-install dependencies
 REM ============================================
 echo [INFO] pywebview not found. Installing from requirements-desktop.txt ...
-%PYTHON% -m pip install -r "%~dp0requirements-desktop.txt"
+%PYTHON% -m pip install -r "%ROOT_DIR%\requirements-desktop.txt"
 if %errorlevel% neq 0 (
     echo.
     echo [ERROR] Failed to install dependencies.
@@ -72,7 +73,7 @@ echo [INFO] Dependencies installed successfully.
 REM ============================================
 REM  Launch desktop shell
 REM ============================================
-%PYTHON% "%~dp0desktop_shell.pyw"
+%PYTHON% "%ROOT_DIR%\desktop_shell.pyw"
 if %errorlevel% neq 0 (
     echo.
     echo [ERROR] Desktop shell exited with code %errorlevel%

@@ -4,13 +4,13 @@ Docker deployment adapter for Windows.
 
 .DESCRIPTION
 Exposes the same interface as start.sh:
-  .\start.ps1 [up|down|status|logs|init|configure] [-Gpu auto|cpu|gpu] [-Profile auto|minimum|recommended|high-performance] [-Tunnel auto|off|cloudflare] [-Source auto|mainland|official]
+  .\start.ps1 [up|down|status|logs|init|configure|cli-install|cli-uninstall|cli-status] [-Gpu auto|cpu|gpu] [-Profile auto|minimum|recommended|high-performance] [-Tunnel auto|off|cloudflare] [-Source auto|mainland|official]
 #>
 
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("up", "down", "status", "logs", "init", "configure", "help")]
+    [ValidateSet("up", "down", "status", "logs", "init", "configure", "cli-install", "cli-uninstall", "cli-status", "help")]
     [string]$Command = "up",
 
     [ValidateSet("auto", "cpu", "gpu")]
@@ -25,7 +25,9 @@ param(
     [ValidateSet("auto", "mainland", "official")]
     [string]$Source = "auto",
 
-    [switch]$NonInteractive
+    [switch]$NonInteractive,
+
+    [switch]$InstallCli
 )
 
 $ErrorActionPreference = "Stop"
@@ -569,9 +571,42 @@ function Wait-Gateway {
     throw "Gateway 启动超时"
 }
 
+function Invoke-CliInstaller([ValidateSet("install", "uninstall", "status")][string]$Action, [switch]$Quiet) {
+    $installer = Join-Path $RootDir "scripts\install-cli.ps1"
+    if (-not (Test-Path -LiteralPath $installer)) {
+        throw "CLI 安装脚本不存在：$installer"
+    }
+    & $installer -Action $Action -Quiet:$Quiet
+}
+
+function Test-CliRegistered {
+    try {
+        Invoke-CliInstaller "status" -Quiet
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function Install-CliIfRequested {
+    if ($InstallCli) {
+        Invoke-CliInstaller "install"
+        return
+    }
+    if ($NonInteractive -or -not (Test-InteractiveSession) -or (Test-CliRegistered)) {
+        return
+    }
+    $choice = Read-Host "是否注册全局 knowbase 命令，可在任意新终端使用？[Y/n]"
+    if ([string]::IsNullOrWhiteSpace($choice) -or $choice.Trim().ToLowerInvariant() -in @("y", "yes")) {
+        Invoke-CliInstaller "install"
+    } else {
+        Write-Step "[跳过] 稍后可运行 .\start.ps1 cli-install。"
+    }
+}
+
 function Show-Usage {
     @"
-用法: .\start.ps1 [up|down|status|logs|init|configure] [-Gpu auto|cpu|gpu] [-Profile auto|minimum|recommended|high-performance] [-Tunnel auto|off|cloudflare] [-Source auto|mainland|official] [-NonInteractive]
+用法: .\start.ps1 [up|down|status|logs|init|configure|cli-install|cli-uninstall|cli-status] [-Gpu auto|cpu|gpu] [-Profile auto|minimum|recommended|high-performance] [-Tunnel auto|off|cloudflare] [-Source auto|mainland|official] [-NonInteractive] [-InstallCli]
 
   up         首次部署时运行交互向导，然后构建并等待 Gateway 就绪（默认）
   configure  交互式查看并重新配置硬件、镜像、网络、存储或初始管理员
@@ -579,14 +614,26 @@ function Show-Usage {
   down       停止 Docker 服务
   status     查看容器状态并检查 Gateway
   logs       跟踪所有容器日志
+  cli-install   注册用户级全局 knowbase 命令并加入 PATH
+  cli-uninstall 删除全局 knowbase 命令及 PATH 项
+  cli-status    检查全局 knowbase 命令状态
 
   首次 up 无参数时显示向导；显式参数或 -NonInteractive 保持自动化兼容。
   选择结果会写入 .env，后续 up/down/status/logs 自动复用。
-  示例: .\start.ps1 up -Tunnel cloudflare / .\start.ps1 init -Source official -NonInteractive
+  示例: .\start.ps1 up -Tunnel cloudflare -InstallCli / .\start.ps1 cli-install / knowbase gateway restart
 "@ | Write-Host
 }
 
 switch ($Command) {
+    "cli-install" {
+        Invoke-CliInstaller "install"
+    }
+    "cli-uninstall" {
+        Invoke-CliInstaller "uninstall"
+    }
+    "cli-status" {
+        Invoke-CliInstaller "status"
+    }
     "init" {
         $null = Initialize-Environment
         Set-DotEnvValue "DEPLOY_CONFIGURED" "true"
@@ -627,6 +674,7 @@ switch ($Command) {
         Write-Host "  MCP:      http://localhost/mcp"
         Write-Host "  局域网:   将 localhost 替换为本机 IP"
         if ($script:EffectiveTunnel -eq "cloudflare") { Write-Host "  穿透:     Cloudflare Tunnel 已启动" }
+        Install-CliIfRequested
     }
     "down" {
         Assert-DockerReady

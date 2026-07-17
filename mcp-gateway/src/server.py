@@ -255,11 +255,12 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
         return result
 
     _DISPATCH = {
-        "search_knowledge": lambda a, t: t.search_knowledge(
+        "search_knowledge": lambda a, t, progress: t.search_knowledge(
             query=a.get("query", ""), top_k=a.get("top_k", 5),
             filter_tags=a.get("filter_tags") or [], filter_path=a.get("filter_path", ""),
             include_context=a.get("include_context", True),
             max_context_chars=a.get("max_context_chars"),
+            progress_callback=progress,
         ),
         "add_document": lambda a, t, progress: t.add_document(
             title=a.get("title", ""), content=a.get("content", ""),
@@ -303,7 +304,7 @@ def create_mcp_server(tools: KnowledgeTools) -> Server:
             kb=t.kb, embedder=getattr(t, "embedder", None)
         ).build(semantic_threshold=float(a.get("semantic_threshold", 0.0))),
     }
-    _PROGRESS_AWARE_TOOLS = {"add_document", "update_document", "reindex_document"}
+    _PROGRESS_AWARE_TOOLS = {"search_knowledge", "add_document", "update_document", "reindex_document"}
 
     async def _report_progress(progress: float, message: str) -> None:
         try:

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Docker deployment adapter for Linux/macOS/WSL.
-# Interface: sh ./start.sh [up|down|status|logs|init|configure] [--cpu|--gpu] [--profile NAME] [--tunnel MODE] [--source MODE]
+# Interface: sh ./start.sh [up|down|status|logs|init|configure|cli-install|cli-uninstall|cli-status] [--cpu|--gpu] [--profile NAME] [--tunnel MODE] [--source MODE]
 
 set -eu
 
@@ -12,12 +12,13 @@ PROFILE_MODE=auto
 TUNNEL_MODE=""
 IMAGE_SOURCE_MODE=""
 NON_INTERACTIVE=false
+INSTALL_CLI=false
 HAS_DEPLOYMENT_OVERRIDES=false
 SOURCE_FALLBACK=false
 ENV_CREATED=false
 
 case "${1:-}" in
-    up|down|status|logs|init|configure|help|-h|--help)
+    up|down|status|logs|init|configure|cli-install|cli-uninstall|cli-status|help|-h|--help)
         COMMAND=$1
         shift
         ;;
@@ -49,6 +50,7 @@ while [ "$#" -gt 0 ]; do
             ;;
         --source=*) IMAGE_SOURCE_MODE=${1#*=}; HAS_DEPLOYMENT_OVERRIDES=true; shift ;;
         --non-interactive) NON_INTERACTIVE=true; shift ;;
+        --install-cli) INSTALL_CLI=true; shift ;;
         *) echo "未知参数: $1" >&2; exit 2 ;;
     esac
 done
@@ -72,7 +74,7 @@ cd "$ROOT_DIR"
 
 usage() {
     cat <<'EOF'
-用法: sh ./start.sh [up|down|status|logs|init|configure] [--cpu|--gpu] [--profile NAME] [--tunnel MODE] [--source MODE] [--non-interactive]
+用法: sh ./start.sh [up|down|status|logs|init|configure|cli-install|cli-uninstall|cli-status] [--cpu|--gpu] [--profile NAME] [--tunnel MODE] [--source MODE] [--non-interactive] [--install-cli]
 
   up         首次部署时运行交互向导，然后构建并等待 Gateway 就绪（默认）
   configure  交互式查看并重新配置硬件、镜像、网络、存储或初始管理员
@@ -80,10 +82,13 @@ usage() {
   down       停止 Docker 服务
   status     查看容器状态并检查 Gateway
   logs       跟踪所有容器日志
+  cli-install   注册用户级全局 knowbase 命令并加入 PATH
+  cli-uninstall 删除全局 knowbase 命令及 PATH 配置
+  cli-status    检查全局 knowbase 命令状态
 
   首次 up 无参数时显示向导；显式参数或 --non-interactive 保持自动化兼容。
   选择结果会写入 .env，后续 up/down/status/logs 自动复用。
-  示例: sh ./start.sh up --tunnel cloudflare / sh ./start.sh init --source official --non-interactive
+  示例: sh ./start.sh up --tunnel cloudflare --install-cli / sh ./start.sh cli-install / knowbase gateway restart
 EOF
 }
 
@@ -609,7 +614,42 @@ wait_for_gateway() {
     return 1
 }
 
+cli_installer() {
+    cli_action=$1
+    shift
+    sh "$ROOT_DIR/scripts/install-cli.sh" "$cli_action" "$@"
+}
+
+cli_is_registered() {
+    cli_installer status --quiet >/dev/null 2>&1
+}
+
+install_cli_if_requested() {
+    if [ "$INSTALL_CLI" = true ]; then
+        cli_installer install
+        return
+    fi
+    if [ "$NON_INTERACTIVE" = true ] || ! is_interactive || cli_is_registered; then
+        return
+    fi
+    printf '是否注册全局 knowbase 命令，可在任意新终端使用？[Y/n] '
+    IFS= read -r cli_choice || cli_choice=n
+    case "$cli_choice" in
+        ""|y|Y|yes|YES|Yes) cli_installer install ;;
+        *) echo "[跳过] 稍后可运行 sh ./start.sh cli-install。" ;;
+    esac
+}
+
 case "$COMMAND" in
+    cli-install)
+        cli_installer install
+        ;;
+    cli-uninstall)
+        cli_installer uninstall
+        ;;
+    cli-status)
+        cli_installer status
+        ;;
     init)
         initialize_env
         set_env_value DEPLOY_CONFIGURED true
@@ -660,6 +700,7 @@ case "$COMMAND" in
         echo "  MCP:      http://localhost/mcp"
         echo "  局域网:   将 localhost 替换为本机 IP"
         [ "$TUNNEL_MODE" != cloudflare ] || echo "  穿透:     Cloudflare Tunnel 已启动"
+        install_cli_if_requested
         ;;
     down)
         require_docker
