@@ -7,7 +7,7 @@
     <!-- 页面标题 -->
     <div class="mb-6">
         <h1 class="text-2xl font-bold text-slate-900 dark:text-white">上传文档</h1>
-        <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">支持 .md 文件、文件夹、.zip / .tar.gz 压缩包</p>
+        <p class="text-sm text-slate-500 dark:text-slate-400 mt-1">支持 .md / .csv 文件、文件夹、.zip / .tar.gz 压缩包</p>
     </div>
 
     {% if error %}
@@ -26,9 +26,9 @@
             <p class="text-sm text-slate-600 dark:text-slate-300 mb-1">
                 拖拽文件/文件夹/压缩包到此处，或 <span class="text-brand-600 dark:text-brand-400 font-medium">点击选择</span>
             </p>
-            <p class="text-xs text-slate-400 dark:text-slate-500 mb-3">.md / .zip / .tar.gz</p>
+            <p class="text-xs text-slate-400 dark:text-slate-500 mb-3">.md / .csv / .zip / .tar.gz</p>
             <div class="flex gap-2 justify-center">
-                <input type="file" id="file-input" accept=".md,.zip,.tar.gz,.tgz" multiple class="hidden">
+                <input type="file" id="file-input" accept=".md,.csv,.zip,.tar.gz,.tgz" multiple class="hidden">
                 <button type="button" onclick="selectFolder()" class="px-4 py-2 text-sm font-medium rounded-xl
                     border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400
                     hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
@@ -257,21 +257,21 @@
             const name = f.name.toLowerCase();
             return name.endsWith('.zip') || name.endsWith('.tar.gz') || name.endsWith('.tgz');
         });
-        const mdFiles = arr.filter(f => f.name.endsWith('.md'));
+        const documentFiles = arr.filter(f => /\.(md|csv)$/i.test(f.name));
 
         if (archives.length > 0) {
             // 压缩包模式：上传到预览端点
             originalArchiveFile = archives[0];
             isArchiveMode = true;
             previewArchive(archives[0]);
-        } else if (mdFiles.length > 0) {
+        } else if (documentFiles.length > 0) {
             // 文件/文件夹模式
             isArchiveMode = false;
             originalArchiveFile = null;
-            const isFolder = mdFiles[0].webkitRelativePath && mdFiles[0].webkitRelativePath !== '';
-            processFiles(mdFiles, isFolder);
+            const isFolder = documentFiles[0].webkitRelativePath && documentFiles[0].webkitRelativePath !== '';
+            processFiles(documentFiles, isFolder);
         } else {
-            alert('请选择 .md 文件、文件夹（含 .md 文件）或 .zip/.tar.gz 压缩包');
+            alert('请选择 .md/.csv 文件、文件夹（含 .md/.csv 文件）或 .zip/.tar.gz 压缩包');
         }
     }
 

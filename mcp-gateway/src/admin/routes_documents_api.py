@@ -7,6 +7,11 @@ from urllib.parse import quote
 from fastapi import APIRouter, Request, Form, UploadFile, File, HTTPException, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, StreamingResponse
 
+from document_conversion import (
+    DocumentConversionError,
+    convert_uploaded_document,
+    is_supported_document_filename,
+)
 from lock import WriteLockError
 from models import ReindexByPathRequest
 from .helpers import require_admin, require_editor, get_current_user, check_path_access
@@ -21,6 +26,10 @@ documents_router = APIRouter()
 
 def _upload_basename(filename: str) -> str:
     return filename.replace("\\", "/").rsplit("/", 1)[-1]
+
+
+def _upload_title(filename: str) -> str:
+    return os.path.splitext(_upload_basename(filename))[0] or "未命名文档"
 
 
 # ---------- 入库任务 (admin only) ----------
@@ -100,12 +109,12 @@ async def api_batch_upload(
     results = []
 
     for file in files:
-        if not file.filename or not file.filename.endswith(".md"):
-            results.append({"filename": file.filename, "status": "skipped", "reason": "仅支持 .md"})
+        if not is_supported_document_filename(file.filename):
+            results.append({"filename": file.filename, "status": "skipped", "reason": "仅支持 .md、.csv"})
             continue
         try:
-            content = (await file.read()).decode("utf-8")
-            title = file.filename.rsplit(".", 1)[0]
+            content = convert_uploaded_document(file.filename, await file.read())
+            title = _upload_title(file.filename)
             result = await tools.import_markdown(
                 title=title, markdown_content=content, path=path,
                 tags=tag_list, created_by=user["username"],
@@ -116,8 +125,8 @@ async def api_batch_upload(
                 "doc_id": result["doc_id"],
                 "task_id": result.get("task_id", ""),
             })
-        except UnicodeDecodeError:
-            results.append({"filename": file.filename, "status": "error", "reason": "编码错误，请使用 UTF-8"})
+        except DocumentConversionError as e:
+            results.append({"filename": file.filename, "status": "error", "reason": str(e)})
         except WriteLockError:
             results.append({"filename": file.filename, "status": "error", "reason": "写锁被占用"})
         except Exception as e:
@@ -169,35 +178,33 @@ async def api_upload_archive(
         except ArchiveValidationError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
 
-        md_files = []
+        document_files = []
         for root, dirs, files_ in os.walk(extract_dir):
             for fn in files_:
-                if fn.endswith('.md'):
+                if is_supported_document_filename(fn):
                     full_path = os.path.join(root, fn)
                     rel_path = os.path.relpath(os.path.dirname(full_path), extract_dir).replace("\\", "/")
                     if rel_path == ".":
                         rel_path = ""
-                    md_files.append((full_path, rel_path, fn))
+                    document_files.append((full_path, rel_path, fn))
 
-        if not md_files:
-            return JSONResponse({"error": "压缩包内没有 .md 文件"}, status_code=400)
+        if not document_files:
+            return JSONResponse({"error": "压缩包内没有 .md 或 .csv 文件"}, status_code=400)
 
         tools = request.app.state.tools
         tag_list = [t.strip() for t in tags.replace("，", ",").split(",") if t.strip()]
         results = []
         success = 0
 
-        for full_path, rel_path, fn in md_files:
+        for full_path, rel_path, fn in document_files:
             try:
-                content_md = open(full_path, 'r', encoding='utf-8').read()
-            except UnicodeDecodeError:
-                try:
-                    content_md = open(full_path, 'r', encoding='gbk').read()
-                except Exception:
-                    results.append({"filename": fn, "path": rel_path, "status": "error", "reason": "编码错误"})
-                    continue
+                with open(full_path, "rb") as document_file:
+                    content_md = convert_uploaded_document(fn, document_file.read())
+            except DocumentConversionError as e:
+                results.append({"filename": fn, "path": rel_path, "status": "error", "reason": str(e)})
+                continue
 
-            title = fn.rsplit(".", 1)[0]
+            title = _upload_title(fn)
             if path and rel_path:
                 merged_path = f"{path}/{rel_path}"
             elif path:
@@ -227,9 +234,9 @@ async def api_upload_archive(
         return JSONResponse({
             "results": results,
             "tasks": [item["task_id"] for item in results if item.get("task_id")],
-            "total": len(md_files),
+            "total": len(document_files),
             "success": success,
-            "failed": len(md_files) - success,
+            "failed": len(document_files) - success,
         })
 
     finally:
@@ -277,7 +284,7 @@ async def api_preview_archive(
         files = []
         for root, dirs, fnames in os.walk(extract_dir):
             for fn in fnames:
-                if fn.endswith('.md'):
+                if is_supported_document_filename(fn):
                     full = os.path.join(root, fn)
                     rel = os.path.relpath(os.path.dirname(full), extract_dir).replace("\\", "/")
                     if rel == ".":
@@ -306,11 +313,11 @@ async def upload_submit(
     results = []
 
     for file in files:
-        if not file.filename or not file.filename.endswith(".md"):
+        if not is_supported_document_filename(file.filename):
             continue
         try:
-            content = (await file.read()).decode("utf-8")
-            title = file.filename.rsplit(".", 1)[0]
+            content = convert_uploaded_document(file.filename, await file.read())
+            title = _upload_title(file.filename)
             result = await tools.import_markdown(
                 title=title, markdown_content=content, path=target_path,
                 tags=tag_list, created_by=user["username"],

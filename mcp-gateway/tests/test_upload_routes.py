@@ -17,7 +17,9 @@ from admin.routes_documents_api import (
     api_ingestion_tasks,
     api_retry_cleanup_task,
     api_retry_ingestion_task,
+    api_preview_archive,
     api_upload_archive,
+    upload_submit,
 )
 
 
@@ -84,6 +86,25 @@ async def test_api_batch_upload_returns_task_ids():
     assert payload["tasks"] == ["task-1"]
     assert tools.calls[0]["path"] == "docs"
     assert tools.calls[0]["tags"] == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_api_batch_upload_converts_csv_to_searchable_records():
+    tools = FakeTools()
+
+    response = await api_batch_upload(
+        request=make_request(tools),
+        files=[make_upload("inventory.csv", "商品,库存\n键盘,12\n")],
+        path="docs",
+        tags="inventory",
+        user={"username": "admin"},
+    )
+    payload = json.loads(response.body)
+
+    assert payload["results"][0]["status"] == "ok"
+    assert tools.calls[0]["title"] == "inventory"
+    assert "- 商品: 键盘" in tools.calls[0]["content"]
+    assert "- 库存: 12" in tools.calls[0]["content"]
 
 
 @pytest.mark.asyncio
@@ -178,3 +199,51 @@ async def test_api_upload_archive_returns_task_ids(tmp_path):
     assert payload["results"][0]["path"] == "base/nested"
     assert payload["results"][0]["task_id"] == "task-1"
     assert payload["tasks"] == ["task-1"]
+
+
+@pytest.mark.asyncio
+async def test_archive_upload_and_preview_include_csv_files():
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("nested/stock.csv", "名称,数量\n键盘,12\n")
+    archive.seek(0)
+    tools = FakeTools()
+
+    preview = await api_preview_archive(
+        request=make_request(tools),
+        file=UploadFile(filename="docs.zip", file=io.BytesIO(archive.getvalue())),
+        user={"username": "admin"},
+    )
+    preview_payload = json.loads(preview.body)
+    assert preview_payload["total"] == 1
+    assert preview_payload["files"][0]["filename"] == "stock.csv"
+
+    response = await api_upload_archive(
+        request=make_request(tools),
+        file=UploadFile(filename="docs.zip", file=io.BytesIO(archive.getvalue())),
+        path="base",
+        tags="tag",
+        user={"username": "admin"},
+    )
+    payload = json.loads(response.body)
+
+    assert payload["success"] == 1
+    assert payload["results"][0]["filename"] == "stock.csv"
+    assert "- 名称: 键盘" in tools.calls[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_html_upload_form_accepts_csv():
+    tools = FakeTools()
+
+    response = await upload_submit(
+        request=make_request(tools),
+        files=[make_upload("inventory.csv", "商品,库存\n键盘,12\n")],
+        path="docs",
+        tags="inventory",
+        existing_path="",
+        user={"username": "admin"},
+    )
+
+    assert response.status_code == 302
+    assert "- 商品: 键盘" in tools.calls[0]["content"]

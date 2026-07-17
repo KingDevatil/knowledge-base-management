@@ -216,7 +216,7 @@ Docker 默认把 Gateway、Chroma、Redis、MinIO、Ollama 的宿主机端口绑
 
 1. 打开 `http://<服务器IP>/admin`。
 2. 首次启动且账号文件为空时，系统会用 `ADMIN_INITIAL_USERNAME` / `ADMIN_INITIAL_PASSWORD` 创建 `super_admin`。
-3. 在后台上传或新建 Markdown 文档。
+3. 在后台上传或新建 Markdown 文档；也可上传 CSV，系统会保留列名并按记录转换为适合检索的 Markdown 内容。
 4. 在“API Key”页面创建 Agent 使用的 Key；完整 Key 只展示一次。
 5. 只检索时勾选 `read`。如需同一个 Agent 同时检索和写入，必须同时勾选 `read` 与 `write`；两个 scope 相互独立。
 
@@ -460,7 +460,7 @@ Embedding Provider 还支持健康检查缓存、失败阈值和熔断冷却：`
 
 后台当前包含：
 
-- 文档列表、全文查看、Markdown 编辑、下载、批量上传和压缩包导入。
+- 文档列表、全文查看、Markdown 编辑、下载、Markdown/CSV 批量上传和压缩包导入；CSV 会按记录保留列名后入库，便于 MCP 检索表格数据。
 - 目录、标签、用户角色和路径权限管理。
 - API Key 创建、吊销、删除和使用统计。
 - 文档版本与恢复、入库/清理/重索引任务。
