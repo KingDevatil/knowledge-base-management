@@ -200,13 +200,13 @@ Windows 默认把入口安装到已经位于用户 PATH 的 `%LOCALAPPDATA%\Micr
 | `knowbase status` / `knowbase logs` | 查看完整服务状态或持续日志 |
 | `knowbase configure` / `knowbase init` | 交互重配或非交互初始化配置 |
 | `knowbase health [--json]` | 请求本机 Gateway `/health`，失败时返回非零退出码 |
-| `knowbase gateway start\|stop\|restart` | 只操作已经部署的 `mcp-gateway` 容器；首次部署仍使用 `knowbase up` |
-| `knowbase gateway status\|logs\|health` | 查看 Gateway 容器、日志和健康状态 |
+| `knowbase gateway start\|stop\|restart` | 自动管理当前 Gateway：运行中的容器优先走 Docker；存在原生 `.env.local` 或未安装 Docker 时走 Windows 原生服务 |
+| `knowbase gateway status\|logs\|health` | 查看当前 Gateway 的状态、日志和健康状态 |
 | `knowbase native start\|stop\|restart\|status\|logs` | Windows 原生模式管理；Linux 使用 Docker 模式 |
 | `knowbase doctor` | 检查项目目录、`.env`、Docker Compose 和 Gateway 健康 |
 | `knowbase cli status\|uninstall` | 检查或卸载全局命令 |
 
-`knowbase gateway start` 和 `restart` 会等待健康检查通过再返回，期间每 10 秒输出一次进度；默认检查 `http://127.0.0.1:8000/health`，可通过 `KNOWBASE_HEALTH_URL` 或 `knowbase health --url <地址>` 覆盖。
+`knowbase gateway start` 和 `restart` 会等待健康检查通过再返回，期间每 10 秒输出一次进度；默认检查 `http://127.0.0.1:8000/health`，可通过 `KNOWBASE_HEALTH_URL` 或 `knowbase health --url <地址>` 覆盖。在 Windows 上可追加 `--native` 或 `--docker` 强制选择运行方式，例如 `knowbase gateway restart --native`；未指定时，运行中的容器优先使用 Docker，存在 `.env.local` 或未安装 Docker 时使用原生服务。
 
 ### 访问地址
 

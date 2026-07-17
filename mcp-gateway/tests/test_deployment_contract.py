@@ -167,6 +167,39 @@ def test_global_cli_contract_is_cross_platform_and_wired_into_deployment_launche
     assert "--install-cli" in shell_launcher
 
 
+def test_windows_global_cli_restarts_native_gateway_when_docker_is_unavailable(tmp_path: Path):
+    powershell = shutil.which("powershell.exe") or shutil.which("pwsh")
+    if not powershell:
+        pytest.skip("PowerShell is not available")
+
+    project_root = tmp_path / "knowledge-base-management"
+    scripts_dir = project_root / "scripts"
+    scripts_dir.mkdir(parents=True)
+    shutil.copy2(ROOT / "scripts" / "knowbase.ps1", scripts_dir / "knowbase.ps1")
+    (project_root / ".env.local").write_text("HARDWARE_PROFILE=minimum\n", encoding="utf-8")
+    (project_root / "start-dev.ps1").write_text(
+        "param([switch]$Stop, [switch]$Quiet, [switch]$Background)\n"
+        "Write-Output \"native stop=$Stop quiet=$Quiet background=$Background\"\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+
+    environment = os.environ.copy()
+    environment["PATH"] = str(tmp_path)
+    result = subprocess.run(
+        [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(scripts_dir / "knowbase.ps1"), "gateway", "restart"],
+        cwd=project_root,
+        env=environment,
+        check=False,
+        capture_output=True,
+        encoding="utf-8",
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "native stop=True quiet=True background=False" in result.stdout
+    assert "native stop=False quiet=False background=True" in result.stdout
+
+
 def test_global_cli_shell_scripts_have_valid_posix_syntax():
     shell = shutil.which("sh")
     if not shell:

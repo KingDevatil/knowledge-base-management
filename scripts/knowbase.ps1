@@ -22,8 +22,9 @@ Knowbase CLI
   knowbase configure|config [参数]      打开或更新部署配置
   knowbase init [参数]                  非交互初始化部署配置
   knowbase health [--url URL] [--json] 查询 Gateway 健康状态
-  knowbase gateway start|stop|restart  单独管理已部署的 Gateway 容器
+  knowbase gateway start|stop|restart  单独管理 Gateway（自动识别 Docker/Windows 原生）
   knowbase gateway status|logs|health  查看 Gateway 状态、日志或健康
+  knowbase gateway start|stop|restart|status|logs [--native|--docker] 强制选择运行方式
   knowbase native start|stop|restart   管理 Windows 原生开发服务
   knowbase native status|logs          查看原生服务状态或日志
   knowbase cli install|uninstall|status 管理全局命令
@@ -144,6 +145,49 @@ function Assert-DockerCommand {
     return $true
 }
 
+function Test-DockerComposeAvailable {
+    if (-not (Get-Command docker -ErrorAction SilentlyContinue)) { return $false }
+    & docker compose version *> $null
+    return $LASTEXITCODE -eq 0
+}
+
+function Test-DockerGatewayRunning {
+    if (-not (Test-DockerComposeAvailable)) { return $false }
+    Push-Location $RootDir
+    try {
+        $containerId = (& docker compose -f docker-compose.yml ps -q mcp-gateway 2>$null | Select-Object -First 1)
+        return -not [string]::IsNullOrWhiteSpace([string]$containerId)
+    } finally {
+        Pop-Location
+    }
+}
+
+function Resolve-GatewayRuntime([string[]]$GatewayArgs) {
+    $forceNative = $false
+    $forceDocker = $false
+    $forwardArgs = [System.Collections.Generic.List[string]]::new()
+    foreach ($argument in $GatewayArgs) {
+        switch ($argument) {
+            "--native" { $forceNative = $true }
+            "--docker" { $forceDocker = $true }
+            default { $forwardArgs.Add($argument) }
+        }
+    }
+    if ($forceNative -and $forceDocker) {
+        throw "--native 与 --docker 不能同时使用。"
+    }
+    if ($forceNative) { return [pscustomobject]@{ Runtime = "native"; Arguments = @($forwardArgs) } }
+    if ($forceDocker) { return [pscustomobject]@{ Runtime = "docker"; Arguments = @($forwardArgs) } }
+
+    # Prefer an active container. Otherwise, a native config (or no Docker at
+    # all) means the Windows native launcher is the useful default.
+    if (Test-DockerGatewayRunning) { return [pscustomobject]@{ Runtime = "docker"; Arguments = @($forwardArgs) } }
+    if ((Test-Path -LiteralPath (Join-Path $RootDir ".env.local")) -or -not (Test-DockerComposeAvailable)) {
+        return [pscustomobject]@{ Runtime = "native"; Arguments = @($forwardArgs) }
+    }
+    return [pscustomobject]@{ Runtime = "docker"; Arguments = @($forwardArgs) }
+}
+
 function Invoke-Gateway([string[]]$GatewayArgs) {
     if ($GatewayArgs.Count -eq 0) {
         Write-Host "用法: knowbase gateway start|stop|restart|status|logs|health"
@@ -151,10 +195,16 @@ function Invoke-Gateway([string[]]$GatewayArgs) {
     }
     $action = $GatewayArgs[0].ToLowerInvariant()
     $extra = if ($GatewayArgs.Count -gt 1) { @($GatewayArgs[1..($GatewayArgs.Count - 1)]) } else { @() }
-    if ($action -eq "health") { return Invoke-Health $extra }
     if ($action -notin @("start", "stop", "restart", "status", "logs")) {
+        if ($action -eq "health") { return Invoke-Health $extra }
         Write-Host "[错误] 未知 Gateway 操作：$action" -ForegroundColor Red
         return 2
+    }
+    $runtime = Resolve-GatewayRuntime $extra
+    $extra = @($runtime.Arguments)
+    if ($runtime.Runtime -eq "native") {
+        Write-Host "[原生] 使用 Windows 原生服务管理 Gateway。" -ForegroundColor Cyan
+        return Invoke-Native (@($action) + $extra)
     }
     if (-not (Assert-DockerCommand)) { return 1 }
 
