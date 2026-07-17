@@ -209,6 +209,7 @@ class DocumentIngestionPipeline:
         context["path"] = DirectoryTree.validate_path(context.get("path", ""))
         header_metadata = extract_document_header_metadata(context["content"])
         context["header_tags"] = header_metadata.tags
+        context["header_entities"] = header_metadata.entities
         context["tags"] = merge_metadata_values(context.get("tags") or [], header_metadata.tags)
         context["entities"] = header_metadata.entities
 
@@ -252,6 +253,10 @@ class DocumentIngestionPipeline:
             "tags": context["tags"],
             "header_tags": context.get("header_tags", []),
             "entities": context.get("entities", []),
+            "header_entities": context.get("header_entities", []),
+            "metadata_overridden": False,
+            "tags_override": [],
+            "entities_override": [],
             "source_path": context["source_path"],
             "source_format": "markdown",
             "created_at": context["now"],

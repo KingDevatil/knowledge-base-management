@@ -74,6 +74,13 @@ class UpdateDocumentRequest(BaseModel):
     updated_by: str = Field(default="api", max_length=100)
 
 
+class UpdateDocumentMetadataRequest(BaseModel):
+    """Editable display/retrieval metadata that is kept separate from source text."""
+
+    tags: list[str] | str = Field(default_factory=list)
+    entities: list[str] | str = Field(default_factory=list)
+
+
 class SimilarDocumentsRequest(BaseModel):
     title: str = Field(default="", max_length=500)
     content: str = Field(..., min_length=1, max_length=MAX_CONTENT_LENGTH)

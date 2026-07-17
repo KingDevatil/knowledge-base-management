@@ -12,8 +12,13 @@ from document_conversion import (
     convert_uploaded_document,
     is_supported_document_filename,
 )
+from document_metadata import (
+    extract_document_header_metadata,
+    merge_metadata_values,
+    normalize_metadata_values,
+)
 from lock import WriteLockError
-from models import ReindexByPathRequest
+from models import ReindexByPathRequest, UpdateDocumentMetadataRequest
 from .helpers import require_admin, require_editor, get_current_user, check_path_access
 from .archive_security import (
     ArchiveValidationError,
@@ -30,6 +35,18 @@ def _upload_basename(filename: str) -> str:
 
 def _upload_title(filename: str) -> str:
     return os.path.splitext(_upload_basename(filename))[0] or "未命名文档"
+
+
+def _uploaded_metadata(content: str, manual_tags: list[str]) -> dict:
+    """Return the metadata that ingestion extracts for the upload-result editor."""
+
+    header = extract_document_header_metadata(content)
+    return {
+        "tags": merge_metadata_values(manual_tags, header.tags),
+        "entities": header.entities,
+        "extracted_tags": header.tags,
+        "extracted_entities": header.entities,
+    }
 
 
 # ---------- 入库任务 (admin only) ----------
@@ -105,7 +122,7 @@ async def api_batch_upload(
     user: dict = Depends(require_admin),
 ):
     tools = request.app.state.tools
-    tag_list = [t.strip() for t in tags.replace("，", ",").split(",") if t.strip()]
+    tag_list = normalize_metadata_values(tags)
     results = []
 
     for file in files:
@@ -124,6 +141,7 @@ async def api_batch_upload(
                 "status": "ok",
                 "doc_id": result["doc_id"],
                 "task_id": result.get("task_id", ""),
+                **_uploaded_metadata(content, tag_list),
             })
         except DocumentConversionError as e:
             results.append({"filename": file.filename, "status": "error", "reason": str(e)})
@@ -192,7 +210,7 @@ async def api_upload_archive(
             return JSONResponse({"error": "压缩包内没有 .md 或 .csv 文件"}, status_code=400)
 
         tools = request.app.state.tools
-        tag_list = [t.strip() for t in tags.replace("，", ",").split(",") if t.strip()]
+        tag_list = normalize_metadata_values(tags)
         results = []
         success = 0
 
@@ -224,6 +242,7 @@ async def api_upload_archive(
                     "status": "ok",
                     "doc_id": result["doc_id"],
                     "task_id": result.get("task_id", ""),
+                    **_uploaded_metadata(content_md, tag_list),
                 })
                 success += 1
             except WriteLockError:
@@ -308,7 +327,7 @@ async def upload_submit(
     user: dict = Depends(require_admin),
 ):
     tools = request.app.state.tools
-    tag_list = [t.strip() for t in tags.replace("，", ",").split(",") if t.strip()]
+    tag_list = normalize_metadata_values(tags)
     target_path = path or existing_path
     results = []
 
@@ -375,6 +394,39 @@ async def document_save(
     if path:
         return RedirectResponse(url=f"/admin/documents?path={path}", status_code=302)
     return RedirectResponse(url=f"/admin/documents/{doc_id}", status_code=302)
+
+
+# ---------- 文档标签 / 实体（正文外独立元数据） ----------
+
+@documents_router.post("/api/documents/{doc_id}/metadata")
+async def api_update_document_metadata(
+    request: Request,
+    doc_id: str,
+    body: UpdateDocumentMetadataRequest,
+    user: dict = Depends(require_editor),
+):
+    """Update tags/entities without rewriting the Markdown source document."""
+
+    kb = request.app.state.kb
+    doc = await kb._doc_index_get(doc_id)
+    if doc:
+        doc_path = doc.get("path", "")
+    else:
+        chunks = await kb.get_document_chunks(doc_id)
+        if not chunks:
+            raise HTTPException(status_code=404, detail="文档不存在")
+        doc_path = chunks[0].get("metadata", {}).get("path", "")
+
+    if not check_path_access(user, doc_path):
+        raise HTTPException(status_code=403, detail="无权编辑此文档元数据")
+
+    result = await request.app.state.tools.update_document_metadata(
+        doc_id=doc_id,
+        tags=normalize_metadata_values(body.tags),
+        entities=normalize_metadata_values(body.entities),
+        updated_by=user["username"],
+    )
+    return JSONResponse(result)
 
 
 # ---------- 文档删除 (admin only) ----------

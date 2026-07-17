@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from config import get_settings
 from document_metadata import (
     extract_document_header_metadata,
+    metadata_override_enabled,
     merge_metadata_values,
     metadata_value_key,
     normalize_metadata_values,
@@ -74,6 +75,25 @@ class KnowledgeTools(KnowledgeToolsReader):
             await progress_callback(progress, message)
         except Exception:
             return
+
+    @staticmethod
+    def _metadata_override_values(metadata: dict) -> tuple[bool, list[str], list[str]]:
+        """Return the durable, independently edited tags/entities when present."""
+
+        if not metadata_override_enabled(metadata.get("metadata_overridden")):
+            return False, [], []
+
+        raw_tags = metadata.get("tags_override")
+        raw_entities = metadata.get("entities_override")
+        return (
+            True,
+            normalize_metadata_values(
+                metadata.get("tags", []) if raw_tags is None else raw_tags
+            ),
+            normalize_metadata_values(
+                metadata.get("entities", []) if raw_entities is None else raw_entities
+            ),
+        )
 
     # ---------- 目录管理（需写锁）----------
 
@@ -340,6 +360,10 @@ class KnowledgeTools(KnowledgeToolsReader):
                 "tags": old_metadata.get("tags", ""),
                 "header_tags": old_metadata.get("header_tags", ""),
                 "entities": old_metadata.get("entities", ""),
+                "header_entities": old_metadata.get("header_entities", ""),
+                "metadata_overridden": old_metadata.get("metadata_overridden", False),
+                "tags_override": old_metadata.get("tags_override", ""),
+                "entities_override": old_metadata.get("entities_override", ""),
                 "source_path": old_metadata.get("source_path", ""),
                 "source_format": old_metadata.get("source_format", "markdown"),
                 "created_at": old_metadata.get("created_at", ""),
@@ -373,7 +397,14 @@ class KnowledgeTools(KnowledgeToolsReader):
                 "total_chunks": len(chunks),
                 "__write_status": "staging",
             }
-            for field in ("tags", "header_tags", "entities"):
+            for field in (
+                "tags",
+                "header_tags",
+                "entities",
+                "header_entities",
+                "tags_override",
+                "entities_override",
+            ):
                 if field in item and isinstance(item[field], list):
                     item[field] = ",".join(item[field])
             metadatas.append(item)
@@ -480,6 +511,7 @@ class KnowledgeTools(KnowledgeToolsReader):
         tags = merge_metadata_values(tags or [], header_metadata.tags)
         header_tags = header_metadata.tags
         entities = header_metadata.entities
+        header_entities = header_metadata.entities
         await self._snapshot_document_version(doc_id, "before_update", updated_by)
         now = datetime.now(timezone.utc).isoformat()
         size_label = content_size_kb(content)
@@ -495,6 +527,10 @@ class KnowledgeTools(KnowledgeToolsReader):
         old_path = old_meta.get("path", "")
         old_title = old_meta.get("title", "")
         old_tags = normalize_metadata_values(old_meta.get("tags", []))
+        metadata_overridden, tags_override, entities_override = self._metadata_override_values(old_meta)
+        if metadata_overridden:
+            tags = tags_override
+            entities = entities_override
 
         # 未传入新路径/标签时保留原值，避免 Agent 遗漏参数导致数据丢失
         new_path = DirectoryTree.validate_path(path) if path else old_path
@@ -575,6 +611,10 @@ class KnowledgeTools(KnowledgeToolsReader):
                     "tags": tags,
                     "header_tags": header_tags,
                     "entities": entities,
+                    "header_entities": header_entities,
+                    "metadata_overridden": metadata_overridden,
+                    "tags_override": tags_override,
+                    "entities_override": entities_override,
                     "source_path": staging_source_path,
                     "source_format": "markdown",
                     "created_at": old_meta.get("created_at", now),
@@ -599,6 +639,10 @@ class KnowledgeTools(KnowledgeToolsReader):
                         "tags": tags,
                         "header_tags": header_tags,
                         "entities": entities,
+                        "header_entities": header_entities,
+                        "metadata_overridden": metadata_overridden,
+                        "tags_override": tags_override,
+                        "entities_override": entities_override,
                         "source_path": source_path,
                         "source_format": "markdown",
                         "created_at": old_meta.get("created_at", now),
@@ -645,6 +689,100 @@ class KnowledgeTools(KnowledgeToolsReader):
         await self._notify_progress(progress_callback, 100, "文档更新完成")
 
         return {"success": True, "doc_id": doc_id, "message": "文档更新成功"}
+
+    async def update_document_metadata(
+        self,
+        doc_id: str,
+        tags: list[str] | str | None = None,
+        entities: list[str] | str | None = None,
+        updated_by: str = "system",
+    ) -> dict:
+        """Update retrieval/graph metadata without changing document source or chunks.
+
+        The resulting values are stored as a durable manual override. Reindexing
+        refreshes the source-derived header metadata for reference but keeps this
+        override active, so a graph rebuilt afterwards sees the edited values.
+        """
+
+        if not doc_id:
+            raise HTTPException(status_code=400, detail="文档 ID 不能为空")
+
+        normalized_tags = normalize_metadata_values(tags or [])
+        normalized_entities = normalize_metadata_values(entities or [])
+        chunks = await self.kb.get_document_chunks(doc_id)
+        if not chunks:
+            raise HTTPException(status_code=404, detail=f"文档 (doc_id={doc_id}) 不存在")
+
+        now = datetime.now(timezone.utc).isoformat()
+        old_metadatas = [dict(chunk.get("metadata", {})) for chunk in chunks]
+        new_metadatas: list[dict] = []
+        for metadata in old_metadatas:
+            new_metadatas.append({
+                **metadata,
+                "tags": ",".join(normalized_tags),
+                "entities": ",".join(normalized_entities),
+                "metadata_overridden": True,
+                "tags_override": ",".join(normalized_tags),
+                "entities_override": ",".join(normalized_entities),
+                "updated_at": now,
+                "updated_by": updated_by,
+            })
+
+        try:
+            async with self.write_lock:
+                chunk_ids = [chunk["id"] for chunk in chunks]
+                try:
+                    self.kb.collection.update(ids=chunk_ids, metadatas=new_metadatas)
+
+                    current = await self.kb._doc_index_get(doc_id) or {}
+                    updated_index = {
+                        **current,
+                        "doc_id": doc_id,
+                        "title": current.get("title", old_metadatas[0].get("title", "")),
+                        "path": current.get("path", old_metadatas[0].get("path", "")),
+                        "tags": normalized_tags,
+                        "header_tags": normalize_metadata_values(
+                            current.get("header_tags", old_metadatas[0].get("header_tags", []))
+                        ),
+                        "entities": normalized_entities,
+                        "header_entities": normalize_metadata_values(
+                            current.get("header_entities", old_metadatas[0].get("header_entities", []))
+                        ),
+                        "metadata_overridden": True,
+                        "tags_override": normalized_tags,
+                        "entities_override": normalized_entities,
+                        "chunk_count": current.get("chunk_count", len(chunks)),
+                        "created_at": current.get("created_at", old_metadatas[0].get("created_at", "")),
+                        "updated_at": now,
+                    }
+                    await self.kb._doc_index_set(doc_id, updated_index)
+                except Exception:
+                    try:
+                        self.kb.collection.update(ids=chunk_ids, metadatas=old_metadatas)
+                    except Exception:
+                        logger.exception(
+                            "Failed to restore metadata after metadata update failure: doc_id=%s",
+                            doc_id,
+                        )
+                    raise
+        except WriteLockError as exc:
+            raise self._write_lock_conflict(
+                "写入锁被占用，文档元数据暂时无法更新，请稍后重试",
+                exc,
+            )
+
+        await self.refresh_keyword_document_safely(doc_id, "update_document_metadata")
+        logger.info("Document metadata updated: doc_id=%s", doc_id)
+        return {
+            "success": True,
+            "doc_id": doc_id,
+            "tags": normalized_tags,
+            "entities": normalized_entities,
+            "metadata_overridden": True,
+            "graph_rebuild_required": True,
+            "updated_at": now,
+            "message": "标签和实体已保存，文档正文未修改；请重建知识图谱以刷新关联。",
+        }
 
     async def delete_document(self, doc_id: str, deleted_by: str = "system") -> dict:
         """删除文档"""
@@ -798,6 +936,7 @@ class KnowledgeTools(KnowledgeToolsReader):
         source_path = meta.get("source_path", "")
         old_tags = normalize_metadata_values(meta.get("tags", []))
         old_header_tags = normalize_metadata_values(meta.get("header_tags", []))
+        metadata_overridden, tags_override, entities_override = self._metadata_override_values(meta)
 
         try:
             if source_path:
@@ -816,16 +955,21 @@ class KnowledgeTools(KnowledgeToolsReader):
             )
 
         header_metadata = extract_document_header_metadata(content)
-        if meta.get("header_tags") is None:
-            manual_tags = old_tags
+        if metadata_overridden:
+            tags = tags_override
+            entities = entities_override
+        elif meta.get("header_tags") is None:
+            tags = merge_metadata_values(old_tags, header_metadata.tags)
+            entities = header_metadata.entities
         else:
             old_header_keys = {metadata_value_key(tag) for tag in old_header_tags}
             manual_tags = [
                 tag for tag in old_tags if metadata_value_key(tag) not in old_header_keys
             ]
-        tags = merge_metadata_values(manual_tags, header_metadata.tags)
+            tags = merge_metadata_values(manual_tags, header_metadata.tags)
+            entities = header_metadata.entities
         header_tags = header_metadata.tags
-        entities = header_metadata.entities
+        header_entities = header_metadata.entities
 
         size_label = content_size_kb(content)
         new_chunks = chunk_markdown(content, self.settings.CHUNK_SIZE, self.settings.CHUNK_OVERLAP)
@@ -851,6 +995,10 @@ class KnowledgeTools(KnowledgeToolsReader):
                 "tags": tags,
                 "header_tags": header_tags,
                 "entities": entities,
+                "header_entities": header_entities,
+                "metadata_overridden": metadata_overridden,
+                "tags_override": tags_override,
+                "entities_override": entities_override,
                 "source_path": source_path,
                 "source_format": "markdown",
                 "created_at": meta.get("created_at", now),

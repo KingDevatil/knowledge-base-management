@@ -3,7 +3,7 @@ import json
 from typing import List, Optional
 import chromadb
 
-from document_metadata import normalize_metadata_values
+from document_metadata import metadata_override_enabled, normalize_metadata_values
 from models import SearchResult, DocumentInfo
 
 # Redis key for document index cache
@@ -103,6 +103,10 @@ class KnowledgeBase:
                     "tags": normalize_metadata_values(meta.get("tags", "")),
                     "header_tags": normalize_metadata_values(meta.get("header_tags", "")),
                     "entities": normalize_metadata_values(meta.get("entities", "")),
+                    "header_entities": normalize_metadata_values(meta.get("header_entities", "")),
+                    "metadata_overridden": metadata_override_enabled(meta.get("metadata_overridden")),
+                    "tags_override": normalize_metadata_values(meta.get("tags_override", "")),
+                    "entities_override": normalize_metadata_values(meta.get("entities_override", "")),
                     "chunk_count": 0,
                     "created_at": meta.get("created_at", ""),
                     "updated_at": meta.get("updated_at", ""),
@@ -142,6 +146,10 @@ class KnowledgeBase:
             "tags": normalize_metadata_values(metadata.get("tags", [])),
             "header_tags": normalize_metadata_values(metadata.get("header_tags", [])),
             "entities": normalize_metadata_values(metadata.get("entities", [])),
+            "header_entities": normalize_metadata_values(metadata.get("header_entities", [])),
+            "metadata_overridden": metadata_override_enabled(metadata.get("metadata_overridden")),
+            "tags_override": normalize_metadata_values(metadata.get("tags_override", [])),
+            "entities_override": normalize_metadata_values(metadata.get("entities_override", [])),
         }
         ids = [f"{doc_id}#chunk-{i}" for i in range(len(chunks))]
         metadatas = [{
@@ -153,7 +161,14 @@ class KnowledgeBase:
         } for i in range(len(chunks))]
 
         for m in metadatas:
-            for field in ("tags", "header_tags", "entities"):
+            for field in (
+                "tags",
+                "header_tags",
+                "entities",
+                "header_entities",
+                "tags_override",
+                "entities_override",
+            ):
                 if field in m and isinstance(m[field], list):
                     m[field] = ",".join(m[field])
 
@@ -172,6 +187,10 @@ class KnowledgeBase:
             "tags": normalized_metadata["tags"],
             "header_tags": normalized_metadata["header_tags"],
             "entities": normalized_metadata["entities"],
+            "header_entities": normalized_metadata["header_entities"],
+            "metadata_overridden": normalized_metadata["metadata_overridden"],
+            "tags_override": normalized_metadata["tags_override"],
+            "entities_override": normalized_metadata["entities_override"],
             "chunk_count": len(chunks),
             "created_at": normalized_metadata.get("created_at", ""),
             "updated_at": normalized_metadata.get("updated_at", ""),

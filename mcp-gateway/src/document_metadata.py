@@ -127,6 +127,21 @@ def entity_node_id(entity: str) -> str:
     return f"entity:{digest}"
 
 
+def metadata_override_enabled(value: Any) -> bool:
+    """Return whether a persisted manual metadata override is active.
+
+    Chroma and Redis normally preserve booleans, but old/manual data can contain
+    a string or numeric value. Keep the conversion explicit so ``"false"`` is
+    never treated as truthy by accident.
+    """
+
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value == 1
+    return str(value or "").strip().casefold() in {"1", "true", "yes", "on"}
+
+
 def _strip_header_prefix(line: str) -> str:
     value = line
     while value.startswith(">"):

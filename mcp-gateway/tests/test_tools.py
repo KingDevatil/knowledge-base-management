@@ -1014,6 +1014,88 @@ Tags: deployment, internal
         assert tools.cleanup_tasks[cleanup_task_id]["status"] == "succeeded"
 
 
+class TestKnowledgeToolsMetadata:
+    """Metadata-only updates must stay independent from the source document."""
+
+    @pytest.mark.asyncio
+    async def test_metadata_update_preserves_source_and_survives_reindex(self):
+        tools, kb, store = _make_tools()
+        source = """# Gateway
+
+标签：自动标签
+核心实体：MCP Gateway、Chroma
+
+正文内容不会被元数据编辑改写。
+"""
+        added = await tools.add_document(
+            title="Gateway",
+            content=source,
+            path="docs",
+            tags=["上传标签"],
+        )
+        doc_id = added["doc_id"]
+
+        result = await tools.update_document_metadata(
+            doc_id=doc_id,
+            tags="人工标签；运维",
+            entities=["MCP Gateway", "Redis"],
+            updated_by="admin",
+        )
+
+        assert result["graph_rebuild_required"] is True
+        assert store.get_source(doc_id, "docs") == source
+        document = await tools.get_document(doc_id)
+        assert document["tags"] == ["人工标签", "运维"]
+        assert document["entities"] == ["MCP Gateway", "Redis"]
+
+        metadata = (await kb.get_document_chunks(doc_id))[0]["metadata"]
+        assert metadata["metadata_overridden"] is True
+        assert metadata["tags_override"] == "人工标签,运维"
+        assert metadata["entities_override"] == "MCP Gateway,Redis"
+
+        await tools.reindex_document(doc_id)
+
+        reindexed = await tools.get_document(doc_id)
+        assert reindexed["tags"] == ["人工标签", "运维"]
+        assert reindexed["entities"] == ["MCP Gateway", "Redis"]
+        assert store.get_source(doc_id, "docs") == source
+
+        from kb_graph import KnowledgeGraphBuilder
+
+        graph_docs, _ = await kb.list_documents(limit=100, offset=0)
+        builder = KnowledgeGraphBuilder.__new__(KnowledgeGraphBuilder)
+        extraction = builder._build_extraction(
+            [document.model_dump() for document in graph_docs],
+            semantic_threshold=0.0,
+        )
+        entity_labels = {
+            node["label"]
+            for node in extraction["nodes"]
+            if node.get("file_type") == "entity"
+        }
+        assert "Redis" in entity_labels
+        assert "Chroma" not in entity_labels
+
+    @pytest.mark.asyncio
+    async def test_metadata_update_allows_empty_override_values(self):
+        tools, _kb, _store = _make_tools()
+        added = await tools.add_document(
+            title="Gateway",
+            content="# Gateway\n\n标签：自动标签\n核心实体：MCP Gateway",
+        )
+
+        await tools.update_document_metadata(
+            doc_id=added["doc_id"],
+            tags=[],
+            entities=[],
+        )
+        await tools.reindex_document(added["doc_id"])
+
+        document = await tools.get_document(added["doc_id"])
+        assert document["tags"] == []
+        assert document["entities"] == []
+
+
 class TestKnowledgeToolsVersionsAndUpsert:
     @pytest.mark.asyncio
     async def test_update_creates_version_and_restore_rolls_back(self, tmp_path):

@@ -17,10 +17,12 @@ from admin.routes_documents_api import (
     api_ingestion_tasks,
     api_retry_cleanup_task,
     api_retry_ingestion_task,
+    api_update_document_metadata,
     api_preview_archive,
     api_upload_archive,
     upload_submit,
 )
+from models import UpdateDocumentMetadataRequest
 
 
 class FakeTools:
@@ -29,6 +31,7 @@ class FakeTools:
         self.retry_calls = []
         self.cleanup_tasks = {}
         self.cleanup_retry_calls = []
+        self.metadata_calls = []
 
     async def import_markdown(self, title, markdown_content, path="", tags=None, created_by="system"):
         self.calls.append({
@@ -54,10 +57,36 @@ class FakeTools:
         self.cleanup_retry_calls.append(task_id)
         return {"success": True, "task_id": task_id, "status": "succeeded"}
 
+    async def update_document_metadata(self, doc_id, tags, entities, updated_by="system"):
+        self.metadata_calls.append({
+            "doc_id": doc_id,
+            "tags": tags,
+            "entities": entities,
+            "updated_by": updated_by,
+        })
+        return {
+            "success": True,
+            "doc_id": doc_id,
+            "tags": tags,
+            "entities": entities,
+            "graph_rebuild_required": True,
+        }
 
-def make_request(tools):
+
+class FakeDocumentIndex:
+    def __init__(self, docs):
+        self.docs = docs
+
+    async def _doc_index_get(self, doc_id):
+        return self.docs.get(doc_id)
+
+    async def get_document_chunks(self, doc_id):
+        return []
+
+
+def make_request(tools, kb=None):
     return SimpleNamespace(
-        app=SimpleNamespace(state=SimpleNamespace(tools=tools)),
+        app=SimpleNamespace(state=SimpleNamespace(tools=tools, kb=kb)),
         headers={"accept": "application/json"},
     )
 
@@ -86,6 +115,53 @@ async def test_api_batch_upload_returns_task_ids():
     assert payload["tasks"] == ["task-1"]
     assert tools.calls[0]["path"] == "docs"
     assert tools.calls[0]["tags"] == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_api_batch_upload_returns_extracted_tags_and_entities_for_editor():
+    tools = FakeTools()
+
+    response = await api_batch_upload(
+        request=make_request(tools),
+        files=[make_upload(
+            "gateway.md",
+            "# Gateway\n\n标签：部署、内部\n核心实体：MCP Gateway、Chroma\n",
+        )],
+        path="docs",
+        tags="manual",
+        user={"username": "admin"},
+    )
+    result = json.loads(response.body)["results"][0]
+
+    assert result["tags"] == ["manual", "部署", "内部"]
+    assert result["entities"] == ["MCP Gateway", "Chroma"]
+    assert result["extracted_tags"] == ["部署", "内部"]
+    assert result["extracted_entities"] == ["MCP Gateway", "Chroma"]
+
+
+@pytest.mark.asyncio
+async def test_api_update_document_metadata_delegates_without_touching_source():
+    tools = FakeTools()
+    kb = FakeDocumentIndex({"doc-1": {"doc_id": "doc-1", "path": "docs"}})
+
+    response = await api_update_document_metadata(
+        request=make_request(tools, kb),
+        doc_id="doc-1",
+        body=UpdateDocumentMetadataRequest(
+            tags="部署；运维",
+            entities="MCP Gateway、Redis",
+        ),
+        user={"username": "admin", "role": "admin"},
+    )
+    payload = json.loads(response.body)
+
+    assert payload["graph_rebuild_required"] is True
+    assert tools.metadata_calls == [{
+        "doc_id": "doc-1",
+        "tags": ["部署", "运维"],
+        "entities": ["MCP Gateway", "Redis"],
+        "updated_by": "admin",
+    }]
 
 
 @pytest.mark.asyncio
