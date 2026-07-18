@@ -4,8 +4,13 @@ import hashlib
 
 
 def content_hash(content: str) -> str:
-    """Calculate SHA256 hash of content for change detection."""
-    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+    """Calculate a newline-stable SHA256 hash for change detection.
+
+    Browsers submit textarea newlines as CRLF, while stored Markdown normally
+    uses LF. Treat those representations as the same document.
+    """
+    normalized = content.replace("\r\n", "\n").replace("\r", "\n")
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 def content_size_kb(content: str) -> str:

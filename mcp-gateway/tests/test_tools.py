@@ -1,5 +1,6 @@
 """Unit tests for helpers, KnowledgeToolsReader, and KnowledgeTools."""
 import asyncio
+import hashlib
 import sys
 import os
 
@@ -18,6 +19,7 @@ from document_versions import DocumentVersionStore
 from tools_reader import KnowledgeToolsReader
 from tools import KnowledgeTools
 from lock import WriteLockError
+from local_store import LocalFileStore
 
 
 # ==================== Mock Services ====================
@@ -330,6 +332,9 @@ class TestHelpers:
         h2 = content_hash("hello world")
         assert h1 == h2
         assert len(h1) == 64  # SHA256 hex
+
+    def test_content_hash_treats_browser_crlf_as_same_markdown(self):
+        assert content_hash("# Title\r\n\r\nBody") == content_hash("# Title\n\nBody")
 
     def test_content_hash_different(self):
         """Different inputs must produce different hashes."""
@@ -659,6 +664,16 @@ class TestKnowledgeToolsReader:
         assert result["title"] == "Test Doc"
         assert result["doc_id"] == "doc_1"
         assert result["path"] == "test/path"
+
+    @pytest.mark.asyncio
+    async def test_get_document_falls_back_when_source_path_metadata_is_stale(self, reader):
+        reader.kb.collection._docs["doc_1"]["metadata"]["source_path"] = (
+            "documents/stale/doc_1/source.md"
+        )
+
+        result = await reader.get_document("doc_1")
+
+        assert result["content"] == "# Test Content"
 
     @pytest.mark.asyncio
     async def test_get_document_not_found(self, reader):
@@ -1001,6 +1016,62 @@ Tags: deployment, internal
 
         assert result["path_only"] is True
         assert (await tools.get_document(added["doc_id"]))["path"] == ""
+        tools.embedder.embed.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_path_move_uses_current_path_when_legacy_source_pointer_is_stale(self):
+        tools, kb, _store = _make_tools()
+        source = "# Legacy source pointer\n\nContent stays unchanged."
+        added = await tools.add_document(
+            title="Legacy", content=source, path="current/path", tags=[],
+        )
+        doc_id = added["doc_id"]
+        await kb._redis.delete(f"content_hash:{doc_id}")
+        kb.collection._docs[doc_id]["metadata"]["source_path"] = (
+            f"documents/old/path/{doc_id}/source.md"
+        )
+        tools.embedder.embed = AsyncMock(
+            side_effect=AssertionError("stale source metadata must not force re-embedding")
+        )
+
+        result = await tools.update_document(
+            doc_id=doc_id,
+            title="Legacy",
+            content=source,
+            path="new/path",
+            tags=[],
+            path_explicit=True,
+        )
+
+        assert result["path_only"] is True
+        tools.embedder.embed.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_path_move_accepts_legacy_non_normalized_content_hash(self):
+        tools, kb, _store = _make_tools()
+        source = "# Legacy hash\n\nSame browser content."
+        added = await tools.add_document(
+            title="Legacy hash", content=source, path="old/path", tags=[],
+        )
+        doc_id = added["doc_id"]
+        legacy_crlf_hash = hashlib.sha256(
+            source.replace("\n", "\r\n").encode("utf-8")
+        ).hexdigest()
+        await kb._redis.set(f"content_hash:{doc_id}", legacy_crlf_hash)
+        tools.embedder.embed = AsyncMock(
+            side_effect=AssertionError("legacy hashes must fall back to source comparison")
+        )
+
+        result = await tools.update_document(
+            doc_id=doc_id,
+            title="Legacy hash",
+            content=source.replace("\n", "\r\n"),
+            path="new/path",
+            tags=[],
+            path_explicit=True,
+        )
+
+        assert result["path_only"] is True
         tools.embedder.embed.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -1430,6 +1501,20 @@ class TestKnowledgeToolsDirectory:
         result = await tools.delete_directory("empty")
         assert result["success"] is True
         assert result["moved_to_root"] == 0
+
+
+def test_local_store_move_replaces_stale_destination_source(tmp_path):
+    store = LocalFileStore(str(tmp_path))
+    doc_id = "doc-with-stale-copy"
+    store.save_source(doc_id, "stale root copy", "")
+    store.save_source(doc_id, "current source", "nested")
+
+    source_path = store.move_source(doc_id, "nested", "")
+
+    assert source_path == f"documents/{doc_id}/source.md"
+    assert store.get_source(doc_id, "") == "current source"
+    with pytest.raises(FileNotFoundError):
+        store.get_source(doc_id, "nested")
 
 
 # ==================== Integration-like Edge Cases ====================

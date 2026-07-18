@@ -314,12 +314,8 @@ async def document_view(request: Request, doc_id: str, user: dict = Depends(get_
 
     source_path = meta.get("source_path", "")
 
-    try:
-        if source_path:
-            content = source_store.get_source_by_full_path(source_path)
-        else:
-            content = source_store.get_source(doc_id, doc_path)
-    except Exception:
+    content = request.app.state.tools._read_source_content(doc_id, doc_path, source_path)
+    if not content:
         content = "\n\n".join(chunk.get("content", "") for chunk in chunks)
 
     html_content, toc_html = _render_document_markdown(content)
@@ -363,12 +359,12 @@ async def document_edit_page(request: Request, doc_id: str, user: dict = Depends
 
     source_path = meta.get("source_path", "")
 
-    try:
-        if source_path:
-            content = source_store.get_source_by_full_path(source_path)
-        else:
-            content = source_store.get_source(doc_id, meta.get("path", ""))
-    except Exception:
+    content = request.app.state.tools._read_source_content(
+        doc_id,
+        meta.get("path", ""),
+        source_path,
+    )
+    if not content:
         content = "\n\n".join(chunk.get("content", "") for chunk in chunks)
 
     return templates.TemplateResponse(request, "document_edit.html", {

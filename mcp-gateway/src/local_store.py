@@ -82,7 +82,7 @@ class LocalFileStore:
         with self._lock:
             os.makedirs(os.path.dirname(new_full), exist_ok=True)
             if os.path.exists(old_full):
-                os.rename(old_full, new_full)
+                os.replace(old_full, new_full)
         return new_object
 
     def list_all_documents(self) -> List[dict]:

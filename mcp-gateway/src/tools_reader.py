@@ -531,6 +531,26 @@ class KnowledgeToolsReader:
         tree = DirectoryTree.build_from_metadata(metadatas)
         return {"tree": tree}
 
+    def _read_source_content(self, doc_id: str, path: str, source_path: str = "") -> str:
+        """Read source content, tolerating legacy stale ``source_path`` metadata."""
+        if source_path:
+            try:
+                content = self.source_store.get_source_by_full_path(source_path) or ""
+                if content:
+                    return content
+            except Exception as exc:
+                logger.warning(
+                    "Failed to read source_path for doc_id=%s; trying current document path: %s",
+                    doc_id,
+                    exc,
+                )
+
+        try:
+            return self.source_store.get_source(doc_id, path) or ""
+        except Exception as exc:
+            logger.warning("Failed to read source content for doc_id=%s: %s", doc_id, exc)
+            return ""
+
     async def get_document(self, doc_id: str) -> dict:
         """Get full document info including content, tags, and chunks."""
         if not doc_id:
@@ -552,13 +572,8 @@ class KnowledgeToolsReader:
             source_path = chunks[0]["metadata"].get("source_path", "")
 
         if chunks:
-            try:
-                if source_path:
-                    content = self.source_store.get_source_by_full_path(source_path) or ""
-                else:
-                    content = self.source_store.get_source(doc_id, path) or ""
-            except Exception as e:
-                logger.warning(f"Failed to read source content for doc_id={doc_id}: {e}")
+            content = self._read_source_content(doc_id, path, source_path)
+            if not content:
                 content = "\n\n".join(ch.get("content", "") for ch in chunks)
 
         chunk_list = []

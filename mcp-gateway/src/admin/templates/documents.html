@@ -38,6 +38,17 @@
 </header>
 
 <div class="px-6 py-5">
+    {% if request.query_params.get('save_status') == 'moved' %}
+    <div id="save-success-banner" class="mb-4 px-4 py-3 rounded-lg border border-emerald-200 dark:border-emerald-500/20 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 text-sm flex items-center gap-2">
+        <i data-lucide="check-circle-2" class="w-4 h-4 flex-shrink-0"></i>
+        <span>目录已更新，正文、切片和向量保持不变。</span>
+    </div>
+    {% elif request.query_params.get('save_status') == 'saved' %}
+    <div id="save-success-banner" class="mb-4 px-4 py-3 rounded-lg border border-emerald-200 dark:border-emerald-500/20 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 text-sm flex items-center gap-2">
+        <i data-lucide="check-circle-2" class="w-4 h-4 flex-shrink-0"></i>
+        <span>文档已保存。</span>
+    </div>
+    {% endif %}
     <!-- Breadcrumb + count -->
     <div class="flex items-center justify-between mb-4">
         <nav class="flex items-center gap-1.5 text-sm">
@@ -217,4 +228,17 @@
         </div>
     </div>
 </div>
+{% if request.query_params.get('save_status') == 'moved' %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    showToast('目录已更新，正文、切片和向量保持不变', 'success');
+});
+</script>
+{% elif request.query_params.get('save_status') == 'saved' %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    showToast('文档已保存', 'success');
+});
+</script>
+{% endif %}
 {% endblock %}

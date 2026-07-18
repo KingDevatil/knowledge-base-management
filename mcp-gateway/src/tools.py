@@ -585,18 +585,15 @@ class KnowledgeTools(KnowledgeToolsReader):
         old_c_hash = await self.kb.get_doc_content_hash(doc_id)
         old_source_content = ""
         content_unchanged = bool(old_c_hash and new_c_hash == old_c_hash)
-        if not old_c_hash:
-            try:
-                old_source_path = old_meta.get("source_path", "")
-                if old_source_path:
-                    old_source_content = self.source_store.get_source_by_full_path(old_source_path) or ""
-                else:
-                    old_source_content = self.source_store.get_source(doc_id, old_path) or ""
-                content_unchanged = bool(
-                    old_source_content and new_c_hash == content_hash(old_source_content)
-                )
-            except Exception:
-                pass
+        if not content_unchanged:
+            old_source_content = self._read_source_content(
+                doc_id,
+                old_path,
+                old_meta.get("source_path", ""),
+            )
+            content_unchanged = bool(
+                old_source_content and new_c_hash == content_hash(old_source_content)
+            )
 
         metadata_unchanged = title == old_title and sorted(tags) == sorted(old_tags)
         changeless = new_path == old_path and metadata_unchanged and content_unchanged
@@ -654,13 +651,7 @@ class KnowledgeTools(KnowledgeToolsReader):
 
         old_source_path = old_meta.get("source_path", "")
         if not old_source_content:
-            try:
-                if old_source_path:
-                    old_source_content = self.source_store.get_source_by_full_path(old_source_path) or ""
-                else:
-                    old_source_content = self.source_store.get_source(doc_id, old_path) or ""
-            except Exception:
-                old_source_content = ""
+            old_source_content = self._read_source_content(doc_id, old_path, old_source_path)
 
         chunks = chunk_markdown(content, self.settings.CHUNK_SIZE, self.settings.CHUNK_OVERLAP)
         if not chunks:
@@ -717,7 +708,7 @@ class KnowledgeTools(KnowledgeToolsReader):
             async with self.write_lock:
                 await self._notify_progress(progress_callback, 75, "替换文档索引")
                 try:
-                    if old_path and old_path != new_path:
+                    if old_path != new_path:
                         self.source_store.move_source(doc_id, old_path, new_path)
                     source_path = self.source_store.save_source(doc_id, content, new_path)
                     await self.kb.mark_doc_updating(doc_id)

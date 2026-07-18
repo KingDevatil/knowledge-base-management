@@ -375,7 +375,7 @@ async def document_save(
             if not check_path_access(user, doc_path):
                 raise HTTPException(status_code=403, detail="无权编辑此文档")
         try:
-            await tools.update_document(
+            save_result = await tools.update_document(
                 doc_id=doc_id, title=title, content=content,
                 path=path, tags=tag_list, updated_by=user["username"],
                 path_explicit=True,
@@ -389,12 +389,17 @@ async def document_save(
                 tags=tag_list, created_by=user["username"],
             )
             doc_id = result.get("doc_id", "")
+            save_result = result
         except WriteLockError:
             raise HTTPException(status_code=423, detail="写入锁被占用")
 
+    save_status = "moved" if save_result.get("path_only") else "saved"
     if path:
-        return RedirectResponse(url=f"/admin/documents?path={path}", status_code=302)
-    return RedirectResponse(url=f"/admin/documents/{doc_id}", status_code=302)
+        return RedirectResponse(
+            url=f"/admin/documents?path={quote(path)}&save_status={save_status}",
+            status_code=302,
+        )
+    return RedirectResponse(url=f"/admin/documents?save_status={save_status}", status_code=302)
 
 
 # ---------- 文档标签 / 实体（正文外独立元数据） ----------
