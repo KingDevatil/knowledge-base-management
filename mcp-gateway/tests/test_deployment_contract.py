@@ -386,6 +386,11 @@ def test_windows_cli_preserves_console_handles_for_interactive_deployment():
     )
     assert direct_invocation in router
     assert f"{direct_invocation} | Out-Host" not in router
+    assert "Start-Process -FilePath $PowerShellExecutable -ArgumentList $argumentList" in router
+    assert "-NoNewWindow -PassThru" in router
+    assert "$process.WaitForExit()" in router
+    assert "-NoNewWindow -Wait -PassThru" not in router
+    assert "$NativeScript @NativeArgs | Out-Host" not in router
     assert "$exitCode = switch ($command)" not in router
     assert "$script:DeploymentExitCode = $LASTEXITCODE" in router
 

@@ -48,8 +48,22 @@ function Invoke-Deployment([string]$Action, [string[]]$ForwardArgs = @()) {
 }
 
 function Invoke-NativeScript([string[]]$NativeArgs) {
-    & $PowerShellExecutable -NoProfile -ExecutionPolicy Bypass -File $NativeScript @NativeArgs | Out-Host
-    return $LASTEXITCODE
+    # Keep native background launchers off PowerShell pipelines. Chroma/MinIO
+    # can inherit the pipeline handle and keep `knowbase native start` waiting
+    # after the launcher itself has already exited.
+    $argumentList = @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", "`"$NativeScript`""
+    ) + $NativeArgs
+    $process = Start-Process -FilePath $PowerShellExecutable -ArgumentList $argumentList `
+        -NoNewWindow -PassThru
+    # Start-Process -Wait follows the whole descendant tree on Windows. The
+    # native launcher intentionally leaves Gateway/Chroma/MinIO running, so
+    # wait only for the direct launcher process instead.
+    $process.WaitForExit()
+    $process.Refresh()
+    return [int]$process.ExitCode
 }
 
 function Test-HealthEndpoint([string]$Url = $DefaultHealthUrl) {
