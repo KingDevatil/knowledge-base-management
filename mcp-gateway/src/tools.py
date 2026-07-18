@@ -167,9 +167,23 @@ class KnowledgeTools(KnowledgeToolsReader):
             raise HTTPException(status_code=400, detail="不能重命名根目录")
         if old_path == new_path:
             return {"success": True, "moved": 0}
+        if new_path.startswith(old_path + "/"):
+            raise HTTPException(status_code=400, detail="目录不能移动到自身的子目录")
 
         async with self.write_lock:
             all_docs = await self.kb._doc_index_all()
+            dirs = _load_dirs()
+            existing_paths = set(dirs)
+            for doc in all_docs:
+                parts = DirectoryTree.validate_path(doc.get("path", "")).split("/")
+                existing_paths.update("/".join(parts[:i]) for i in range(1, len(parts) + 1))
+            paths_outside_source = {
+                path for path in existing_paths
+                if path != old_path and not path.startswith(old_path + "/")
+            }
+            if new_path in paths_outside_source:
+                raise HTTPException(status_code=409, detail="目标目录已存在")
+
             matching_docs = [
                 d for d in all_docs
                 if d.get("path", "") == old_path or d.get("path", "").startswith(old_path + "/")
@@ -188,7 +202,6 @@ class KnowledgeTools(KnowledgeToolsReader):
                 )
                 moved += 1
 
-            dirs = _load_dirs()
             new_dirs = []
             for d in dirs:
                 if d == old_path:

@@ -39,3 +39,13 @@ def test_graph_sticky_header_uses_opaque_page_header_surface():
 
     assert 'class="page-header sticky top-0' in header
     assert "glass-header" not in header
+
+
+def test_directory_editor_supports_selecting_a_new_parent():
+    template = (TEMPLATES / "directories.html").read_text(encoding="utf-8")
+
+    assert 'id="rename-modal"' in template
+    assert 'id="rename-parent-dir-tree"' in template
+    assert 'id="rename-dir-name"' in template
+    assert "renderRenameParentTree" in template
+    assert "childPath === renameOldPath || childPath.startsWith(renameOldPath + '/')" in template

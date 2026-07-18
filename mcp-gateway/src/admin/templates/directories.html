@@ -191,28 +191,132 @@
     </div>
 </div>
 
+<!-- 编辑目录弹窗 -->
+<div id="rename-modal" class="fixed inset-0 z-50" style="display:none">
+    <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" onclick="closeRenameModal()"></div>
+    <div class="fixed inset-0 flex items-center justify-center p-4 pointer-events-none">
+        <div class="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 w-full max-w-md pointer-events-auto" onclick="event.stopPropagation()">
+            <div class="flex items-center justify-between mb-5">
+                <div>
+                    <h3 class="text-lg font-semibold text-slate-900 dark:text-white">编辑目录</h3>
+                    <p id="rename-old-path" class="text-xs text-slate-400 mt-1"></p>
+                </div>
+                <button type="button" onclick="closeRenameModal()" aria-label="关闭编辑目录" class="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <form id="rename-dir-form" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">父目录</label>
+                    <p class="text-xs text-slate-400 mb-2">当前选择：<span id="rename-parent-dir-label" class="text-brand-600">根目录</span></p>
+                    <div id="rename-parent-dir-tree" class="max-h-44 overflow-y-auto border border-slate-200 dark:border-slate-700 rounded-xl p-2"></div>
+                    <p class="text-xs text-slate-400 mt-1.5">当前目录及其子目录不能作为父目录</p>
+                </div>
+                <div>
+                    <label for="rename-dir-name" class="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">目录名称 <span class="text-red-500">*</span></label>
+                    <input type="text" id="rename-dir-name" required
+                        class="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-900 dark:text-slate-100 focus:border-brand-400 dark:focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10 dark:focus:ring-brand-500/20 outline-none transition-all duration-200">
+                </div>
+                <div class="flex gap-3 pt-2">
+                    <button type="submit" id="rename-submit-btn" class="inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-xl transition-all duration-200 border-0 cursor-pointer flex-1">
+                        <i data-lucide="check" class="w-4 h-4"></i>保存
+                    </button>
+                    <button type="button" onclick="closeRenameModal()" class="inline-flex items-center justify-center px-4 py-2 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-sm font-medium rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 transition-all duration-200 cursor-pointer flex-1">取消</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
 <script>
     let parentDirSelected = '';
     let currentDir = '';
     let currentTreeData = [];
+    let renameOldPath = '';
+    let renameParentSelected = '';
 
     // 加载目录树
-    // Rename
+    // 编辑目录名称与父目录
     function startRename(oldPath, oldName) {
-        const newName = prompt('重命名目录 "' + oldName + '"：', oldName);
-        if (!newName || newName === oldName) return;
-        const parts = oldPath.split('/');
-        parts[parts.length - 1] = newName;
-        const newPath = parts.join('/');
-        fetch('/admin/api/directories/rename', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({old_path: oldPath, new_path: newPath})
-        }).then(r => {
-            if (r.ok) { loadTree(); selectDir(newPath); }
-            else r.json().then(e => alert('重命名失败: ' + (e.detail || '未知错误')));
-        }).catch(() => alert('网络错误'));
+        renameOldPath = oldPath;
+        renameParentSelected = oldPath.includes('/') ? oldPath.substring(0, oldPath.lastIndexOf('/')) : '';
+        document.getElementById('rename-old-path').textContent = '原路径：/' + oldPath;
+        document.getElementById('rename-dir-name').value = oldName;
+        document.getElementById('rename-modal').style.display = 'block';
+        renderRenameParentOptions();
+        setTimeout(() => document.getElementById('rename-dir-name').focus(), 50);
     }
+
+    function closeRenameModal() {
+        document.getElementById('rename-modal').style.display = 'none';
+    }
+
+    function selectRenameParent(path) {
+        renameParentSelected = path;
+        renderRenameParentOptions();
+    }
+
+    function renderRenameParentOptions() {
+        document.getElementById('rename-parent-dir-label').textContent = renameParentSelected || '根目录';
+        const container = document.getElementById('rename-parent-dir-tree');
+        container.innerHTML = '';
+
+        const rootItem = document.createElement('button');
+        rootItem.type = 'button';
+        rootItem.className = `w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left transition-colors ${renameParentSelected === '' ? 'bg-brand-50 dark:bg-brand-500/10 text-brand-700 dark:text-brand-400' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300'}`;
+        rootItem.innerHTML = '<i data-lucide="hard-drive" class="w-4 h-4 text-slate-400"></i><span class="text-sm flex-1">根目录</span>' + (renameParentSelected === '' ? '<i data-lucide="check" class="w-3.5 h-3.5 text-brand-500"></i>' : '');
+        rootItem.addEventListener('click', () => selectRenameParent(''));
+        container.appendChild(rootItem);
+        renderRenameParentTree(currentTreeData, container, 0);
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+    }
+
+    function renderRenameParentTree(node, container, depth) {
+        (node.children || []).forEach(child => {
+            const childPath = child.path || child.name;
+            if (childPath === renameOldPath || childPath.startsWith(renameOldPath + '/')) return;
+            const item = document.createElement('button');
+            item.type = 'button';
+            const isSelected = renameParentSelected === childPath;
+            item.className = `w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left transition-colors ${isSelected ? 'bg-brand-50 dark:bg-brand-500/10 text-brand-700 dark:text-brand-400' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300'}`;
+            item.style.paddingLeft = (depth * 16 + 12) + 'px';
+            item.innerHTML = `<i data-lucide="folder" class="w-4 h-4 text-amber-500 flex-shrink-0"></i><span class="text-sm flex-1 truncate">${child.name}</span>${isSelected ? '<i data-lucide="check" class="w-3.5 h-3.5 text-brand-500"></i>' : ''}`;
+            item.addEventListener('click', () => selectRenameParent(childPath));
+            container.appendChild(item);
+            renderRenameParentTree(child, container, depth + 1);
+        });
+    }
+
+    document.getElementById('rename-dir-form').addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const name = document.getElementById('rename-dir-name').value.trim();
+        if (!name) return;
+        const newPath = renameParentSelected ? renameParentSelected + '/' + name : name;
+        const submitButton = document.getElementById('rename-submit-btn');
+        submitButton.disabled = true;
+        submitButton.textContent = '保存中...';
+        try {
+            const response = await fetch('/admin/api/directories/rename', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({old_path: renameOldPath, new_path: newPath})
+            });
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.detail || '未知错误');
+            }
+            closeRenameModal();
+            await loadTree();
+            selectDir(newPath);
+            showToast('目录已移动到 /' + newPath, 'success');
+        } catch (error) {
+            showToast('目录保存失败：' + error.message, 'error');
+        } finally {
+            submitButton.disabled = false;
+            submitButton.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i>保存';
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+        }
+    });
 
     // Delete
     function confirmDeleteDir(path, name) {
@@ -276,7 +380,7 @@
                     // 重命名按钮
                     const renameBtn = document.createElement('button');
                     renameBtn.className = 'dir-rename-btn';
-                    renameBtn.title = '重命名';
+                    renameBtn.title = '编辑目录';
                     renameBtn.innerHTML = '<i data-lucide="pencil" style="width:12px;height:12px;"></i>';
                     renameBtn.addEventListener('click', function(e) {
                         e.stopPropagation();

@@ -1480,6 +1480,39 @@ class TestKnowledgeToolsDirectory:
         assert result["moved"] == 0
 
     @pytest.mark.asyncio
+    async def test_move_directory_to_another_parent_preserves_subtree(self):
+        tools, kb, store = _make_tools()
+        added = await tools.add_document(
+            title="Nested", content="# Nested", path="source/child/grandchild",
+        )
+
+        result = await tools.rename_directory("source/child", "target/child")
+
+        assert result["new_path"] == "target/child"
+        document = await tools.get_document(added["doc_id"])
+        assert document["path"] == "target/child/grandchild"
+        chunks = await kb.get_document_chunks(added["doc_id"])
+        assert chunks[0]["metadata"]["source_path"] == (
+            f"documents/target/child/grandchild/{added['doc_id']}/source.md"
+        )
+
+    @pytest.mark.asyncio
+    async def test_move_directory_rejects_own_descendant(self):
+        tools, kb, store = _make_tools()
+
+        with pytest.raises(Exception, match="不能移动到自身的子目录"):
+            await tools.rename_directory("parent", "parent/child/parent")
+
+    @pytest.mark.asyncio
+    async def test_move_directory_rejects_existing_destination(self):
+        tools, kb, store = _make_tools()
+        await tools.add_document(title="Source", content="# Source", path="source/child")
+        await tools.add_document(title="Target", content="# Target", path="target/child")
+
+        with pytest.raises(Exception, match="目标目录已存在"):
+            await tools.rename_directory("source/child", "target/child")
+
+    @pytest.mark.asyncio
     async def test_delete_directory_basic(self):
         tools, kb, store = _make_tools()
         await tools.add_document(
