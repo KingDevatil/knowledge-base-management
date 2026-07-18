@@ -18,7 +18,7 @@ from document_metadata import (
     normalize_metadata_values,
 )
 from lock import WriteLockError
-from models import ReindexByPathRequest, UpdateDocumentMetadataRequest
+from models import MoveDocumentRequest, ReindexByPathRequest, UpdateDocumentMetadataRequest
 from .helpers import require_admin, require_editor, get_current_user, check_path_access
 from .archive_security import (
     ArchiveValidationError,
@@ -432,6 +432,47 @@ async def api_update_document_metadata(
         entities=normalize_metadata_values(body.entities),
         updated_by=user["username"],
     )
+    return JSONResponse(result)
+
+
+@documents_router.post("/api/documents/{doc_id}/move")
+async def api_move_document(
+    request: Request,
+    doc_id: str,
+    body: MoveDocumentRequest,
+    user: dict = Depends(require_editor),
+):
+    """Move one document using the path-only update fast path."""
+
+    kb = request.app.state.kb
+    current = await kb._doc_index_get(doc_id)
+    if current:
+        current_path = current.get("path", "")
+    else:
+        chunks = await kb.get_document_chunks(doc_id)
+        if not chunks:
+            raise HTTPException(status_code=404, detail="文档不存在")
+        current_path = chunks[0].get("metadata", {}).get("path", "")
+
+    if not check_path_access(user, current_path):
+        raise HTTPException(status_code=403, detail="无权移动此文档")
+    if not check_path_access(user, body.path):
+        raise HTTPException(status_code=403, detail="无权移动到目标目录")
+
+    tools = request.app.state.tools
+    document = await tools.get_document(doc_id)
+    try:
+        result = await tools.update_document(
+            doc_id=doc_id,
+            title=document.get("title", ""),
+            content=document.get("content", ""),
+            path=body.path,
+            tags=document.get("tags", []),
+            updated_by=user["username"],
+            path_explicit=True,
+        )
+    except WriteLockError:
+        raise HTTPException(status_code=423, detail="写入锁被占用，请稍后重试")
     return JSONResponse(result)
 
 

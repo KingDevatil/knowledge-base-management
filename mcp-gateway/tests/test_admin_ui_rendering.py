@@ -49,3 +49,15 @@ def test_directory_editor_supports_selecting_a_new_parent():
     assert 'id="rename-dir-name"' in template
     assert "renderRenameParentTree" in template
     assert "childPath === renameOldPath || childPath.startsWith(renameOldPath + '/')" in template
+
+
+def test_document_list_supports_direct_directory_move():
+    template = (TEMPLATES / "documents.html").read_text(encoding="utf-8")
+
+    assert 'title="移动"' in template
+    assert 'id="move-document-modal"' in template
+    assert 'id="move-document-directory-tree"' in template
+    assert "openMoveDocumentModal" in template
+    assert "/api/documents/" in template
+    assert "/move" in template
+    assert "正文、切片和向量保持不变" in template

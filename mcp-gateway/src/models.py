@@ -81,6 +81,12 @@ class UpdateDocumentMetadataRequest(BaseModel):
     entities: list[str] | str = Field(default_factory=list)
 
 
+class MoveDocumentRequest(BaseModel):
+    """Move a document without changing its source content or embeddings."""
+
+    path: str = Field(default="", max_length=500)
+
+
 class SimilarDocumentsRequest(BaseModel):
     title: str = Field(default="", max_length=500)
     content: str = Field(..., min_length=1, max_length=MAX_CONTENT_LENGTH)

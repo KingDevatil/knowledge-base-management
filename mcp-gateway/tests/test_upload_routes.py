@@ -18,11 +18,12 @@ from admin.routes_documents_api import (
     api_retry_cleanup_task,
     api_retry_ingestion_task,
     api_update_document_metadata,
+    api_move_document,
     api_preview_archive,
     api_upload_archive,
     upload_submit,
 )
-from models import UpdateDocumentMetadataRequest
+from models import MoveDocumentRequest, UpdateDocumentMetadataRequest
 
 
 class FakeTools:
@@ -32,6 +33,16 @@ class FakeTools:
         self.cleanup_tasks = {}
         self.cleanup_retry_calls = []
         self.metadata_calls = []
+        self.move_calls = []
+        self.documents = {
+            "doc-1": {
+                "doc_id": "doc-1",
+                "title": "Guide",
+                "content": "# Guide",
+                "path": "docs/old",
+                "tags": ["guide"],
+            }
+        }
 
     async def import_markdown(self, title, markdown_content, path="", tags=None, created_by="system"):
         self.calls.append({
@@ -70,6 +81,19 @@ class FakeTools:
             "tags": tags,
             "entities": entities,
             "graph_rebuild_required": True,
+        }
+
+    async def get_document(self, doc_id):
+        return self.documents[doc_id]
+
+    async def update_document(self, **kwargs):
+        self.move_calls.append(kwargs)
+        return {
+            "success": True,
+            "doc_id": kwargs["doc_id"],
+            "path": kwargs["path"],
+            "path_only": True,
+            "skipped_embedding": True,
         }
 
 
@@ -162,6 +186,53 @@ async def test_api_update_document_metadata_delegates_without_touching_source():
         "entities": ["MCP Gateway", "Redis"],
         "updated_by": "admin",
     }]
+
+
+@pytest.mark.asyncio
+async def test_api_move_document_uses_path_only_update():
+    tools = FakeTools()
+    kb = FakeDocumentIndex({"doc-1": {"doc_id": "doc-1", "path": "docs/old"}})
+
+    response = await api_move_document(
+        request=make_request(tools, kb),
+        doc_id="doc-1",
+        body=MoveDocumentRequest(path="docs/new"),
+        user={"username": "admin", "role": "admin"},
+    )
+    payload = json.loads(response.body)
+
+    assert payload["path_only"] is True
+    assert payload["skipped_embedding"] is True
+    assert tools.move_calls == [{
+        "doc_id": "doc-1",
+        "title": "Guide",
+        "content": "# Guide",
+        "path": "docs/new",
+        "tags": ["guide"],
+        "updated_by": "admin",
+        "path_explicit": True,
+    }]
+
+
+@pytest.mark.asyncio
+async def test_api_move_document_rejects_unauthorized_target_path():
+    tools = FakeTools()
+    kb = FakeDocumentIndex({"doc-1": {"doc_id": "doc-1", "path": "allowed/old"}})
+    tools.documents["doc-1"]["path"] = "allowed/old"
+
+    with pytest.raises(Exception, match="无权移动到目标目录"):
+        await api_move_document(
+            request=make_request(tools, kb),
+            doc_id="doc-1",
+            body=MoveDocumentRequest(path="forbidden"),
+            user={
+                "username": "editor",
+                "role": "user",
+                "authorized_paths": ["allowed"],
+            },
+        )
+
+    assert tools.move_calls == []
 
 
 @pytest.mark.asyncio
