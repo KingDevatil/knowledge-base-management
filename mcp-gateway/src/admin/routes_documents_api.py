@@ -378,6 +378,7 @@ async def document_save(
             await tools.update_document(
                 doc_id=doc_id, title=title, content=content,
                 path=path, tags=tag_list, updated_by=user["username"],
+                path_explicit=True,
             )
         except WriteLockError:
             raise HTTPException(status_code=423, detail="写入锁被占用")

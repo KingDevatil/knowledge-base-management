@@ -130,7 +130,9 @@ class MockSourceStore:
                 return
 
     def move_source(self, doc_id, old_path, new_path):
-        pass  # content stays the same, only path metadata changes
+        source_path = f"documents/{new_path}/{doc_id}/source.md"
+        self._source_paths[doc_id] = source_path
+        return source_path
 
     def list_all_documents(self):
         return [{"doc_id": doc_id} for doc_id in self._store]
@@ -939,6 +941,69 @@ Tags: deployment, internal
         assert doc["title"] == "Same"
 
     @pytest.mark.asyncio
+    async def test_update_document_moves_path_without_reembedding_content(self):
+        tools, kb, store = _make_tools()
+        source = "# Same\n\nThe document body must stay unchanged."
+        added = await tools.add_document(
+            title="Same", content=source, path="old/path", tags=["a"],
+        )
+        doc_id = added["doc_id"]
+        old_chunks = await kb.get_document_chunks(doc_id, include_embeddings=True)
+        tools.embedder.embed = AsyncMock(
+            side_effect=AssertionError("path-only move must not generate embeddings")
+        )
+
+        result = await tools.update_document(
+            doc_id=doc_id,
+            title="Same",
+            content=source,
+            path="new/path",
+            tags=["a"],
+            updated_by="admin",
+        )
+
+        assert result["success"] is True
+        assert result["path_only"] is True
+        assert result["graph_rebuild_required"] is True
+        tools.embedder.embed.assert_not_awaited()
+        moved = await tools.get_document(doc_id)
+        assert moved["path"] == "new/path"
+        assert moved["content"] == source
+        moved_chunks = await kb.get_document_chunks(doc_id, include_embeddings=True)
+        assert moved_chunks[0]["content"] == old_chunks[0]["content"]
+        assert moved_chunks[0]["embedding"] == old_chunks[0]["embedding"]
+        assert moved_chunks[0]["metadata"]["source_path"] == (
+            f"documents/new/path/{doc_id}/source.md"
+        )
+        assert store.get_source_by_full_path(
+            f"documents/new/path/{doc_id}/source.md"
+        ) == source
+
+    @pytest.mark.asyncio
+    async def test_update_document_can_fast_move_to_root_when_path_is_explicit(self):
+        tools, _kb, _store = _make_tools()
+        source = "# Root move"
+        added = await tools.add_document(
+            title="Root move", content=source, path="nested", tags=[],
+        )
+        tools.embedder.embed = AsyncMock(
+            side_effect=AssertionError("path-only move must not generate embeddings")
+        )
+
+        result = await tools.update_document(
+            doc_id=added["doc_id"],
+            title="Root move",
+            content=source,
+            path="",
+            tags=[],
+            path_explicit=True,
+        )
+
+        assert result["path_only"] is True
+        assert (await tools.get_document(added["doc_id"]))["path"] == ""
+        tools.embedder.embed.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_update_document_empty_id(self):
         tools, kb, store = _make_tools()
         with pytest.raises(Exception, match="文档 ID 不能为空"):
@@ -1320,12 +1385,16 @@ class TestKnowledgeToolsDirectory:
     @pytest.mark.asyncio
     async def test_rename_directory_basic(self):
         tools, kb, store = _make_tools()
-        await tools.add_document(
+        added = await tools.add_document(
             title="Doc1", content="# Doc1", path="old/path",
         )
         result = await tools.rename_directory("old/path", "new/path")
         assert result["success"] is True
         assert result["moved"] > 0
+        chunks = await kb.get_document_chunks(added["doc_id"])
+        assert chunks[0]["metadata"]["source_path"] == (
+            f"documents/new/path/{added['doc_id']}/source.md"
+        )
 
     @pytest.mark.asyncio
     async def test_rename_root_directory(self):

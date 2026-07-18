@@ -112,6 +112,53 @@ class KnowledgeTools(KnowledgeToolsReader):
             reason=reason,
         )
 
+    async def _move_document_path_locked(
+        self,
+        doc_id: str,
+        old_path: str,
+        new_path: str,
+        chunks: list[dict],
+        index_document: dict,
+        updated_by: str,
+        updated_at: str,
+    ) -> str:
+        """Move source and path metadata without changing chunks or embeddings.
+
+        The caller must hold ``self.write_lock``.
+        """
+        old_metadatas = [dict(chunk.get("metadata", {})) for chunk in chunks]
+        old_index = dict(index_document or {})
+        new_source_path = self.source_store.move_source(doc_id, old_path, new_path)
+        new_metadatas = [{
+            **metadata,
+            "path": new_path,
+            "source_path": new_source_path,
+            "updated_at": updated_at,
+            "updated_by": updated_by,
+        } for metadata in old_metadatas]
+        chunk_ids = [chunk["id"] for chunk in chunks]
+        new_index = {
+            **old_index,
+            "doc_id": doc_id,
+            "path": new_path,
+            "updated_at": updated_at,
+        }
+
+        try:
+            self.kb.collection.update(ids=chunk_ids, metadatas=new_metadatas)
+            await self.kb._doc_index_set(doc_id, new_index)
+        except Exception:
+            logger.exception("Document path update failed, restoring old path: doc_id=%s", doc_id)
+            try:
+                self.kb.collection.update(ids=chunk_ids, metadatas=old_metadatas)
+                await self.kb._doc_index_set(doc_id, old_index)
+                self.source_store.move_source(doc_id, new_path, old_path)
+            except Exception:
+                logger.exception("Document path rollback failed: doc_id=%s", doc_id)
+            raise
+
+        return new_source_path
+
     async def rename_directory(self, old_path: str, new_path: str) -> dict:
         """重命名目录：移动所有子文档（需写锁保护），同步更新空目录记录"""
         old_path = DirectoryTree.validate_path(old_path)
@@ -133,14 +180,12 @@ class KnowledgeTools(KnowledgeToolsReader):
                 doc_id = doc.get("doc_id", "")
                 doc_path = doc.get("path", "")
                 new_doc_path = new_path if doc_path == old_path else new_path + doc_path[len(old_path):]
-
-                self.source_store.move_source(doc_id, doc_path, new_doc_path)
-                doc["path"] = new_doc_path
-                await self.kb._doc_index_set(doc_id, doc)
                 chunks = await self.kb.get_document_chunks(doc_id)
-                for ch in chunks:
-                    ch["metadata"]["path"] = new_doc_path
-                    self.kb.collection.update(ids=[ch["id"]], metadatas=[ch["metadata"]])
+                await self._move_document_path_locked(
+                    doc_id, doc_path, new_doc_path, chunks, doc,
+                    updated_by="directory_rename",
+                    updated_at=datetime.now(timezone.utc).isoformat(),
+                )
                 moved += 1
 
             dirs = _load_dirs()
@@ -174,13 +219,12 @@ class KnowledgeTools(KnowledgeToolsReader):
             for doc in matching_docs:
                 doc_id = doc.get("doc_id", "")
                 doc_path = doc.get("path", "")
-                self.source_store.move_source(doc_id, doc_path, "")
-                doc["path"] = ""
-                await self.kb._doc_index_set(doc_id, doc)
                 chunks = await self.kb.get_document_chunks(doc_id)
-                for ch in chunks:
-                    ch["metadata"]["path"] = ""
-                    self.kb.collection.update(ids=[ch["id"]], metadatas=[ch["metadata"]])
+                await self._move_document_path_locked(
+                    doc_id, doc_path, "", chunks, doc,
+                    updated_by="directory_delete",
+                    updated_at=datetime.now(timezone.utc).isoformat(),
+                )
                 moved += 1
 
             dirs = _load_dirs()
@@ -496,6 +540,7 @@ class KnowledgeTools(KnowledgeToolsReader):
         tags: list[str] | None = None,
         updated_by: str = "system",
         progress_callback: ProgressCallback | None = None,
+        path_explicit: bool = False,
     ) -> dict:
         """更新已有文档"""
         if not doc_id:
@@ -533,26 +578,28 @@ class KnowledgeTools(KnowledgeToolsReader):
             entities = entities_override
 
         # 未传入新路径/标签时保留原值，避免 Agent 遗漏参数导致数据丢失
-        new_path = DirectoryTree.validate_path(path) if path else old_path
+        new_path = DirectoryTree.validate_path(path) if (path or path_explicit) else old_path
 
         # 变更检测
-        changeless = False
-        if new_path == old_path and title == old_title and sorted(tags) == sorted(old_tags):
-            new_c_hash = content_hash(content)
-            old_c_hash = await self.kb.get_doc_content_hash(doc_id)
-            if old_c_hash and new_c_hash == old_c_hash:
-                changeless = True
-            elif not old_c_hash:
-                try:
-                    old_source_path = old_meta.get("source_path", "")
-                    if old_source_path:
-                        old_content = self.source_store.get_source_by_full_path(old_source_path) or ""
-                    else:
-                        old_content = self.source_store.get_source(doc_id, old_path) or ""
-                    if old_content and new_c_hash == content_hash(old_content):
-                        changeless = True
-                except Exception:
-                    pass
+        new_c_hash = content_hash(content)
+        old_c_hash = await self.kb.get_doc_content_hash(doc_id)
+        old_source_content = ""
+        content_unchanged = bool(old_c_hash and new_c_hash == old_c_hash)
+        if not old_c_hash:
+            try:
+                old_source_path = old_meta.get("source_path", "")
+                if old_source_path:
+                    old_source_content = self.source_store.get_source_by_full_path(old_source_path) or ""
+                else:
+                    old_source_content = self.source_store.get_source(doc_id, old_path) or ""
+                content_unchanged = bool(
+                    old_source_content and new_c_hash == content_hash(old_source_content)
+                )
+            except Exception:
+                pass
+
+        metadata_unchanged = title == old_title and sorted(tags) == sorted(old_tags)
+        changeless = new_path == old_path and metadata_unchanged and content_unchanged
 
         if changeless:
             logger.info(f"Document unchanged, skip: doc_id={doc_id}, title={title}")
@@ -563,15 +610,57 @@ class KnowledgeTools(KnowledgeToolsReader):
                 "skipped": True, "chunks": len(old_chunks),
             }
 
+        if new_path != old_path and metadata_unchanged and content_unchanged:
+            await self._notify_progress(progress_callback, 50, "仅更新文档目录")
+            try:
+                await self._notify_progress(progress_callback, 65, "等待写入锁")
+                async with self.write_lock:
+                    current_index = await self.kb._doc_index_get(doc_id) or {
+                        "doc_id": doc_id,
+                        "title": old_title,
+                        "path": old_path,
+                        "tags": old_tags,
+                        "chunk_count": len(old_chunks),
+                    }
+                    await self._move_document_path_locked(
+                        doc_id, old_path, new_path, old_chunks, current_index,
+                        updated_by=updated_by,
+                        updated_at=now,
+                    )
+            except WriteLockError as exc:
+                raise self._write_lock_conflict(
+                    f"写入锁被占用，文档「{title}」暂时无法移动，请稍后重试",
+                    exc,
+                )
+
+            await self.refresh_keyword_document_safely(doc_id, "move_document_path")
+            await self._notify_progress(progress_callback, 100, "文档目录更新完成")
+            logger.info(
+                "Document path updated without re-embedding: doc_id=%s, old_path=%s, new_path=%s",
+                doc_id,
+                old_path,
+                new_path,
+            )
+            return {
+                "success": True,
+                "doc_id": doc_id,
+                "path": new_path,
+                "path_only": True,
+                "skipped_embedding": True,
+                "graph_rebuild_required": True,
+                "chunks": len(old_chunks),
+                "message": "文档目录已更新，正文、切片和向量保持不变；知识图谱需要重建。",
+            }
+
         old_source_path = old_meta.get("source_path", "")
-        old_source_content = ""
-        try:
-            if old_source_path:
-                old_source_content = self.source_store.get_source_by_full_path(old_source_path) or ""
-            else:
-                old_source_content = self.source_store.get_source(doc_id, old_path) or ""
-        except Exception:
-            old_source_content = ""
+        if not old_source_content:
+            try:
+                if old_source_path:
+                    old_source_content = self.source_store.get_source_by_full_path(old_source_path) or ""
+                else:
+                    old_source_content = self.source_store.get_source(doc_id, old_path) or ""
+            except Exception:
+                old_source_content = ""
 
         chunks = chunk_markdown(content, self.settings.CHUNK_SIZE, self.settings.CHUNK_OVERLAP)
         if not chunks:
