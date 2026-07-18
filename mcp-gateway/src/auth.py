@@ -48,6 +48,29 @@ class APIKeyAuth:
         value = str(value or "all").strip().lower()
         return "restricted" if value == "restricted" else "all"
 
+    def _extract_api_key(self, request: Request) -> str:
+        """Read an API key from Bearer auth or the legacy X-API-Key header."""
+        authorization = request.headers.get("Authorization", "").strip()
+        legacy_key = request.headers.get("X-API-Key", "").strip()
+        bearer_key = ""
+
+        if authorization:
+            scheme, separator, credentials = authorization.partition(" ")
+            bearer_key = credentials.strip()
+            if scheme.lower() != "bearer" or not separator or not bearer_key or " " in bearer_key:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="无效的 Authorization Bearer Token",
+                )
+
+        if bearer_key and legacy_key and not secrets.compare_digest(bearer_key, legacy_key):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authorization 与 X-API-Key 不一致",
+            )
+
+        return bearer_key or legacy_key
+
     def _load_keys_from_file(self) -> dict:
         if not os.path.exists(self.api_key_file):
             return {}
@@ -102,7 +125,7 @@ class APIKeyAuth:
     async def authenticate(self, request: Request, required_scope: str = "read") -> APIKeyInfo:
         """
         认证流程：
-        1. 从 Header X-API-Key 读取 Key
+        1. 从 Authorization: Bearer 或 X-API-Key 读取 Key
         2. Redis 查询 Key 元数据
         3. 检查 status: revoked/expired/active
         4. 检查 scope 是否匹配
@@ -110,7 +133,7 @@ class APIKeyAuth:
         6. 更新 last_used_at 和 use_count
         """
         settings = get_settings()
-        api_key = request.headers.get("X-API-Key", "")
+        api_key = self._extract_api_key(request)
 
         if not api_key or not api_key.startswith("sk-"):
             raise HTTPException(

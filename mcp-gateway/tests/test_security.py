@@ -121,6 +121,49 @@ class TestAPIKeyScopeParsing:
         assert auth._parse_scope('["read", "write"]') == ["read", "write"]
 
 
+class TestAPIKeyHeaderParsing:
+    """Bearer auth is preferred while legacy X-API-Key remains compatible."""
+
+    @staticmethod
+    def _auth() -> APIKeyAuth:
+        return APIKeyAuth(redis_client=None, api_key_file="unused")  # type: ignore[arg-type]
+
+    def test_bearer_token_is_accepted(self):
+        request = SimpleNamespace(headers={"Authorization": "Bearer sk-bearer-token"})
+        assert self._auth()._extract_api_key(request) == "sk-bearer-token"
+
+    def test_bearer_scheme_is_case_insensitive(self):
+        request = SimpleNamespace(headers={"Authorization": "bearer sk-bearer-token"})
+        assert self._auth()._extract_api_key(request) == "sk-bearer-token"
+
+    def test_legacy_header_is_accepted(self):
+        request = SimpleNamespace(headers={"X-API-Key": "sk-legacy-token"})
+        assert self._auth()._extract_api_key(request) == "sk-legacy-token"
+
+    def test_matching_headers_are_accepted(self):
+        request = SimpleNamespace(headers={
+            "Authorization": "Bearer sk-same-token",
+            "X-API-Key": "sk-same-token",
+        })
+        assert self._auth()._extract_api_key(request) == "sk-same-token"
+
+    @pytest.mark.parametrize("authorization", ["Basic abc", "Bearer", "Bearer ", "Bearer a b"])
+    def test_malformed_bearer_is_rejected(self, authorization):
+        request = SimpleNamespace(headers={"Authorization": authorization})
+        with pytest.raises(HTTPException) as exc:
+            self._auth()._extract_api_key(request)
+        assert exc.value.status_code == 401
+
+    def test_conflicting_headers_are_rejected(self):
+        request = SimpleNamespace(headers={
+            "Authorization": "Bearer sk-bearer-token",
+            "X-API-Key": "sk-other-token",
+        })
+        with pytest.raises(HTTPException) as exc:
+            self._auth()._extract_api_key(request)
+        assert exc.value.status_code == 401
+
+
 class TestAPIKeyPathPermissions:
     def test_allowed_paths_parse_json_and_csv(self):
         assert parse_allowed_paths('["team-a/docs", "/team-b"]') == ["team-a/docs", "team-b"]

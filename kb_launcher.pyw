@@ -646,7 +646,7 @@ class KBLauncher:
                 '    "knowledge-base": {\n'
                 '      "url": "http://localhost:8000/mcp",\n'
                 '      "headers": {\n'
-                '        "X-API-Key": "<your-api-key>"\n'
+                '        "Authorization": "Bearer <your-api-key>"\n'
                 '      }\n'
                 '    }\n'
                 '  }\n'

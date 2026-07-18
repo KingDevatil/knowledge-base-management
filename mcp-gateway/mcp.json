@@ -5,7 +5,7 @@
     "knowledge-base": {
       "url": "http://localhost:8000/mcp",
       "headers": {
-        "X-API-Key": "sk-your-api-key-here"
+        "Authorization": "Bearer sk-your-api-key-here"
       }
     }
   }

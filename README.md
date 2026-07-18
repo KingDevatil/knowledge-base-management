@@ -60,7 +60,7 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    Q["Agent 调用 search_knowledge"] --> A["X-API-Key 认证<br/>scope / 目录 / 限流"]
+    Q["Agent 调用 search_knowledge"] --> A["Bearer / X-API-Key 认证<br/>scope / 目录 / 限流"]
     A --> C{"Redis 查询缓存命中?"}
     C -- 是 --> R["返回缓存结果"]
     C -- 否 --> N["规范化查询"]
@@ -300,18 +300,28 @@ notepad .env.local
     "knowledge-base": {
       "url": "http://192.168.1.100/mcp",
       "headers": {
-        "X-API-Key": "sk-your-api-key"
+        "Authorization": "Bearer sk-your-api-key"
       }
     }
   }
 }
 ```
 
-本地原生运行时可改为 `http://192.168.1.100:8000/mcp`。客户端配置格式会随产品版本变化，请以客户端当前支持的远程 MCP 配置为准；关键是 URL 和 `X-API-Key` Header。
+本地原生运行时可改为 `http://192.168.1.100:8000/mcp`。客户端配置格式会随产品版本变化，请以客户端当前支持的远程 MCP 配置为准；推荐使用 `Authorization: Bearer <API Key>`。旧客户端仍可使用 `X-API-Key: <API Key>`，两种 Header 同时发送时值必须一致。
+
+Codex 可以从环境变量读取 Token，避免把 API Key 明文写入 `config.toml`：
+
+```toml
+[mcp_servers.knowledge-base]
+url = "http://192.168.1.100/mcp"
+bearer_token_env_var = "KNOWLEDGE_BASE_API_KEY"
+```
+
+启动 Codex 前设置 `KNOWLEDGE_BASE_API_KEY`。环境变量仍属于敏感信息，不应写入版本库或公开日志。
 
 ### 兼容端点：SSE
 
-旧客户端可以连接 `/sse`，消息端点由服务端协商为 `/sse/messages/`。如果客户端只支持 stdio，可在客户端侧使用 MCP HTTP/SSE 到 stdio 的代理。优先使用 Header 传 Key，避免把 Key 放进 URL、日志和历史记录。
+旧客户端可以连接 `/sse`，消息端点由服务端协商为 `/sse/messages/`。如果客户端只支持 stdio，可在客户端侧使用 MCP HTTP/SSE 到 stdio 的代理。优先使用 Bearer 或 `X-API-Key` Header 传 Key，避免把 Key 放进 URL、日志和历史记录。
 
 ## Agent 推荐调用方式
 

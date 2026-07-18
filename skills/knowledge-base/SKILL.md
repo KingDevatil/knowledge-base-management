@@ -4,7 +4,7 @@ description: >-
   使用本项目的 knowledge-base MCP 进行知识库检索、文档阅读、文档写入和关联图谱维护。
   当用户询问项目资料、内部规范、部署流程、代码/业务文档，或要求把文档保存到知识库时，优先使用本 Skill；
   即使用户没有明确说“知识库”或“MCP”，只要问题可能由内部文档回答，也应先按本 Skill 检索并引用证据。
-compatibility: 需要 Agent 已连接本项目的 knowledge-base MCP，并按 API Key scope 获得 read 或 write 权限。
+compatibility: 需要 Agent 已连接本项目的 knowledge-base MCP，通过 Authorization Bearer 或 X-API-Key 鉴权，并按 API Key scope 获得 read 或 write 权限。
 ---
 
 # Knowledge Base MCP 使用规范

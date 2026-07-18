@@ -261,7 +261,7 @@ list_documents(path="运维/部署文档", limit=10, offset=10)
 |------|------|---------|
 | `423 Locked` | 写锁被占用 | 等待几秒后重试 |
 | `503` | 检索并发队列繁忙，或依赖暂不可用 | 优先按 `retry_after_ms` 退避；持续失败再联系管理员检查 Ollama/容量 |
-| `401` | API Key 无效 | 检查 Key 是否过期或填错 |
+| `401` | API Key 无效、Bearer 格式错误或两个鉴权 Header 不一致 | 检查 Key、`Authorization: Bearer ...` 格式及 Header 配置 |
 | `404` | 文档不存在 | 文档可能已被删除 |
 
 搜索响应出现 `status=degraded` 时，先使用仍返回的结果，同时查看 `retrieval_errors`。图谱超时或未构建不会阻断向量、关键词和结构检索；`score` 是相对排序分数，不是事实置信概率。

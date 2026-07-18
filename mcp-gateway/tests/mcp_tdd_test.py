@@ -128,6 +128,33 @@ def test_post_mcp_with_valid_key_returns_success(client):
     assert response.status_code == 200
 
 
+def test_post_mcp_with_bearer_token_returns_success(client):
+    response = client.post(
+        "/mcp",
+        content=INIT_MSG,
+        headers={
+            "Authorization": f"Bearer {TEST_KEY}",
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        },
+    )
+    assert response.status_code == 200
+
+
+def test_post_mcp_with_conflicting_auth_headers_returns_401(client):
+    response = client.post(
+        "/mcp",
+        content=INIT_MSG,
+        headers={
+            "Authorization": f"Bearer {TEST_KEY}",
+            "X-API-Key": "sk-different-key",
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        },
+    )
+    assert response.status_code == 401
+
+
 def test_post_mcp_without_key_returns_401(client):
     response = client.post(
         "/mcp",
